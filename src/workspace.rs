@@ -216,8 +216,21 @@ fn build(repo: &Repo, ws: &Workspace, cache_it: bool) -> Result<()> {
 }
 
 /// Files tools leave behind that are never source.
-const BYPRODUCTS: &[&str] =
-    &[".DS_Store", "__pycache__/", "*.py[cod]", ".pytest_cache/", ".mypy_cache/", ".ruff_cache/", "*.swp"];
+const BYPRODUCTS: &[&str] = &[
+    ".DS_Store",
+    "__pycache__/",
+    "*.py[cod]",
+    ".pytest_cache/",
+    ".mypy_cache/",
+    ".ruff_cache/",
+    "*.swp",
+    // Coding agents' own session state, written into the project as they run.
+    "/.autohand/memory/",
+    "/.autohand/goals.local.json",
+    "/.autohand/settings.local.json",
+    "/.autohand/session-permissions.json",
+    "/.claude/settings.local.json",
+];
 
 /// The exclude file for a workspace: the user's own global excludes (which
 /// this replaces for git calls made by zit), the built-in by-products, and

@@ -213,3 +213,21 @@ fn ignoring_never_hides_a_tracked_file() {
     write(ws.path(), &[("vendored/__pycache__/keep.pyc", "v2")]);
     assert!(change::record(&fx.repo, &ws.id, &Record::default()).unwrap().is_some());
 }
+
+/// Coding agents keep session state in the project; it is the agent's, not the work.
+#[test]
+fn agents_session_state_is_never_recorded() {
+    let fx = Fixture::new(FILES);
+    let ws = fx.workspace("autohand");
+    write(
+        ws.path(),
+        &[
+            (".autohand/memory/index.json", "{}"),
+            (".autohand/settings.local.json", "{}"),
+            (".autohand/goals.local.json", "{}"),
+            (".autohand/session-permissions.json", "{}"),
+            (".claude/settings.local.json", "{}"),
+        ],
+    );
+    assert!(change::record(&fx.repo, &ws.id, &Record::default()).unwrap().is_none());
+}
