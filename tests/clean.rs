@@ -24,7 +24,11 @@ fn clean_deletes_every_local_copy_and_keeps_the_graph() {
 
     let report = zit::clean::clean(&fx.repo, false).unwrap();
     assert_eq!(report.workspaces, 1);
-    assert!(report.cached_states >= 1 && report.verification_views >= 1, "{report:?}");
+    assert!(report.verification_views >= 1, "{report:?}");
+    // Checkouts are cached for cloning only where copy-on-write exists.
+    if cfg!(target_os = "macos") {
+        assert!(report.cached_states >= 1, "{report:?}");
+    }
     assert!(local_dirs(&fx).is_empty(), "nothing left: {:?}", local_dirs(&fx));
 
     assert_eq!(change::speculative(&fx.repo).unwrap(), vec![c.clone()], "recorded changes are untouched");

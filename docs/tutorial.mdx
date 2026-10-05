@@ -190,7 +190,7 @@ current is 6212a64f71 (fast-forward; checks: 1 run, 0 reused)
 
 `zit show` also prints what the agent reported at the end of its session (`reported …`): Zit keeps the agent's final account with the change, and it becomes the body of the commit when you export.
 
-With `--agent claude`, `codex` or `autohand` and no command, Zit uses that agent's headless mode with `--intent` as the prompt. For agents that should coordinate with each other, give them the MCP server or the claim rules in [Agents](/agents).
+With `--agent autohand`, `claude`, `codex` or `pi` and no command, Zit uses that agent's headless mode with `--intent` as the prompt. The session above used Claude Code with an explicit command; with a preset it is just `git zit run --agent autohand --intent "…"`. For agents that should coordinate with each other, give them the MCP server or the claim rules in [Agents](/agents).
 
 ## 8. Watch it
 
@@ -223,4 +223,4 @@ Your branches, history and working tree were never touched, so this leaves the r
 
 - [What Zit is, and is not](/why) — whether you need it.
 - [Quickstart](/quickstart) — three contributors, one semantic conflict, resolved.
-- [Agents](/agents) — Claude Code, Codex and Autohand, many at once.
+- [Agents](/agents) — Autohand Code, Claude Code, Codex and Pi, many at once.

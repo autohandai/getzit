@@ -19,6 +19,54 @@ Most developers are not there yet: most who use agents run one at a time. But th
 3. **Integration.** Changes land one at a time. Each is compared with what landed since it started, by the functions it changed and the names it uses, and the combined result must pass your checks (current's and the change's own) before it becomes the current state.
 4. **Reasons.** Every change keeps its author's own account of what it did and why, as the body of its commit.
 
+## Install and run
+
+The repository is private for now ([autohandai/getzit](https://github.com/autohandai/getzit)); both routes need access to it.
+
+```sh
+# The binary CI built from the last commit on main (macOS arm64):
+gh run download -R autohandai/getzit -n zit-macos-arm64 && tar xzf zit-macos-arm64.tar.gz && mv zit git-zit ~/.local/bin/
+
+# Or build it (Rust 1.88+):
+cargo install --git https://github.com/autohandai/getzit --locked
+```
+
+Then, in any git repository, give each agent its own workspace and let them run at once:
+
+```sh
+git zit init
+
+git zit run --agent autohand --intent "Add a discount function to src/lib.rs" &
+git zit run --agent claude   --intent "Add tests for the discount function" &
+git zit run --agent codex    --intent "Document discounts in README.md" &
+git zit run --agent pi       --intent "Add a --discount flag to the CLI" &
+wait
+
+git zit status                 # every change, with what its agent did and why
+git zit web                    # watch it in the browser
+git zit accept <change>        # land one; a conflict comes back with the reason
+git zit export --branch main   # publish to git
+```
+
+Each `run` starts the agent's headless mode (`autohand -p`, `claude -p`, `codex exec`, `pi -p`) in a disposable workspace, records whatever it leaves, and keeps its final message as the change's reason. Any other agent works too: `git zit run -- <command>`. [Agents](/agents) has the details, including MCP.
+
+{/* last-build:start */}
+{/* last-build:end */}
+
+## Zit in action
+
+Ten people edit the same `README.md` at the same moment, each in their own workspace. Nine edits land in different sections and compose. Two people wrote the Prices section; the second is refused with the reason, retried on top of the first, resolved, and recorded with why. Then everything is published as one plain git branch, and `zit clean` removes every copy Zit made.
+
+![Ten users change one README.md at once with Zit: status, accept, a conflict, retry, export and clean](/images/zit-in-action.webp)
+
+The ten users are scripted (`demo/ten-users.sh`); every line of output is Zit's own. Recorded with [`vhs`](https://github.com/charmbracelet/vhs) from `demo/zit-in-action.tape`.
+
+### The web view
+
+`zit web` shows the same repository live: the accepted line, the changes waiting above it, the people still at work below, and for any of them, what it wrote, why it stands where it does, its author's reason and the next command.
+
+![A walkthrough of zit web: a waiting change with its reason, a rejected change, a workspace in progress, filtering, and light mode](/images/web-walkthrough.webp)
+
 Zit does not review code. It hands the reviewer changes that are already checked, already combined, and explained by their authors; whether a person reads them before they reach `main` is your process (see [Teams and review](/git#teams-and-review)).
 
 Your branches, history and remotes stay plain git. Teammates who never install Zit keep working as before.
@@ -40,10 +88,12 @@ flowchart LR
         D1[git push]
     end
     subgraph agents["Agents (zit run, MCP)"]
+        A0[Autohand Code]
         A1[Claude Code]
         A2[Codex]
+        A3[Pi]
     end
-    D1 & A1 & A2 --> S[(changes)]
+    D1 & A0 & A1 & A2 & A3 --> S[(changes)]
     S -- "zit accept: compose, regenerate, check" --> K((current))
     S -. "rejected, with the reason, kept" .-> S
     K -- "zit export" --> G[main]
@@ -77,7 +127,7 @@ New here? [Zit 101](/tutorial) sets it up in ten minutes. [What Zit is, and is n
 | The graph moves between machines with git | `the_graph_replicates_with_plain_git` |
 | Overlapping claims are refused, exactly one of several racing | `of_racing_claims_exactly_one_wins` |
 | Checks stay warm between states | `verification_reuses_one_view_keeping_ignored_build_output_and_nothing_else` |
-| Claude Code, Codex and Autohand work with it | run for real; see [Agents](/agents) and [Benchmarks](/benchmarks) |
+| Autohand Code, Claude Code and Codex work with it | run for real; see [Agents](/agents) and [Benchmarks](/benchmarks). Pi: preset only, not yet run end to end |
 | It holds up with ten agents on a real repository | two one-off runs, not repeated; see [Lessons](/lessons) |
 | Generated files are rebuilt, not conflicted | `generated_files_are_regenerated_on_compose_not_conflicted` |
 | It works as `git zit` | `zit_is_a_git_extension` |
@@ -93,7 +143,7 @@ Test names are in `tests/`; `cargo test` runs them against real git repositories
 - [Quickstart](/quickstart) — three agents, one conflict, resolved.
 - [Concepts](/concepts) — the six primitives.
 - [How it works](/science) — the ideas behind it and where they come from.
-- [Agents](/agents) — Claude Code, Codex, Autohand, and anything else.
+- [Agents](/agents) — Autohand Code, Claude Code, Codex, Pi, and anything else.
 - [Benchmarks](/benchmarks) — measured against `git worktree`, including where it is slower.
 - [Lessons](/lessons) — what broke with ten real agents, and what changed.
 - [Web view](/web) — `zit web`.

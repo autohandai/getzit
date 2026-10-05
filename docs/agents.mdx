@@ -1,9 +1,9 @@
 ---
 title: Agents
-description: Run Claude Code, Codex, Autohand or any other agent CLI against the graph, by wrapping the process or over MCP.
+description: Run Autohand Code, Claude Code, Codex, Pi or any other agent CLI against the graph, by wrapping the process or over MCP.
 ---
 
-Two ways in. Both were run against the real CLIs on the machine this was built on: Claude Code 2.1.288, codex-cli 0.159.2, autohand 0.9.9-alpha.
+Two ways in. `zit run` was run against the real CLIs on the machine this was built on: autohand 0.9.9-alpha, Claude Code 2.1.288, codex-cli 0.159.2. The Pi preset (pi 0.84.4) is tested for its command line; its live run stopped at Pi's own provider login ("API key expired"), so it has not yet recorded a change end to end.
 
 | | `zit run` | `zit mcp` |
 |---|---|---|
@@ -15,9 +15,10 @@ Two ways in. Both were run against the real CLIs on the machine this was built o
 ## Wrap the process: `zit run`
 
 ```sh
+zit run --agent autohand --intent "Add a discount function to src/lib.rs"
 zit run --agent claude   --intent "Add a discount function to src/lib.rs"
 zit run --agent codex    --intent "Add a discount function to src/lib.rs"
-zit run --agent autohand --intent "Add a discount function to src/lib.rs"
+zit run --agent pi       --intent "Add a discount function to src/lib.rs"
 ```
 
 Each creates a workspace on current, runs the agent inside it, records what it left behind as a change, and deletes the workspace. Your checkout is never touched.
@@ -26,9 +27,10 @@ With no command after `--`, these presets are used, with `--intent` as the promp
 
 | `--agent` | Command |
 |---|---|
-| `claude` | `claude -p <intent> --permission-mode acceptEdits` |
-| `codex` | `codex exec --sandbox workspace-write <intent>` |
 | `autohand` | `autohand -p <intent> --yes` |
+| `claude` | `claude -p <intent> --permission-mode acceptEdits` |
+| `codex` | `codex exec --sandbox workspace-write --output-last-message $ZIT_SUMMARY_FILE --add-dir ~/.zit/<repo> <intent>` |
+| `pi` | `pi -p <intent>` |
 
 Anything else: give the command yourself.
 
@@ -102,15 +104,23 @@ If Zit itself is killed with `SIGKILL`, the workspace remains. `zit status` list
 
 An agent gets every tool except `zit_accept` and `zit_discard`: it can do and record work, not land it or remove someone else's. An integrator agent, one you deliberately let move current, is started with `zit mcp --integrator`.
 
-**Claude Code**
+**Autohand Code**
 
 ```json zit.mcp.json
 { "mcpServers": { "zit": { "command": "zit", "args": ["mcp"] } } }
 ```
 
 ```sh
+autohand --mcp-config zit.mcp.json
+```
+
+**Claude Code**
+
+```sh
 claude --mcp-config zit.mcp.json
 ```
+
+Same file as for Autohand Code.
 
 In headless mode, tools must be allowed by name: `--allowedTools mcp__zit__zit_status,…`.
 
@@ -130,13 +140,9 @@ approval_mode = "approve"
 
 Verified with the same keys passed as `-c` overrides to `codex exec`. Without the `approval_mode` entry, `codex exec` answers "the tool requires approval, but approval policy is never".
 
-**Autohand**
+**Pi**
 
-```sh
-autohand --mcp-config zit.mcp.json
-```
-
-Same file as for Claude Code.
+Use `zit run --agent pi`. Connecting Pi to `zit mcp` has not been tried.
 
 ### Tools
 

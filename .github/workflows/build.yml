@@ -53,4 +53,4 @@ jobs:
         run: |
           git config --global user.name ci
           git config --global user.email ci@example.com
-          cargo test --release --locked
+          cargo test --release --locked --no-fail-fast

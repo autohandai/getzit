@@ -301,7 +301,10 @@ impl Env {
         unsafe {
             let mut stat: libc::statfs = std::mem::zeroed();
             assert_eq!(libc::statfs(path.as_ptr(), &mut stat), 0);
-            stat.f_bavail as u64 * stat.f_bsize as u64
+            // The field widths differ between platforms and SDKs.
+            #[allow(clippy::unnecessary_cast)]
+            let free = stat.f_bavail as u64 * stat.f_bsize as u64;
+            free
         }
     }
 }

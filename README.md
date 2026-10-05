@@ -10,7 +10,7 @@ Underneath is **CPSG**, the Causal Program State Graph: states are git trees, ch
 cargo install --path . --locked        # installs `zit` and `git-zit`
 cd your-repo && git zit init
 
-git zit run --agent claude --intent "Add rate limiting to the API"   # or codex, autohand, or any command
+git zit run --agent autohand --intent "Add a discount function to src/lib.rs"   # or claude, codex, pi, or any command
 git zit web                                                          # watch it live in the browser
 git zit accept <change>                                              # or: rejected, with the reason
 git zit export --branch main                                         # publish to git
