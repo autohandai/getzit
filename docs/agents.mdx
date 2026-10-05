@@ -116,6 +116,19 @@ The work is in the graph before `zit run` returns. Once it is recorded, a furthe
 
 If Zit itself is killed with `SIGKILL`, the workspace remains. `zit status` lists it as `owner gone`; `zit record --workspace <id>` salvages it.
 
+## Autohand Code: `autohand --zit`
+
+Autohand Code can run a whole session, interactive or `-p`, in a Zit workspace instead of a git worktree:
+
+```sh
+autohand --zit "Add a Usage section to README.md"
+autohand --zit -p "Add a short Usage section to README.md" --yes
+```
+
+It runs `zit init` if the repository has none, materialises a workspace, works there, tells the model to claim files before editing, and when the session ends (normally, on Ctrl-C, or after an error) records the workspace as a change with the model's final message as its reason. `--zit` cannot be combined with `--worktree` or `--tmux`. It finds `zit` on `PATH` or through `ZIT_BIN`.
+
+Run end to end with a compiled build: a real model turn recorded a change with its reason, and the original checkout was untouched. It is on Autohand Code's `zit-sessions` branch and not in a released version yet.
+
 ## Give the agent tools: `zit mcp`
 
 `zit mcp` is a stdio MCP server. Start the agent in the repository; the tools act on the repository containing the server's working directory.

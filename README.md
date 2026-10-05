@@ -54,7 +54,7 @@ Or take a prebuilt binary for macOS (arm64, x86_64) or Linux (x86_64, arm64) fro
 
 | Agent | How |
 |---|---|
-| Autohand Code | `git zit run --agent autohand`, or `autohand --zit` to run a whole session in a Zit workspace |
+| Autohand Code | `git zit run --agent autohand`; `autohand --zit`, a whole session in a Zit workspace, is built on an Autohand Code branch and not released yet |
 | Claude Code | `git zit run --agent claude`, or `zit mcp` as an MCP server |
 | Codex | `git zit run --agent codex`, or `zit mcp` |
 | Pi | `git zit run --agent pi`, or the Pi extension in [`integrations/pi`](integrations/pi) |
