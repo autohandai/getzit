@@ -5,7 +5,7 @@ description: What version 0.1 does not do, and where its guarantees stop.
 
 ## Platform
 
-- Built and tested on macOS 15.5 (arm64) only. The code is Unix-only (signals, `libc`); there is no Windows support.
+- Developed on macOS 15.5 (arm64). CI builds and runs every test on macOS (arm64) and Linux (x86_64, Ubuntu). The code is Unix-only (signals, `libc`); there is no Windows support.
 - Copy-on-write workspaces need APFS. Anywhere else Zit falls back to a plain checkout, which is no faster than `git worktree add`. A Linux reflink or overlay strategy is not implemented.
 - Requires git 2.38 or newer (`merge-tree --write-tree`).
 

@@ -19,7 +19,7 @@ block=$(cat <<MD
 |---|---|
 | Commit | [\`$sha\`](https://github.com/$repo/commit/$(jq -r '.[0].headSha' <<<"$json")) $title |
 | macOS (arm64): fmt, clippy, tests, binary | **$(row macOS)** |
-| Linux (x86_64, not yet supported): build and tests | **$(row Linux)** |
+| Linux (x86_64): build and tests, plain checkouts (no copy-on-write) | **$(row Linux)** |
 | Finished | $when ([run]($url)) |
 
 From [autohandai/getzit](https://github.com/$repo) CI, written into this page by \`scripts/last-build.sh\`.

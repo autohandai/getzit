@@ -51,13 +51,23 @@ git zit export --branch main   # publish to git
 Each `run` starts the agent's headless mode (`autohand -p`, `claude -p`, `codex exec`, `pi -p`) in a disposable workspace, records whatever it leaves, and keeps its final message as the change's reason. Any other agent works too: `git zit run -- <command>`. [Agents](/agents) has the details, including MCP.
 
 {/* last-build:start */}
+### Latest build
+
+| | |
+|---|---|
+| Commit | [`550bd88`](https://github.com/autohandai/getzit/commit/550bd88a54f60f9dcc6f7c9fbb4c76f59f345f39) Install sharing is asserted only where copy-on-write exists |
+| macOS (arm64): fmt, clippy, tests, binary | **success** |
+| Linux (x86_64): build and tests, plain checkouts (no copy-on-write) | **success** |
+| Finished | 2026-10-05T00:41:16Z ([run](https://github.com/autohandai/getzit/actions/runs/37248000397)) |
+
+From [autohandai/getzit](https://github.com/autohandai/getzit) CI, written into this page by `scripts/last-build.sh`.
 {/* last-build:end */}
 
 ## Zit in action
 
 Ten people edit the same `README.md` at the same moment, each in their own workspace. Nine edits land in different sections and compose. Two people wrote the Prices section; the second is refused with the reason, retried on top of the first, resolved, and recorded with why. Then everything is published as one plain git branch, and `zit clean` removes every copy Zit made.
 
-![Ten users change one README.md at once with Zit: status, accept, a conflict, retry, export and clean](/images/zit-in-action.webp)
+![Ten users change one README.md at once with Zit: status, accept, a conflict, retry, export and clean](./images/zit-in-action.webp)
 
 The ten users are scripted (`demo/ten-users.sh`); every line of output is Zit's own. Recorded with [`vhs`](https://github.com/charmbracelet/vhs) from `demo/zit-in-action.tape`.
 
@@ -65,7 +75,7 @@ The ten users are scripted (`demo/ten-users.sh`); every line of output is Zit's 
 
 `zit web` shows the same repository live: the accepted line, the changes waiting above it, the people still at work below, and for any of them, what it wrote, why it stands where it does, its author's reason and the next command.
 
-![A walkthrough of zit web: a waiting change with its reason, a rejected change, a workspace in progress, filtering, and light mode](/images/web-walkthrough.webp)
+![A walkthrough of zit web: a waiting change with its reason, a rejected change, a workspace in progress, filtering, and light mode](./images/web-walkthrough.webp)
 
 Zit does not review code. It hands the reviewer changes that are already checked, already combined, and explained by their authors; whether a person reads them before they reach `main` is your process (see [Teams and review](/git#teams-and-review)).
 
