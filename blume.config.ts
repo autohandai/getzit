@@ -11,7 +11,7 @@ export default defineConfig({
       { label: "Get started", items: ["index", "tutorial", "quickstart", "why"] },
       { label: "Use it", items: ["agents", "web", "git"] },
       { label: "How it works", items: ["concepts", "science", "research"] },
-      { label: "Evidence", items: ["benchmarks", "lessons", "criticism", "limits"] },
+      { label: "Evidence", items: ["benchmarks", "lessons", "limits"] },
       { label: "Reference", items: ["cli", "checks", "spec"] },
     ],
   },

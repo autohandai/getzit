@@ -26,7 +26,7 @@ fn clean_deletes_every_local_copy_and_keeps_the_graph() {
     assert_eq!(report.workspaces, 1);
     assert!(report.verification_views >= 1, "{report:?}");
     // Checkouts are cached for cloning only where copy-on-write exists.
-    if cfg!(target_os = "macos") {
+    if zit::workspace::copy_on_write(&std::env::temp_dir()) {
         assert!(report.cached_states >= 1, "{report:?}");
     }
     assert!(local_dirs(&fx).is_empty(), "nothing left: {:?}", local_dirs(&fx));

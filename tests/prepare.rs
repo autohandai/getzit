@@ -12,7 +12,10 @@ fn fixture() -> Fixture {
     Fixture::new(&[("zit.toml", PREPARE), (".gitignore", "deps/\n"), ("lock.txt", "v1\n"), ("app.txt", "a\n")])
 }
 
-const COPY_ON_WRITE: bool = cfg!(target_os = "macos");
+/// Sharing one install needs copy-on-write where the tests run (APFS; btrfs, XFS on Linux).
+fn copy_on_write() -> bool {
+    zit::workspace::copy_on_write(&std::env::temp_dir())
+}
 
 fn stamp(ws: &zit::workspace::Workspace) -> String {
     fs::read_to_string(ws.path().join("deps/stamp")).unwrap()
@@ -23,8 +26,7 @@ fn workspaces_start_with_dependencies_installed_once() {
     let fx = fixture();
     let (a, b) = (fx.workspace("claude"), fx.workspace("codex"));
     assert_eq!(fs::read_to_string(a.path().join("deps/lock.txt")).unwrap(), "v1\n");
-    // Sharing one install needs copy-on-write (APFS); elsewhere each workspace installs its own.
-    if COPY_ON_WRITE {
+    if copy_on_write() {
         assert_eq!(stamp(&a), stamp(&b), "the second workspace cloned the first's install");
     }
     assert!(change::record(&fx.repo, &a.id, &Record::default()).unwrap().is_none(), "installed files are not a change");
@@ -36,7 +38,7 @@ fn dependencies_are_reinstalled_only_when_their_inputs_change() {
     let first = stamp(&fx.workspace("a"));
     let docs = fx.change("a", &[("app.txt", "b\n")]);
     accept::accept(&fx.repo, &docs.id).unwrap();
-    if COPY_ON_WRITE {
+    if copy_on_write() {
         assert_eq!(stamp(&fx.workspace("b")), first, "an unrelated change keeps the install");
     }
 

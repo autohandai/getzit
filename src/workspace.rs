@@ -348,9 +348,62 @@ fn clonefile(src: &Path, dst: &Path) -> std::io::Result<()> {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Linux: a directory tree whose files are reflinks (`FICLONE`) of the
+/// source's, so they share blocks until written. Works on btrfs, XFS
+/// (reflink=1) and bcachefs. Anywhere else the first file fails, the partial
+/// copy is removed and the error returned, so callers fall back as they would
+/// without copy-on-write.
+#[cfg(target_os = "linux")]
+fn clonefile(src: &Path, dst: &Path) -> std::io::Result<()> {
+    if dst.symlink_metadata().is_ok() {
+        return Err(std::io::ErrorKind::AlreadyExists.into());
+    }
+    let cloned = reflink_tree(src, dst);
+    if cloned.is_err() {
+        let _ = fs::remove_dir_all(dst).or_else(|_| fs::remove_file(dst));
+    }
+    cloned
+}
+
+#[cfg(target_os = "linux")]
+fn reflink_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::{symlink, PermissionsExt};
+    let meta = src.symlink_metadata()?;
+    if meta.file_type().is_symlink() {
+        return symlink(fs::read_link(src)?, dst);
+    }
+    if meta.is_dir() {
+        fs::create_dir(dst)?;
+        for entry in fs::read_dir(src)? {
+            let entry = entry?;
+            reflink_tree(&entry.path(), &dst.join(entry.file_name()))?;
+        }
+        return fs::set_permissions(dst, meta.permissions());
+    }
+    let from = fs::File::open(src)?;
+    let to = fs::OpenOptions::new().write(true).create_new(true).open(dst)?;
+    // SAFETY: both descriptors are open for the duration of the call.
+    if unsafe { libc::ioctl(to.as_raw_fd(), libc::FICLONE, from.as_raw_fd()) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    to.set_permissions(fs::Permissions::from_mode(meta.permissions().mode()))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn clonefile(_src: &Path, _dst: &Path) -> std::io::Result<()> {
     Err(std::io::ErrorKind::Unsupported.into())
+}
+
+/// Whether the file system holding `dir` supports the copy-on-write clones
+/// workspaces are made of (APFS; btrfs, XFS or bcachefs on Linux).
+pub fn copy_on_write(dir: &Path) -> bool {
+    let probe = dir.join(format!(".zit-cow-probe-{}", fresh_id()));
+    let (src, dst) = (probe.join("a"), probe.join("b"));
+    let supported =
+        fs::create_dir_all(&src).is_ok() && fs::write(src.join("f"), b"zit").is_ok() && clonefile(&src, &dst).is_ok();
+    let _ = fs::remove_dir_all(&probe);
+    supported
 }
 
 /// Pristine checkouts by state id, the source of copy-on-write clones.
@@ -598,10 +651,11 @@ pub fn declare_reads(repo: &Repo, id: &str, reads: &[Resource]) -> Result<()> {
     Ok(())
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use cache::Source;
+    use std::fs;
 
     fn sh(cwd: &Path, script: &str) {
         assert!(Command::new("sh").current_dir(cwd).args(["-c", script]).status().unwrap().success());
@@ -610,6 +664,10 @@ mod tests {
     #[test]
     fn states_are_cloned_from_the_cache_exactly_or_by_delta() {
         let dir = tempfile::tempdir().unwrap();
+        if !copy_on_write(dir.path()) {
+            eprintln!("skipped: no copy-on-write where the temp directory is");
+            return;
+        }
         sh(dir.path(), "git init -q -b main . && echo one > a && echo keep > b && git add -A && git -c user.name=t -c user.email=t@t commit -qm one && echo two > a && git -c user.name=t -c user.email=t@t commit -qam two");
         let repo = Repo::open(dir.path(), &dir.path().join("home")).unwrap();
         let first = repo.tree_of(&repo.resolve("HEAD~1").unwrap()).unwrap();
@@ -630,7 +688,8 @@ mod tests {
 
 #[cfg(test)]
 mod liveness {
-    use super::process_alive;
+    use super::{clonefile, copy_on_write, process_alive};
+    use std::{fs, path::Path};
 
     #[test]
     fn a_process_we_may_not_signal_is_still_alive() {
@@ -641,5 +700,30 @@ mod liveness {
         let pid = child.id();
         child.wait().unwrap();
         assert!(!process_alive(pid));
+    }
+
+    #[test]
+    fn a_clone_is_a_faithful_copy_or_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        fs::create_dir_all(src.join("sub")).unwrap();
+        fs::write(src.join("sub/f"), "data").unwrap();
+        std::os::unix::fs::symlink("sub/f", src.join("link")).unwrap();
+        let dst = dir.path().join("dst");
+        match clonefile(&src, &dst) {
+            Ok(()) => {
+                assert_eq!(fs::read_to_string(dst.join("sub/f")).unwrap(), "data");
+                assert_eq!(fs::read_link(dst.join("link")).unwrap(), Path::new("sub/f"));
+                fs::write(dst.join("sub/f"), "changed").unwrap();
+                assert_eq!(fs::read_to_string(src.join("sub/f")).unwrap(), "data", "writes do not reach the source");
+                assert!(copy_on_write(dir.path()));
+            }
+            Err(e) => {
+                // CI runs this on btrfs and sets ZIT_EXPECT_COW: there it must work.
+                assert!(std::env::var_os("ZIT_EXPECT_COW").is_none(), "copy-on-write expected: {e}");
+                assert!(!dst.exists(), "a failed clone leaves nothing behind");
+                assert!(!copy_on_write(dir.path()));
+            }
+        }
     }
 }
