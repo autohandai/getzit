@@ -104,7 +104,7 @@ stateDiagram-v2
 
 `zit materialise` gives a directory holding a state. The agent may do anything to it, including delete it. Recorded changes do not live there.
 
-On APFS the directory is a copy-on-write clone of a cached checkout, so creating one does not copy file contents (ADR 5). It is also a working git view, without being a registered worktree and without a branch.
+On a copy-on-write file system (APFS; btrfs, XFS, bcachefs) the directory is a clone of a cached checkout, so creating one does not copy file contents (ADR 5). It is also a working git view, without being a registered worktree and without a branch.
 
 ## Claims: before the work, not after
 

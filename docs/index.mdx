@@ -14,7 +14,7 @@ Most developers are not there yet: most who use agents run one at a time. But th
 
 **Zit** is a git extension for teams already running several agents on one repository. It does four things:
 
-1. **Copies.** Each contributor, person or agent, gets a disposable copy of the code with dependencies installed: about 0.4 s for a 30,000-file repository on APFS, sharing disk with every other copy. On other file systems it is a plain checkout, no faster than a worktree.
+1. **Copies without new files.** Each contributor, person or agent, gets a disposable copy of the code, dependencies included, that writes no new files: it shares every file with the other copies until one is edited, so ten agents do not mean ten checkouts and ten `node_modules`. This needs a copy-on-write file system: APFS on macOS; btrfs, XFS or bcachefs on Linux. Elsewhere it is a plain checkout.
 2. **Awareness.** Agents on the same machine can see what the others are changing right now and claim work before starting it.
 3. **Integration.** Changes land one at a time. Each is compared with what landed since it started, by the functions it changed and the names it uses, and the combined result must pass your checks (current's and the change's own) before it becomes the current state.
 4. **Reasons.** Every change keeps its author's own account of what it did and why, as the body of its commit.

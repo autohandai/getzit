@@ -12,7 +12,7 @@ export default defineConfig({
   },
   navigation: {
     sidebar: [
-      { label: "Get started", items: ["index", "tutorial", "quickstart", "why"] },
+      { label: "Get started", items: ["index", "tutorial", "quickstart", "why", "compare"] },
       { label: "Use it", items: ["agents", "web", "git"] },
       { label: "How it works", items: ["concepts", "science", "research"] },
       { label: "Evidence", items: ["benchmarks", "lessons", "limits"] },

@@ -27,10 +27,12 @@ With no command after `--`, these presets are used, with `--intent` as the promp
 
 | `--agent` | Command |
 |---|---|
-| `autohand` | `autohand -p <intent> --yes` |
-| `claude` | `claude -p <intent> --permission-mode acceptEdits` |
-| `codex` | `codex exec --sandbox workspace-write --output-last-message $ZIT_SUMMARY_FILE --add-dir ~/.zit/<repo> <intent>` |
+| `autohand` | `autohand -p <intent> --yes --output-format stream-json` |
+| `claude` | `claude -p <intent> --permission-mode acceptEdits --output-format json` |
+| `codex` | `codex exec --json --sandbox workspace-write --output-last-message $ZIT_SUMMARY_FILE --add-dir ~/.zit/<repo> <intent>` |
 | `pi` | `pi -p <intent>` |
+
+The first three run in the agent's JSON mode. `zit run` reads the agent's final message and what the turn cost from that output and prints the final message when the agent is done, instead of the raw events. The same happens when you give such a command yourself (`-- claude -p … --output-format json`).
 
 Anything else: give the command yourself.
 
@@ -45,6 +47,22 @@ zit run --agent my-bot --intent "Fix the flaky test" -- my-bot --task fix-flaky
 | `--timeout SECONDS` | stop the agent after this long; its partial work is still recorded; exit code 124 |
 | `--keep` | leave the workspace in place |
 | `--json` | print a report; the agent's stdout goes to stderr |
+
+### What it cost
+
+`zit run` records what the agent reports about its own usage with the change, and `zit show` prints it:
+
+```text
+usage    34012 tokens in, 1840 out, $0.1865
+```
+
+| Agent | Reports |
+|---|---|
+| Claude Code | tokens in (cached ones included) and out, and dollars |
+| Codex | tokens in and out, summed over its turns; no price |
+| Autohand Code, Pi | nothing yet |
+
+The numbers are the agent's own; Zit adds nothing. They are stored as `Zit-Tokens` and `Zit-Cost-USD` trailers, so `git log` keeps them too.
 
 ### What the agent says is kept
 

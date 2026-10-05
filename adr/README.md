@@ -17,3 +17,5 @@ Why Zit is built the way it is, one decision per file, in the order they were ma
 - [ADR 13: Ignore tool by-products; bound the cost of awareness](0013-byproducts-and-awareness-cost.md)
 - [ADR 14: Install dependencies once, clone them into every workspace](0014-prepared-dependencies.md)
 - [ADR 15: Trust boundaries](0015-trust-boundaries.md)
+- [ADR 16: Interfaces, methods and imports](0016-interfaces-methods-imports.md)
+- [ADR 17: Team rules, and what a change cost](0017-team-rules-and-cost.md)

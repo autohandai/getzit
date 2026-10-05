@@ -15,7 +15,7 @@ All commands take `--json`. Changes can be named by any unique id prefix, any gi
 | `zit status` | Current, every speculative change with its status and reason, every workspace. |
 | `zit show CHANGE` | One change: intent, agent, parents, writes, declared reads, status, evidence. |
 | `zit check CHANGE [--rerun]` | Run the state's checks that have no evidence. Exit 1 if any fails. |
-| `zit accept CHANGE [--allow-stale] [--rerun]` | Make it part of current. Exit 1 if rejected, with the reason. `--rerun` runs every check again. |
+| `zit accept CHANGE [--allow-stale] [--rerun] [--linear]` | Make it part of current. Exit 1 if rejected, with the reason. `--rerun` runs every check again; `--linear` composes as one commit instead of a merge. |
 | `zit retry CHANGE` | New workspace on current with the change's edits applied; prints its path. |
 | `zit discard CHANGE…` | Remove speculative changes from the graph. |
 
@@ -36,8 +36,8 @@ Inside a workspace, `record`, `read` and `claim` need no `--workspace`. `status`
 
 | Command | Does |
 |---|---|
-| `zit run [--agent NAME] [--intent TEXT] [--from CHANGE] [--keep] [--accept] [--timeout SECONDS] [-- COMMAND…]` | Run a command in a fresh workspace and record its work however it ends. |
-| `zit mcp` | Serve the graph over the Model Context Protocol on stdio. |
+| `zit run [--agent NAME] [--intent TEXT] [--from CHANGE] [--keep] [--accept] [--timeout SECONDS] [-- COMMAND…]` | Run a command in a fresh workspace and record its work, its final message and its cost, however it ends. With `--agent autohand\|claude\|codex\|pi` and no command, a preset. |
+| `zit mcp [--integrator]` | Serve the graph over the Model Context Protocol on stdio. `--integrator` adds `zit_accept` and `zit_discard`. |
 | `zit ui` | Interactive list of changes and workspaces, in the terminal. |
 | `zit web [--port 4747] [--no-open]` | [Live graph in the browser](/web). Read-only. |
 
@@ -47,7 +47,7 @@ With `--agent claude`, `codex` or `autohand` and no command, `run` uses that age
 
 | Command | Does |
 |---|---|
-| `zit export [--branch main]` | Fast-forward the branch to current. |
+| `zit export [--branch main] [--pr [--base main] [--remote origin]]` | Fast-forward the branch to current. `--pr` pushes it and opens a pull request into `--base` with every change's reason (needs `gh`). |
 | `zit sync [--branch main]` | Accept the branch into current, then export. |
 
 ## The UI

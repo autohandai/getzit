@@ -77,6 +77,23 @@ pub fn preset(agent: &str, prompt: &str, writable: &[PathBuf]) -> Option<Vec<Str
     })
 }
 
+/// Whether `argv` runs a known agent in the JSON mode `zit run` reads:
+/// `claude … --output-format json|stream-json`, `codex exec … --json`,
+/// `autohand … --output-format stream-json`.
+pub fn prints_json_events(argv: &[String]) -> bool {
+    let program = argv.first().and_then(|p| std::path::Path::new(p).file_name()).and_then(|n| n.to_str());
+    let has = |flag: &str, values: &[&str]| {
+        argv.windows(2).any(|w| w[0] == flag && values.contains(&w[1].as_str()))
+            || argv.iter().any(|a| values.iter().any(|v| *a == format!("{flag}={v}")))
+    };
+    match program {
+        Some("claude") => has("--output-format", &["json", "stream-json"]),
+        Some("autohand") => has("--output-format", &["stream-json"]),
+        Some("codex") => argv.iter().any(|a| a == "--json"),
+        _ => false,
+    }
+}
+
 /// A terminal Ctrl-C already reaches the agent (same process group); a
 /// signal sent to us alone does not and must be forwarded.
 fn terminal_delivers_signals() -> bool {

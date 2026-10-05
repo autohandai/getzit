@@ -65,16 +65,43 @@ After a fetch the other machine sees the same speculative changes and evidence, 
 
 - **Do not add `--prune` to the push.** It deletes every remote change you have not fetched, which can be someone else's work.
 - **One integrator.** There is no reconciliation for the refs themselves: if two machines both move `refs/zit/current`, the second push is refused as non-fast-forward. Run `accept` in one place (one machine, or one CI job) per repository.
-- **Fetched evidence is trusted.** A check result fetched from a remote is reused like one produced locally, and nothing records who produced it. Anyone who can push `refs/zit/*` can therefore plant a passing result. Until evidence is signed, accept with `--rerun` when the evidence came from elsewhere, or do not fetch `refs/zit/evidence/*`.
+- **Fetched evidence is not trusted by default.** Anyone who can push `refs/zit/*` could write a passing result, so each clone remembers which results it produced itself (in `.git/zit/`) and runs the rest again. A machine that should trust another, for example your CI, says so: `git config zit.trustFetchedEvidence true`. Tested in `tests/replicate.rs`, including a forged result that does not get a failing change accepted.
+- **When two machines disagree about a result**, the second push of that evidence ref is refused. Publish your result deliberately with `git push origin '+refs/zit/evidence/*:refs/zit/evidence/*'`.
 
 ## Teams and review
 
-Zit decides whether a change *can* land: it composes, checks and explains it. It does not decide whether a person has *approved* it.
+Zit decides whether a change *can* land: it composes, checks and explains it. It does not decide whether a person has *approved* it; your code host does.
 
-- **Protected `main`.** Export to a branch you are allowed to push, and open a pull request from it: `zit export --branch zit/ready && git push origin zit/ready`. Your code host's required reviews, CODEOWNERS and status checks then apply as usual. The pull request carries each change's account in its commits.
-- **Required checks in CI.** Zit's checks run on the integrator's machine, in a reused build directory: fast, not hermetic. Keep CI as the authority; Zit's checks are the pre-filter that keeps broken combinations out of the queue.
-- **History shape.** A change accepted onto a moved current becomes a two-parent "Compose" commit, so `main` gets one merge per change. There is no squash or rebase mode yet.
-- **Identity and signing.** The author of a change is its agent name, which the agent can choose; compose commits are not signed. Repositories that require signed commits on `main` need the pull-request route above.
+### Protected `main`: a pull request
+
+```sh
+zit export --branch zit/ready --pr            # --base main --remote origin are the defaults
+```
+
+This fast-forwards `zit/ready` to current, pushes it, and opens a pull request into `main` with the GitHub CLI (`gh`). The title is the change's intent (or "N changes"); the body lists every change with its author's reason. Branch protection, required reviews, CODEOWNERS, status checks and the merge queue then apply as usual. Tested in `tests/teams.rs` (with a stand-in for `gh`).
+
+### Linear history
+
+```sh
+zit accept --linear <change>
+```
+
+or, for everyone, in `zit.toml`:
+
+```toml
+[accept]
+linear = true
+```
+
+A change accepted onto a moved current then becomes one commit on top of it, not a merge commit; it carries a `Zit-Change:` trailer, so accepting it again is recognised as done. A change built on current is a fast-forward either way.
+
+### Who committed, and signatures
+
+The author of a change is its agent; the committer is you, from git's `user.name` and `user.email`. With `commit.gpgsign` set, every commit Zit writes is signed with your key (GPG or SSH, as git is configured). Tested in `tests/teams.rs`.
+
+### CI
+
+Zit's checks run on the integrator's machine, in a reused build directory: fast, not hermetic. Keep CI as the authority; Zit's checks are the pre-filter that keeps broken combinations out of the queue. To integrate in CI instead, run `zit accept` in one job with `zit.trustFetchedEvidence` off, so the job runs every check itself.
 
 ## Inspecting with git
 

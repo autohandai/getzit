@@ -26,23 +26,30 @@ Trailers, one per line, after the intent:
 
 ```text
 Zit-Agent: <name>
-Zit-Session: <id>          (optional)
-Zit-Read: <resource>       (zero or more)
+Zit-Session: <id>                  (optional)
+Zit-Read: <resource>               (zero or more)
+Zit-Tokens: <in> in, <out> out     (optional: what the agent reported)
+Zit-Cost-USD: <dollars>            (optional)
+Zit-Change: <commit id>            (on a linear compose: the change it lands)
 ```
+
+The committer is the person running Zit (`user.name`, `user.email`), and the commit is signed when `commit.gpgsign` is set. (`tests/teams.rs`, `tests/usage.rs`)
 
 The first paragraph of the message is the intent; any further paragraphs before the trailers are the **account**: what the author reported doing and why (`summary`). A commit with no trailers is a valid change: agent = author name, intent = subject, account = body, no declared reads. (`a_plain_git_commit_is_a_change`)
 
 ### 1.3 Resource
 
 ```text
-resource = path            ; whole file
-         | path "#" name   ; top-level symbol
-         | path "#"        ; module-level code outside symbols
+resource = path                 ; whole file
+         | path "#" name        ; top-level symbol
+         | path "#" type "::" m ; a method of a type
+         | path "#(imports)"    ; the file's imports
+         | path "#"             ; module-level code outside symbols
 ```
 
 The path is everything before the first `#`; in it, a literal `#` is written `%23` and `%` is written `%25`. (`hashes_in_paths_and_names_round_trip`)
 
-Two resources overlap iff they are equal, or one is a whole file and both have the same path.
+Two resources overlap iff they are equal, or one is a whole file and both have the same path. For claims only, a type also holds its methods (`T` and `T::m`).
 
 ### 1.4 Evidence
 
@@ -63,6 +70,8 @@ A JSON blob:
 | `refs/zit/changes/<commit id>` | commit | `record`; deleted by `accept`, `discard` |
 | `refs/zit/evidence/<key>` | blob | `check`, `accept` |
 
+A clone trusts only the evidence it produced, listed in `<git dir>/zit/evidence-produced/<key>`, unless `git config zit.trustFetchedEvidence true`. A fresh result with the same verdict as an existing ref keeps the existing object. (`tests/replicate.rs`)
+
 **Invariant.** `refs/zit/current` only moves by compare-and-swap from the value the accepting process observed. (`racing_accepts_all_land_exactly_once`)
 
 ## 3. Footprint
@@ -70,20 +79,20 @@ A JSON blob:
 `footprint(base, tip)`:
 
 1. `git diff-tree -r --no-renames base tip`.
-2. For each changed path, index the old and new blob: top-level symbols by name, each with a hash of its text and the set of identifiers it mentions, plus one unit for everything outside symbols.
-3. `writes` = symbols whose hash differs, added or removed; `path#` if the outside unit differs; `path` if either side has no grammar, is not UTF-8, is not a regular file, or exceeds 1 MiB.
-4. `refs` = identifiers mentioned by the new version of each written unit, excluding the identifier that declares the symbol.
+2. For each changed path, index the old and new blob into units: top-level symbols and methods (`Type::method`), the imports (`(imports)`), and everything else (`path#`). Each unit has a hash of its text, a hash of its **interface** (its text without function bodies and comments), and the identifiers it mentions. Attributes and comments directly above an item belong to it.
+3. `writes` = units whose hash differs, added or removed; `path` if either side has no grammar, is not UTF-8, is not a regular file, or exceeds 1 MiB. `signatures` = the written units whose interface hash differs.
+4. `refs` = identifiers mentioned by the new version of each written unit, excluding the identifier that declares it, and excluding members of values (`x.get`); members of imported modules (`lib.price`) count.
 5. `reads` = every `Zit-Read` of the commits in `base..tip`.
 
-`conflicts(mine, theirs)`: for each resource `w` in `theirs.writes`: *write-write* if it overlaps one of `mine.writes`; else *read-write* if it overlaps one of `mine.reads` or is a symbol whose name is in `mine.refs`. Symmetrically, *write-read* for each of `mine.writes` that `theirs` reads and does not write.
+`conflicts(mine, theirs)`: for each resource `w` in `theirs.writes`: *write-write* if it overlaps one of `mine.writes`; else *read-write* if it overlaps one of `mine.reads`, or if `w` is in `theirs.signatures` and `mine.refs` names it (its name, or for `T::m`, its type `T`). Symmetrically, *write-read*. At accept, write-write on prose (Markdown) and on `(imports)` is left to the text merge; on generated paths it is ignored.
 
 Symbol naming:
 
-| Language | Symbols | Folded into their type |
+| Language | Symbols | Methods, as `Type::method` |
 |---|---|---|
-| Rust | every top-level `*_item`, `macro_rules!` | `impl` blocks |
-| Python | `def`, `class`, decorated definitions, `NAME = …` | methods |
-| JavaScript, TypeScript, TSX | function, class, interface, type, enum, `const`/`let`/`var` declarators, and their `export`ed forms | methods |
+| Rust | every top-level `*_item`, `macro_rules!`; an `impl` block's header joins its type | functions in `impl` blocks |
+| Python | `def`, `class`, decorated definitions, `NAME = …` | functions in a class body |
+| JavaScript, TypeScript, TSX | function, class, interface, type, enum, `const`/`let`/`var` declarators, and their `export`ed forms | `method_definition`s in a class body |
 | Go | `func`, `type`, `const`, `var` | methods, by receiver type |
 | Markdown | each heading's section, named by the heading text | — |
 
@@ -154,7 +163,7 @@ In-flight writes are `footprint(base state, snapshot)`, where the snapshot is ta
 
 ### 6.0 Names
 
-The command is `zit`; `git-zit` is the same program for `git zit …`. Refs are under `refs/zit/`, change trailers are `Zit-Agent`, `Zit-Session`, `Zit-Read`, the config is `zit.toml`, local state is in `$ZIT_HOME` (default `~/.zit`).
+The command is `zit`; `git-zit` is the same program for `git zit …`. Refs are under `refs/zit/`, change trailers are `Zit-Agent`, `Zit-Session`, `Zit-Read`, `Zit-Tokens`, `Zit-Cost-USD`, `Zit-Change`, the config is `zit.toml`, local state is in `$ZIT_HOME` (default `~/.zit`).
 
 ### 6.1 CLI exit codes
 

@@ -87,3 +87,41 @@ echo '{"type":"result","content":"Created b.txt."}'"#,
     assert_eq!(report["change"]["summary"], "Created b.txt.");
     assert!(report["change"]["usage"].is_null(), "autohand reports no usage");
 }
+
+/// An explicit command already in the agent's JSON mode is read the same way as a preset.
+#[test]
+fn an_explicit_json_command_is_read_like_a_preset() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = Cli::new(dir.path(), &[("a.txt", "a\n")]);
+    cli.run(&["init"]).ok();
+    let bin = dir.path().join("bin");
+    fake(
+        &bin,
+        "claude",
+        r#"echo edited > b.txt
+printf '%s\n' '{"type":"result","result":"Done.","total_cost_usd":0.5,"usage":{"input_tokens":7,"output_tokens":3}}'"#,
+    );
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let out = cli
+        .command(&cli.root)
+        .env("PATH", path)
+        .args([
+            "run",
+            "--json",
+            "--agent",
+            "claude",
+            "--intent",
+            "x",
+            "--",
+            "claude",
+            "-p",
+            "x",
+            "--output-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["change"]["summary"], "Done.");
+    assert_eq!(report["change"]["usage"]["cost_usd"], 0.5);
+}

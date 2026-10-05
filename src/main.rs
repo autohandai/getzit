@@ -46,6 +46,7 @@ enum Cmd {
         from: String,
     },
     /// Create a disposable workspace holding a state; prints its path.
+    #[command(visible_alias = "materialize")]
     Materialise(#[command(flatten)] Who),
     /// Declare resources observed (`path`, `path#Symbol`, `path#`).
     Read {
@@ -407,7 +408,10 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
         Cmd::Run { who, keep, accept, timeout, command } => {
             let agent = who.agent.unwrap_or_else(default_agent);
             // Presets that print JSON events: their final message and usage are read from them.
-            let structured = command.is_empty() && matches!(agent.as_str(), "claude" | "codex" | "autohand");
+            let structured = match command.is_empty() {
+                true => matches!(agent.as_str(), "claude" | "codex" | "autohand"),
+                false => run::prints_json_events(&command),
+            };
             let command = match command.is_empty() {
                 false => command,
                 true => run::preset(&agent, &who.intent, &[repo.home().to_path_buf()])

@@ -54,6 +54,32 @@ pub fn clean(repo: &Repo, force: bool) -> Result<Report> {
             )));
         }
     }
+    // Take the locks clones and verifications hold, without waiting: if one is
+    // busy, something is using these files right now. Held until deleted.
+    let mut held = Vec::new();
+    let mut busy = Vec::new();
+    let lock_files = fs::read_dir(home.join("verify"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "lock"))
+        .chain([home.join("trees/.lock")].into_iter().filter(|p| p.exists()));
+    for path in lock_files {
+        use std::os::fd::AsRawFd;
+        let Ok(file) = fs::File::open(&path) else { continue };
+        // SAFETY: `file` is an open descriptor we own.
+        match unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } {
+            0 => held.push(file),
+            _ => busy.push(path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
+        }
+    }
+    if !busy.is_empty() && !force {
+        return Err(Error::msg(format!(
+            "not cleaning: a clone or a verification is in progress ({}). Try again when it is done, or pass --force.",
+            busy.join(", ")
+        )));
+    }
     let report = Report {
         workspaces: spaces.len(),
         cached_states: count(&home.join("trees")),
@@ -65,6 +91,7 @@ pub fn clean(repo: &Repo, force: bool) -> Result<Report> {
     if home.exists() {
         fs::remove_dir_all(home)?;
     }
+    drop(held);
     let freed = before.zip(free_bytes(anchor)).map_or(0, |(b, a)| a - b);
     Ok(Report { freed_bytes: freed, ..report })
 }

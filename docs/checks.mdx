@@ -99,6 +99,15 @@ inputs = ["package.json", "package-lock.json"]
 
 Run once in the cached checkout every workspace is cloned from, and again only when `inputs` change. Every workspace starts with the result, as a copy-on-write clone. It may only create ignored files; anything else is an error that names the files. Use an install that does not rewrite the lockfile. (ADR 14)
 
+## How changes land
+
+```toml
+[accept]
+linear = true   # compose as one commit on top of current, never a merge commit
+```
+
+Read from current, so it applies to everyone who accepts. Same as `zit accept --linear` ([Teams and review](/git#teams-and-review)).
+
 ## Ignore patterns
 
 ```toml

@@ -73,7 +73,7 @@ One worktree with its install took about 324 MB on disk (1,619 MB for five). The
 
 ### The fine print
 
-- **The savings need a copy-on-write file system.** APFS (macOS) is implemented and tested. On anything else Zit falls back to a plain checkout and saves nothing on source files; Linux reflinks are not built yet.
+- **The savings need a copy-on-write file system.** APFS on macOS; btrfs, XFS (with reflink) or bcachefs on Linux. Both are tested in CI; the numbers on this page were measured on APFS, and Linux has not been benchmarked yet. On ext4 and other file systems Zit falls back to a plain checkout and saves nothing.
 - **Clones share until written.** A workspace that rewrites `node_modules` pays for what it rewrites.
 - **Compiled projects may rebuild per workspace path.** Build tools that key their caches on absolute paths (Cargo, for example) are expected to rebuild the project's own code in each new workspace even when the build directory was cloned. This has not been measured with `[prepare]`.
 

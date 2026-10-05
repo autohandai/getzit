@@ -5,18 +5,18 @@ description: What version 0.1 does not do, and where its guarantees stop.
 
 ## Platform
 
-- Developed on macOS 15.5 (arm64). CI builds and runs every test on macOS (arm64) and Linux (x86_64, Ubuntu). The code is Unix-only (signals, `libc`); there is no Windows support.
-- Copy-on-write workspaces need APFS. Anywhere else Zit falls back to a plain checkout, which is no faster than `git worktree add`. A Linux reflink or overlay strategy is not implemented.
-- Requires git 2.38 or newer (`merge-tree --write-tree`).
+- macOS and Linux. CI runs every test on macOS (arm64), Linux (x86_64) and Linux on btrfs with copy-on-write required. The code is Unix-only (signals, `libc`); there is no Windows support.
+- **Copy-on-write needs a file system that supports it:** APFS on macOS; btrfs, XFS with reflink, or bcachefs on Linux (`FICLONE` reflinks). On ext4 and others, a workspace is a plain checkout: its files are new copies, and `[prepare]` installs dependencies again in each one. Disk on Linux has not been benchmarked yet; the reflink path is tested, not measured.
+- Requires git 2.38 or newer (`merge-tree --write-tree`); Zit checks and names the version it needs.
 
 ## Semantics
 
 - **Prose merges like git.** Two edits to one Markdown section are accepted when their text merges; Zit does not judge them further. Code is stricter: two edits to one function are refused even when the text merges.
 - **Adjacent insertions conflict.** Two contributors adding different lines at the same place in a list is a text conflict, as in git. In the 50-contributor simulation this was the most common remaining rejection ([Lessons](/lessons)).
-- **Inferred reads match by name, anywhere in the repository.** A change that mentions `Config`, or calls a method `.get()`, is considered to read every top-level symbol with that name in any file; imports and paths are not resolved. This refused 21–23% of good changes in the scripted benchmark ([Benchmarks](/benchmarks)), and real code with common names (`get`, `new`, `run`) will refuse more. It cannot see dynamic dispatch, reflection, or names built from strings.
-- **A callee's body change makes its callers stale**, even when the signature is unchanged. That is what "you read something that changed" means; `--allow-stale` lets the checks decide instead.
-- **Five languages have symbol granularity**: Rust, Python, JavaScript, TypeScript/TSX, Go, plus Markdown by heading. Every other file (Java, C#, C++, Kotlin, Ruby, PHP, Swift, manifests, lockfiles) is one resource with no inferred reads, so semantic staleness is not detected for it; nothing warns you. Symbols are top-level only; a method is part of its type, so in class-heavy code a change to one method touches the whole class. Attributes and comments directly above an item belong to it.
-- **Imports are module-level code.** Two changes that each add an import to the same file both write `path#` and refuse each other, even when git would merge them.
+- **Inferred reads match by name.** A change that mentions `Config` depends on every symbol called `Config` in any file; a method `Type::method` is depended on by code that names `Type`. Paths are not resolved. Member calls on values (`cache.get()`) are not references; member calls on imported modules (`lib.price()`, `fmt.Println`) are. It cannot see dynamic dispatch, reflection, or names built from strings.
+- **Only an interface change makes a reader stale.** An inferred reader goes stale when a symbol's interface changes (its text without function bodies and comments: signatures, fields, constants), not when only a body changes. A body change that breaks a caller's behaviour is left to the checks. Declared reads (`zit read`) still see any change. The scripted benchmark's 21–23% false refusals were measured before this rule; not re-measured yet.
+- **Five languages have symbol granularity**: Rust, Python, JavaScript, TypeScript/TSX, Go, plus Markdown by heading. Top-level items and methods (`Type::method`) are units; nested functions are part of their parent. Every other file (Java, C#, C++, Kotlin, Ruby, PHP, Swift, manifests, lockfiles) is one resource with no inferred reads, so semantic staleness is not detected for it; `zit record` says so for source files it cannot parse.
+- **Imports are their own unit** (`path#(imports)`): two changes that both add imports compose when their text merges.
 - **Renames are a delete plus an add.**
 - **Check `inputs` are trusted**, not verified.
 - Symlinks and submodules are whole-file resources. Git LFS is untested.
@@ -46,14 +46,14 @@ description: What version 0.1 does not do, and where its guarantees stop.
 ## Not built
 
 - No server, accounts or access control: whoever can write the repository's refs can accept. Agents using MCP cannot: `zit_accept` and `zit_discard` are offered only by `zit mcp --integrator`.
-- No signed evidence: check results fetched from a remote are trusted as if run locally ([Another machine](/git#another-machine)).
-- No pull-request export, squash/rebase compose, commit signing, or CI integration ([Teams and review](/git#teams-and-review)).
-- No Linux reflinks, release binaries, or CI for Zit itself.
+- No signed evidence. Check results fetched from a remote are not trusted unless you set `zit.trustFetchedEvidence` ([Another machine](/git#another-machine)); with it set, they are trusted without proof of who produced them.
+- No batching: changes are verified and land one at a time ([Compared](/compare)).
+- No CI integration beyond running `zit accept` in a job yourself ([Teams and review](/git#teams-and-review)).
 - No replication protocol beyond `git fetch`/`git push` of `refs/zit/*`, and no automatic reconciliation of two machines that both moved current.
 - No remote, container or VM materialisers.
 - No dependency tracking on build artifacts, database schemas or runtime assumptions; resources are files and symbols.
 - No automatic tracking of what an agent read. Reads are inferred from written code or declared.
-- No record of what an agent turn cost, so no experiment so far reports tokens or money, and no way for an agent to set the intent of the change `zit run` records for it.
-- No measure of the quality of what landed: "landed" means it composed and passed the checks, not that it was good.
+- **Cost is what the agent reports.** Claude Code reports tokens and dollars, Codex tokens only, Autohand and Pi nothing yet. No way for an agent to set the intent of the change `zit run` records for it.
+- **"Landed" means it composed and passed the checks**, not that it was good. Quality has been scored once, by a blind model judge ([Lessons](/lessons)), not by people.
 - No shared place for a question about the task that every agent should see answered once.
 - The largest run measured is in [Benchmarks](/benchmarks). Nothing larger is claimed.

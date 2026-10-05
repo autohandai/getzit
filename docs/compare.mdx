@@ -1,0 +1,47 @@
+---
+title: Compared
+description: Zit next to GitHub merge queue, GitLab merge trains, Graphite, Conductor, Claude Code worktrees, Cursor worktrees and plain git worktrees, from each tool's own documentation.
+---
+
+Every cell below comes from the tool's own documentation, read on 5 October 2026, or from Zit's docs and tests. "Not documented" means the docs are silent, not that the feature is missing.
+
+| | Isolation, disk | Sees others' work in progress | Catches a semantic conflict before checks | Tests the combined result before main moves | Batching | Keeps the agent's reason | Runs without a server |
+|---|---|---|---|---|---|---|---|
+| **Zit** | Copy-on-write clone of one cached checkout, dependencies included (APFS, btrfs, XFS, bcachefs); a checkout elsewhere | Yes, agents on one machine: claims and live write sets | Yes, by symbol and name, five languages | Yes: current's checks and the change's own | No: one at a time | Yes: the agent's final message is the commit body | Yes |
+| **GitHub merge queue** [1] | n/a, works on pull requests | No: only pull requests already queued | No: what your CI catches on the merge group | Yes: base plus the pull requests ahead | Yes: 1–100 pull requests per merge, up to 100 concurrent builds | Not documented | No: hosted |
+| **GitLab merge trains** [2] | n/a | No | No: CI only | Yes: cumulative pipelines | Up to 20 parallel pipelines | Not documented | Self-managed possible |
+| **Graphite** [3] | n/a, branches per stack | Stacked branches build on their parent | No static analysis documented; rebases and re-runs CI | Yes: rebase and CI | Batching in private beta | Not documented | No: the queue is hosted |
+| **Conductor** [4] | A git worktree per workspace; a setup script per workspace | Not documented | Not documented | Not documented | Not documented | Not documented | Yes (Mac app) |
+| **Claude Code worktrees** [5] | A git worktree per session: a fresh checkout, dependencies installed per worktree | Text messages between sessions | No | No | No | A one-line summary from a separate model | Yes |
+| **Cursor worktrees** [6] | A separate checkout per agent, setup such as `npm ci`; 25 per machine by default | Not documented | Not documented | No: changes are applied back into the main checkout | No | Not documented | Worktrees local; cloud agents in VMs |
+| **`git worktree` + CI** [7] | A full working tree per worktree, shared object store | No | No | Only if CI runs on the merge result | No | The commit message | Yes |
+
+## Where Zit is different
+
+- **It refuses a change that relied on an interface that changed, before any check runs**, even when git would merge it. Queues and trains catch such a change only if your CI fails on the combined branch. The cost: some good changes are refused, and only five languages are understood ([Limits](/limits#semantics)).
+- **Agents see what others are writing before anyone merges**, and claim work so they split it. Claude Code's closest feature is text messages between sessions.
+- **Workspaces share disk, dependencies included.** Claude Code, Cursor and Conductor document a fresh checkout and an install per workspace. Measured: 327 MB instead of 1,619 MB for five contributors on an npm project ([Benchmarks](/benchmarks)).
+- **The change carries its author's own reason**, and its cost when the agent reports it.
+- **One local path for people's branches and agents' changes**, with no server.
+
+## Where the others are ahead
+
+- **Hosted, with access control.** GitHub merge queue and GitLab merge trains enforce branch protection, required checks and reviews. Zit has no accounts: whoever can write the repository's refs can accept. Use Zit in front of them: `zit export --pr` opens the pull request the queue then takes ([Teams and review](/git#teams-and-review)).
+- **Batching and parallel speculative CI.** GitHub tests up to 100 pull requests per merge and runs up to 100 builds at once; GitLab 20 pipelines. Zit verifies one change at a time and is 2.2× slower than a plain merge loop on cheap checks.
+- **Reach.** Claude Code and Cursor run on Windows; Claude Code, Cursor and Conductor run agents in the cloud. Zit is local and Unix-only, and its claims do not cross machines.
+- **Review workflows.** Graphite's stacks, Conductor's diff-to-merge flow and GitHub's reviews exist; Zit hands review to your code host.
+- **Language coverage.** CI gating works for every language; Zit's semantic checks cover five.
+
+## Using them together
+
+Zit sits before the queue, not instead of it: agents work in Zit workspaces, Zit composes and pre-checks their changes and keeps their reasons, and `zit export --pr` hands the result to your code host, where branch protection, required reviews and the merge queue apply as usual.
+
+## References
+
+1. GitHub Docs, "Managing a merge queue" and "Merging a pull request with a merge queue". https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue
+2. GitLab Docs, "Merge trains". https://docs.gitlab.com/ci/pipelines/merge_trains/
+3. Graphite Docs, "Graphite merge queue" and "Merge queue optimizations". https://graphite.com/docs/graphite-merge-queue
+4. Conductor Docs, "Workspaces and branches" and "Scripts". https://conductor.build/docs/concepts/workspaces-and-branches
+5. Claude Code Docs, "Worktrees", "Agent view" and "Cross-session messaging". https://code.claude.com/docs/en/worktrees
+6. Cursor Docs, "Worktrees" and "Cloud agents". https://cursor.com/docs/configuration/worktrees
+7. Git documentation, `git worktree`. https://git-scm.com/docs/git-worktree

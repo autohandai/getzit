@@ -63,3 +63,18 @@ fn clean_refuses_to_pull_a_workspace_from_under_a_running_agent() {
     assert_eq!(zit::clean::clean(&fx.repo, false).unwrap().workspaces, 1);
     assert!(workspace::list(&fx.repo).unwrap().is_empty());
 }
+
+/// A verification in progress holds its view's lock; clean waits for nobody and refuses instead.
+#[test]
+fn clean_refuses_while_a_verification_holds_its_view() {
+    use std::os::fd::AsRawFd;
+    let fx = Fixture::new(&[("zit.toml", CHECK), ("a.txt", "a\n")]);
+    let c = fx.change("claude", &[("a.txt", "b\n")]);
+    evidence::verify(&fx.repo, &c.id, false).unwrap();
+    let lock = std::fs::File::open(fx.repo.home().join("verify/0.lock")).unwrap();
+    assert_eq!(unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) }, 0);
+    let refused = zit::clean::clean(&fx.repo, false).unwrap_err().to_string();
+    assert!(refused.contains("in progress"), "{refused}");
+    drop(lock);
+    zit::clean::clean(&fx.repo, false).unwrap();
+}
