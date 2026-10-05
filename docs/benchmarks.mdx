@@ -51,6 +51,25 @@ Creating all workspaces, worktree time divided by zit-clone time: 6.5x (1,000 fi
 
 The clone arm pays once per repository to fill its cache: 160 ms for 1,000 files, 2,401 ms for 10,000 files, 4,730 ms for 30,000 files.
 
+## 1b. The same on Linux
+
+Section 1's benchmark on a GitHub Actions runner (`ubuntu-latest`, 2 cores), on a loopback file system of each kind, from `.github/workflows/bench-linux.yml`. Free space is read after `sync`, because btrfs reports it only once writes are committed. Ten workspaces of the 30,000-file repository:
+
+| File system | Arm | Create all (s) | Destroy all (s) | Disk used (MB) |
+|---|---|---:|---:|---:|
+| btrfs | worktree | 19.8 | 13.0 | 24.1 |
+| btrfs | zit-clone | 14.5 | 11.5 | 0.0 |
+| btrfs | zit-checkout | 19.8 | 12.2 | 24.1 |
+| ext4 | worktree | 10.4 | 5.5 | 1,265.6 |
+| ext4 | zit-clone | 10.5 | 4.9 | 1,265.6 |
+| ext4 | zit-checkout | 10.6 | 4.9 | 1,265.6 |
+
+- **btrfs:** workspaces are reflinks and add no measurable disk; filling the cache once took 5.5 s. btrfs stores files this small inline in its metadata, so even worktrees use little data space here.
+- **ext4:** no copy-on-write, so a Zit workspace is a checkout: the same disk and time as a worktree.
+- **Time:** on Linux, Zit is about as fast as `git worktree`. What it saves is files: none are written until something is edited.
+
+Raw results: `bench/results/lifecycle-linux-btrfs.json`, `bench/results/lifecycle-linux-ext4.json`.
+
 ## 2. Ten agents, one hundred speculative changes
 
 `git version 2.39.5 (Apple Git-154)`, Darwin 24.5.0 arm64, 16 cores, load average 8.19 15.44 22.12 when the run finished. Time to start a process on this machine, median / 90th percentile in ms over 40 starts: `true` 0.9 / 1.4, `git` 2.3 / 2.5, `python3` 11.9 / 12.3, `zit` 1.9 / 2.7.

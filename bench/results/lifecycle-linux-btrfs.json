@@ -1,0 +1,226 @@
+{
+  "cpus": 2,
+  "git": "git version 2.55.0",
+  "load_average": "11.82 8.70 4.31",
+  "os": "Linux 6.17.0-1022-azure x86_64",
+  "results": [
+    {
+      "arm": "worktree",
+      "cold_cache_ms": null,
+      "concurrent": 1,
+      "create_op_ms": 47.5,
+      "create_wall_ms": 47.6,
+      "destroy_wall_ms": 33.5,
+      "disk_mb": 0.1,
+      "files": 1000,
+      "worktree_retries": 0
+    },
+    {
+      "arm": "zit-clone",
+      "cold_cache_ms": 187.4,
+      "concurrent": 1,
+      "create_op_ms": 49.5,
+      "create_wall_ms": 49.6,
+      "destroy_wall_ms": 26.2,
+      "disk_mb": 0.0,
+      "files": 1000,
+      "worktree_retries": 0
+    },
+    {
+      "arm": "zit-checkout",
+      "cold_cache_ms": null,
+      "concurrent": 1,
+      "create_op_ms": 55.0,
+      "create_wall_ms": 55.2,
+      "destroy_wall_ms": 29.1,
+      "disk_mb": 0.1,
+      "files": 1000,
+      "worktree_retries": 0
+    },
+    {
+      "arm": "worktree",
+      "cold_cache_ms": null,
+      "concurrent": 10,
+      "create_op_ms": 578.6,
+      "create_wall_ms": 607.1,
+      "destroy_wall_ms": 446.2,
+      "disk_mb": 0.8,
+      "files": 1000,
+      "worktree_retries": 0
+    },
+    {
+      "arm": "zit-clone",
+      "cold_cache_ms": 187.4,
+      "concurrent": 10,
+      "create_op_ms": 533.1,
+      "create_wall_ms": 569.7,
+      "destroy_wall_ms": 435.9,
+      "disk_mb": 0.0,
+      "files": 1000,
+      "worktree_retries": 0
+    },
+    {
+      "arm": "zit-checkout",
+      "cold_cache_ms": null,
+      "concurrent": 10,
+      "create_op_ms": 633.2,
+      "create_wall_ms": 663.1,
+      "destroy_wall_ms": 395.0,
+      "disk_mb": 0.8,
+      "files": 1000,
+      "worktree_retries": 0
+    },
+    {
+      "arm": "worktree",
+      "cold_cache_ms": null,
+      "concurrent": 1,
+      "create_op_ms": 463.2,
+      "create_wall_ms": 463.4,
+      "destroy_wall_ms": 352.0,
+      "disk_mb": 0.8,
+      "files": 10000,
+      "worktree_retries": 0
+    },
+    {
+      "arm": "zit-clone",
+      "cold_cache_ms": 1765.1,
+      "concurrent": 1,
+      "create_op_ms": 482.4,
+      "create_wall_ms": 482.5,
+      "destroy_wall_ms": 305.7,
+      "disk_mb": 0.0,
+      "files": 10000,
+      "worktree_retries": 0
+    },
+    {
+      "arm": "zit-checkout",
+      "cold_cache_ms": null,
+      "concurrent": 1,
+      "create_op_ms": 479.0,
+      "create_wall_ms": 479.2,
+      "destroy_wall_ms": 326.2,
+      "disk_mb": 0.8,
+      "files": 10000,
+      "worktree_retries": 0
+    },
+    {
+      "arm": "worktree",
+      "cold_cache_ms": null,
+      "concurrent": 10,
+      "create_op_ms": 6511.1,
+      "create_wall_ms": 6563.6,
+      "destroy_wall_ms": 4260.8,
+      "disk_mb": 8.0,
+      "files": 10000,
+      "worktree_retries": 0
+    },
+    {
+      "arm": "zit-clone",
+      "cold_cache_ms": 1765.1,
+      "concurrent": 10,
+      "create_op_ms": 4787.3,
+      "create_wall_ms": 4873.1,
+      "destroy_wall_ms": 3766.1,
+      "disk_mb": 0.0,
+      "files": 10000,
+      "worktree_retries": 0
+    },
+    {
+      "arm": "zit-checkout",
+      "cold_cache_ms": null,
+      "concurrent": 10,
+      "create_op_ms": 6545.3,
+      "create_wall_ms": 6574.9,
+      "destroy_wall_ms": 3957.8,
+      "disk_mb": 8.0,
+      "files": 10000,
+      "worktree_retries": 0
+    },
+    {
+      "arm": "worktree",
+      "cold_cache_ms": null,
+      "concurrent": 1,
+      "create_op_ms": 1392.0,
+      "create_wall_ms": 1392.1,
+      "destroy_wall_ms": 1097.6,
+      "disk_mb": 2.4,
+      "files": 30000,
+      "worktree_retries": 0
+    },
+    {
+      "arm": "zit-clone",
+      "cold_cache_ms": 5542.3,
+      "concurrent": 1,
+      "create_op_ms": 1456.7,
+      "create_wall_ms": 1456.8,
+      "destroy_wall_ms": 943.1,
+      "disk_mb": 0.0,
+      "files": 30000,
+      "worktree_retries": 0
+    },
+    {
+      "arm": "zit-checkout",
+      "cold_cache_ms": null,
+      "concurrent": 1,
+      "create_op_ms": 1416.3,
+      "create_wall_ms": 1416.5,
+      "destroy_wall_ms": 1018.7,
+      "disk_mb": 2.4,
+      "files": 30000,
+      "worktree_retries": 0
+    },
+    {
+      "arm": "worktree",
+      "cold_cache_ms": null,
+      "concurrent": 10,
+      "create_op_ms": 19661.2,
+      "create_wall_ms": 19767.1,
+      "destroy_wall_ms": 13008.8,
+      "disk_mb": 24.1,
+      "files": 30000,
+      "worktree_retries": 0
+    },
+    {
+      "arm": "zit-clone",
+      "cold_cache_ms": 5542.3,
+      "concurrent": 10,
+      "create_op_ms": 14412.8,
+      "create_wall_ms": 14540.2,
+      "destroy_wall_ms": 11453.5,
+      "disk_mb": 0.0,
+      "files": 30000,
+      "worktree_retries": 0
+    },
+    {
+      "arm": "zit-checkout",
+      "cold_cache_ms": null,
+      "concurrent": 10,
+      "create_op_ms": 19751.1,
+      "create_wall_ms": 19832.9,
+      "destroy_wall_ms": 12237.5,
+      "disk_mb": 24.1,
+      "files": 30000,
+      "worktree_retries": 0
+    }
+  ],
+  "spawn_ms": {
+    "git": [
+      1.0,
+      1.1
+    ],
+    "python": [
+      108.2,
+      113.8
+    ],
+    "true": [
+      0.8,
+      0.9
+    ],
+    "zit": [
+      1.0,
+      1.1
+    ]
+  },
+  "zit": "0.1.0",
+  "zit_driven": "in-process (as the MCP server)"
+}

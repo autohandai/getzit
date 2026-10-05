@@ -211,6 +211,26 @@ def main():
         page += ["The clone arm pays once per repository to fill its cache: "
                  + ", ".join(f"{ms(v)} ms for {f:,} files" for f, v in sorted(cold.items())) + ".", ""]
 
+    linux = [(fs, load(f"lifecycle-linux-{fs}")) for fs in ("btrfs", "ext4")]
+    if all(report for _, report in linux):
+        page += ["## 1b. The same on Linux", "",
+                 "Section 1's benchmark on a GitHub Actions runner (`ubuntu-latest`, 2 cores), on a loopback file system "
+                 "of each kind, from `.github/workflows/bench-linux.yml`. Free space is read after `sync`, because btrfs "
+                 "reports it only once writes are committed. Ten workspaces of the 30,000-file repository:", "",
+                 "| File system | Arm | Create all (s) | Destroy all (s) | Disk used (MB) |",
+                 "|---|---|---:|---:|---:|"]
+        for fs, report in linux:
+            for r in report["results"]:
+                if r["files"] == 30000 and r["concurrent"] == 10:
+                    page.append(f"| {fs} | {r['arm']} | {secs(r['create_wall_ms'])} | {secs(r['destroy_wall_ms'])} | {r['disk_mb']:,.1f} |")
+        cold = {fs: next(r["cold_cache_ms"] for r in report["results"] if r["files"] == 30000 and r["cold_cache_ms"]) for fs, report in linux}
+        page += ["",
+                 f"- **btrfs:** workspaces are reflinks and add no measurable disk; filling the cache once took {secs(cold['btrfs'])} s. "
+                 "btrfs stores files this small inline in its metadata, so even worktrees use little data space here.",
+                 "- **ext4:** no copy-on-write, so a Zit workspace is a checkout: the same disk and time as a worktree.",
+                 "- **Time:** on Linux, Zit is about as fast as `git worktree`. What it saves is files: none are written until something is edited.",
+                 "", "Raw results: `bench/results/lifecycle-linux-btrfs.json`, `bench/results/lifecycle-linux-ext4.json`.", ""]
+
     def workflow_section(title, report, intro):
         w = report["results"]
         mix = w["task_mix"]
