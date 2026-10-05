@@ -6,7 +6,7 @@ use zit::accept;
 use zit::change::{self, Record};
 
 /// Installs "dependencies" (a stamped directory) the way `npm ci` would.
-const PREPARE: &str = "[prepare]\nrun = \"mkdir -p deps && echo $RANDOM$RANDOM > deps/stamp && cp lock.txt deps/\"\ninputs = [\"lock.txt\"]\n";
+const PREPARE: &str = "[prepare]\nrun = \"mkdir -p deps && od -An -N8 -tx8 /dev/urandom > deps/stamp && cp lock.txt deps/\"\ninputs = [\"lock.txt\"]\n";
 
 fn fixture() -> Fixture {
     Fixture::new(&[("zit.toml", PREPARE), (".gitignore", "deps/\n"), ("lock.txt", "v1\n"), ("app.txt", "a\n")])

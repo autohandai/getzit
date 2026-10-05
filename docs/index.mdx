@@ -27,8 +27,8 @@ The repository is private for now ([autohandai/getzit](https://github.com/autoha
 # The binary CI built from the last commit on main (macOS arm64):
 gh run download -R autohandai/getzit -n zit-macos-arm64 && tar xzf zit-macos-arm64.tar.gz && mv zit git-zit ~/.local/bin/
 
-# Or build it (Rust 1.88+):
-cargo install --git https://github.com/autohandai/getzit --locked
+# Or build it (Rust 1.88+). The setting lets cargo use your git credentials for the private repository:
+CARGO_NET_GIT_FETCH_WITH_CLI=true cargo install --git https://github.com/autohandai/getzit --locked
 ```
 
 Then, in any git repository, give each agent its own workspace and let them run at once:

@@ -188,7 +188,17 @@ fn a_check_that_hangs_fails_at_its_timeout() {
     assert!(!verdicts[0].evidence.passed);
     assert!(verdicts[0].evidence.output.contains("timed out after 1s"), "{}", verdicts[0].evidence.output);
     let pid: i32 = std::fs::read_to_string(&pidfile).unwrap().trim().parse().unwrap();
-    assert!(unsafe { libc::kill(pid, 0) } != 0, "the check's child outlived it");
+    // Dead means gone, or (on Linux, until init reaps the orphan) a zombie.
+    let dead = || {
+        (unsafe { libc::kill(pid, 0) }) != 0
+            || std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                .is_ok_and(|s| s.rsplit(')').next().is_some_and(|rest| rest.trim_start().starts_with('Z')))
+    };
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while !dead() && std::time::Instant::now() < until {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(dead(), "the check's child outlived it");
     let again = evidence::verify(&fx.repo, &current, false).unwrap();
     assert!(!again[0].cached, "a timed-out result was remembered as the state's verdict");
 }
