@@ -246,7 +246,7 @@ const CALLER: &str = "pub fn buy() { lib::price(3); }\n";
 #[test]
 fn the_acceptance_authority_may_let_evidence_decide_a_stale_change() {
     let fx = fixture();
-    let callee = fx.change("claude", &[("src/lib.rs", &LIB.replace("    x\n", "    x + 1\n"))]);
+    let callee = fx.change("claude", &[("src/lib.rs", &LIB.replace("price(x: u32)", "price(x: u32, t: u32)"))]);
     let caller = fx.change("codex", &[("src/shop.rs", CALLER)]);
     accept::accept(&fx.repo, &callee.id).unwrap();
     assert!(matches!(accept::accept(&fx.repo, &caller.id).unwrap(), Outcome::Rejected(Invalid::Stale(_))));
@@ -254,7 +254,7 @@ fn the_acceptance_authority_may_let_evidence_decide_a_stale_change() {
     let policy = accept::Policy { allow_stale: true, ..Default::default() };
     let (current, composed) = accepted(accept::accept_with(&fx.repo, &caller.id, &policy).unwrap());
     assert!(composed);
-    assert!(show(&fx, current.as_str(), "src/lib.rs").contains("x + 1"));
+    assert!(show(&fx, current.as_str(), "src/lib.rs").contains("t: u32"));
     assert_eq!(show(&fx, current.as_str(), "src/shop.rs"), CALLER.trim());
 }
 
@@ -357,4 +357,66 @@ fn edits_to_one_markdown_section_compose_when_the_text_merges() {
         "# Agents\n\n- alpha\n- bravo\n- delta\n- kilo\n- yankee\n- zulu"
     );
     assert!(matches!(accept::accept(&fx.repo, &d.id).unwrap(), Outcome::Rejected(Invalid::Conflict(_))));
+}
+
+/// A caller depends on the callee's signature, not its body: a body-only fix does not stale it.
+#[test]
+fn a_callee_body_change_does_not_make_its_callers_stale() {
+    let fx = fixture();
+    let fix = fx.change("claude", &[("src/lib.rs", &LIB.replace("    x\n}", "    x + 0\n}"))]);
+    let caller = fx.change("codex", &[("src/shop.rs", "pub fn buy() { lib::price(3); }\n")]);
+    accepted(accept::accept(&fx.repo, &fix.id).unwrap());
+    let (_, composed) = accepted(accept::accept(&fx.repo, &caller.id).unwrap());
+    assert!(composed);
+}
+
+/// Declared reads still see any change, body included.
+#[test]
+fn a_declared_read_sees_a_body_change() {
+    let fx = fixture();
+    let fix = fx.change("claude", &[("src/lib.rs", &LIB.replace("    x\n}", "    x + 0\n}"))]);
+    let ws = fx.workspace("codex");
+    common::write(ws.path(), &[("src/shop.rs", "pub fn buy() { lib::price(3); }\n")]);
+    let reads = [zit::resource::Resource::parse("src/lib.rs#price")];
+    let caller =
+        change::record(&fx.repo, &ws.id, &Record { reads: reads.to_vec(), ..Default::default() }).unwrap().unwrap();
+    accepted(accept::accept(&fx.repo, &fix.id).unwrap());
+    assert!(matches!(accept::accept(&fx.repo, &caller.id).unwrap(), Outcome::Rejected(Invalid::Stale(_))));
+}
+
+/// `cache.get()` is a method call, not a read of every top-level `get` in the repository.
+#[test]
+fn a_method_call_does_not_read_a_top_level_function_of_the_same_name() {
+    let fx = Fixture::new(&[
+        ("src/store.rs", "pub fn get(k: u32) -> u32 {\n    k\n}\n"),
+        ("src/app.rs", "pub fn run() {}\n"),
+    ]);
+    let sig = fx.change("a", &[("src/store.rs", "pub fn get(k: u64) -> u64 {\n    k\n}\n")]);
+    let user = fx.change("b", &[("src/app.rs", "pub fn run(cache: &Cache) { cache.get(1); }\n")]);
+    accepted(accept::accept(&fx.repo, &sig.id).unwrap());
+    accepted(accept::accept(&fx.repo, &user.id).unwrap());
+}
+
+/// Two changes that each add an import to one file compose when the text merges.
+#[test]
+fn concurrent_imports_to_one_file_compose() {
+    let src = "use a::A;\n\nuse z::Z;\n\npub fn f() {}\n\npub fn g() {}\n";
+    let fx = Fixture::new(&[("src/m.rs", src)]);
+    let one = fx.change(
+        "a",
+        &[(
+            "src/m.rs",
+            &src.replace("use a::A;\n", "use a::A;\nuse b::B;\n").replace("pub fn f() {}", "pub fn f() { B; }"),
+        )],
+    );
+    let two = fx.change(
+        "b",
+        &[(
+            "src/m.rs",
+            &src.replace("use z::Z;\n", "use y::Y;\nuse z::Z;\n").replace("pub fn g() {}", "pub fn g() { Y; }"),
+        )],
+    );
+    accepted(accept::accept(&fx.repo, &one.id).unwrap());
+    let (_, composed) = accepted(accept::accept(&fx.repo, &two.id).unwrap());
+    assert!(composed);
 }

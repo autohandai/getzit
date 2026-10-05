@@ -7,8 +7,16 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Unit {
     pub hash: String,
+    /// Hash of the unit without function bodies (and comments): its interface.
+    /// Code that only mentions a symbol by name depends on this, not on `hash`.
+    #[serde(default)]
+    pub sig: String,
     pub refs: BTreeSet<String>,
 }
+
+/// The unit holding a file's imports. Concurrent additions to it are decided
+/// by whether the text merges, like prose.
+pub const IMPORTS: &str = "(imports)";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileIndex {
@@ -44,6 +52,81 @@ fn annotates(kind: &str) -> bool {
     matches!(kind, "attribute_item" | "line_comment" | "block_comment" | "comment")
 }
 
+fn is_comment(kind: &str) -> bool {
+    matches!(kind, "line_comment" | "block_comment" | "comment")
+}
+
+fn is_import(lang: Lang, kind: &str) -> bool {
+    match lang {
+        Lang::Rust => matches!(kind, "use_declaration" | "extern_crate_declaration"),
+        Lang::Python => matches!(kind, "import_statement" | "import_from_statement" | "future_import_statement"),
+        Lang::Js => kind == "import_statement",
+        Lang::Go => kind == "import_declaration",
+    }
+}
+
+/// Visit `node` and every node below it.
+fn walk(node: tree_sitter::Node, mut visit: impl FnMut(tree_sitter::Node)) {
+    let mut cursor = node.walk();
+    loop {
+        visit(cursor.node());
+        if cursor.goto_first_child() {
+            continue;
+        }
+        loop {
+            if cursor.node() == node {
+                return;
+            }
+            if cursor.goto_next_sibling() {
+                break;
+            }
+            cursor.goto_parent();
+        }
+    }
+}
+
+/// Names an import binds in this file: the receivers of module-qualified uses
+/// such as `lib.price()` (Python, JavaScript) or `fmt.Println()` (Go).
+fn imported_names(node: tree_sitter::Node, text: &str, out: &mut BTreeSet<String>) {
+    walk(node, |n| {
+        if n.child_count() == 0 && n.kind().ends_with("identifier") {
+            out.insert(text[n.byte_range()].to_string());
+        } else if n.kind() == "interpreted_string_literal" {
+            // Go: `import "net/http"` binds `http`.
+            let path = text[n.byte_range()].trim_matches('"');
+            out.insert(path.rsplit('/').next().unwrap_or(path).to_string());
+        }
+    });
+}
+
+/// The unit's interface: its text without function bodies or comments.
+fn signature(node: tree_sitter::Node, text: &str) -> String {
+    if is_comment(node.kind()) {
+        return String::new();
+    }
+    let mut cuts: Vec<std::ops::Range<usize>> = Vec::new();
+    walk(node, |n| {
+        let k = n.kind();
+        if is_comment(k) {
+            cuts.push(n.byte_range());
+        } else if k.contains("function") || k.contains("method") || k == "func_literal" {
+            if let Some(body) = n.child_by_field_name("body") {
+                cuts.push(body.byte_range());
+            }
+        }
+    });
+    cuts.sort_by_key(|r| r.start);
+    let (mut out, mut at) = (String::new(), node.start_byte());
+    for cut in cuts {
+        if cut.start >= at {
+            out.push_str(&text[at..cut.start]);
+            at = cut.end;
+        }
+    }
+    out.push_str(&text[at.max(node.start_byte())..node.end_byte().max(at)]);
+    out
+}
+
 /// Index `src`. `None` when the language is unsupported or the file is not
 /// UTF-8; callers then treat the file as one indivisible resource.
 pub fn index(path: &str, src: &[u8]) -> Option<FileIndex> {
@@ -56,8 +139,15 @@ pub fn index(path: &str, src: &[u8]) -> Option<FileIndex> {
     parser.set_language(&grammar).ok()?;
     let tree = parser.parse(text, None)?;
 
-    let mut texts: BTreeMap<Option<String>, (String, BTreeSet<String>)> = BTreeMap::new();
+    let mut texts: BTreeMap<Option<String>, (String, String, BTreeSet<String>)> = BTreeMap::new();
     let root = tree.root_node();
+    let mut imports = BTreeSet::new();
+    let mut cursor = root.walk();
+    for node in root.children(&mut cursor) {
+        if is_import(lang, node.kind()) {
+            imported_names(node, text, &mut imports);
+        }
+    }
     let mut cursor = root.walk();
     // Attributes and comments wait for the next node: they belong to the item they annotate.
     let mut leading: Vec<tree_sitter::Node> = Vec::new();
@@ -66,34 +156,38 @@ pub fn index(path: &str, src: &[u8]) -> Option<FileIndex> {
             leading.push(node);
             continue;
         }
-        let defs = definitions(lang, node, text);
+        let defs = if is_import(lang, node.kind()) { vec![] } else { definitions(lang, node, text) };
         // The identifier that declares a symbol is not a reference to it.
         let declared: Vec<usize> = defs.iter().filter_map(|d| d.declared_by).collect();
-        let keys: Vec<Option<String>> = match defs.is_empty() {
-            true => vec![None],
-            false => defs.into_iter().map(|d| Some(d.name)).collect(),
+        let keys: Vec<Option<String>> = match (is_import(lang, node.kind()), defs.is_empty()) {
+            (true, _) => vec![Some(IMPORTS.to_string())],
+            (false, true) => vec![None],
+            (false, false) => defs.into_iter().map(|d| Some(d.name)).collect(),
         };
         for key in keys {
-            let (body, refs) = texts.entry(key).or_default();
+            let (body, sig, refs) = texts.entry(key).or_default();
             for part in leading.iter().chain([&node]) {
                 body.push_str(&text[part.byte_range()]);
                 body.push('\n');
-                collect_identifiers(*part, text, &declared, refs);
+                sig.push_str(&signature(*part, text));
+                sig.push('\n');
+                collect_identifiers(lang, *part, text, &declared, &imports, refs);
             }
         }
         leading.clear();
     }
     // Trailing attributes or comments with no item after them.
     for part in leading {
-        let (body, refs) = texts.entry(None).or_default();
+        let (body, sig, refs) = texts.entry(None).or_default();
         body.push_str(&text[part.byte_range()]);
         body.push('\n');
-        collect_identifiers(part, text, &[], refs);
+        sig.push_str(&signature(part, text));
+        collect_identifiers(lang, part, text, &[], &imports, refs);
     }
 
     let mut ix = FileIndex::default();
-    for (key, (body, refs)) in texts {
-        let unit = Unit { hash: crate::hash(body.as_bytes()), refs };
+    for (key, (body, sig, refs)) in texts {
+        let unit = Unit { hash: crate::hash(body.as_bytes()), sig: crate::hash(sig.as_bytes()), refs };
         match key {
             Some(name) => {
                 ix.symbols.insert(name, unit);
@@ -124,7 +218,8 @@ fn index_markdown(text: &str) -> FileIndex {
     }
     let mut ix = FileIndex::default();
     for (name, body) in bodies {
-        let unit = Unit { hash: crate::hash(body.as_bytes()), refs: BTreeSet::new() };
+        let hash = crate::hash(body.as_bytes());
+        let unit = Unit { sig: hash.clone(), hash, refs: BTreeSet::new() };
         match name {
             Some(name) if !name.is_empty() => {
                 ix.symbols.insert(name, unit);
@@ -208,26 +303,41 @@ fn definitions(lang: Lang, node: tree_sitter::Node, text: &str) -> Vec<Def> {
     }
 }
 
-fn collect_identifiers(node: tree_sitter::Node, text: &str, skip: &[usize], out: &mut BTreeSet<String>) {
-    let mut cursor = node.walk();
-    loop {
-        let n = cursor.node();
-        if n.child_count() == 0 && n.kind().ends_with("identifier") && !skip.contains(&n.id()) {
+fn collect_identifiers(
+    lang: Lang,
+    node: tree_sitter::Node,
+    text: &str,
+    skip: &[usize],
+    imports: &BTreeSet<String>,
+    out: &mut BTreeSet<String>,
+) {
+    walk(node, |n| {
+        if n.child_count() == 0
+            && n.kind().ends_with("identifier")
+            && !skip.contains(&n.id())
+            && !member_of_a_value(lang, n, text, imports)
+        {
             out.insert(text[n.byte_range()].to_string());
         }
-        if cursor.goto_first_child() {
-            continue;
+    });
+}
+
+/// `cache.get` names a member of a value, not the top-level `get`. A member
+/// of an imported module (`lib.price`, `fmt.Println`) is still a reference.
+fn member_of_a_value(lang: Lang, n: tree_sitter::Node, text: &str, imports: &BTreeSet<String>) -> bool {
+    let Some(parent) = n.parent() else { return false };
+    let receiver = match (lang, n.kind(), parent.kind()) {
+        (Lang::Rust, "field_identifier" | "shorthand_field_identifier", _) => return true,
+        (Lang::Go, "field_identifier", "selector_expression") => parent.child_by_field_name("operand"),
+        (Lang::Js, "property_identifier", "member_expression") => parent.child_by_field_name("object"),
+        (Lang::Python, "identifier", "attribute")
+            if parent.child_by_field_name("attribute").map(|a| a.id()) == Some(n.id()) =>
+        {
+            parent.child_by_field_name("object")
         }
-        loop {
-            if cursor.node() == node {
-                return;
-            }
-            if cursor.goto_next_sibling() {
-                break;
-            }
-            cursor.goto_parent();
-        }
-    }
+        _ => return false,
+    };
+    !receiver.is_some_and(|r| r.kind().ends_with("identifier") && imports.contains(&text[r.byte_range()]))
 }
 
 #[cfg(test)]
@@ -245,7 +355,7 @@ mod tests {
             b"use std::fmt;\nstruct Foo;\nimpl Foo { fn new() -> Foo { Foo } }\nimpl fmt::Debug for Foo<'_> {}\nfn free() {}\nconst MAX: u8 = 1;\ntrait T {}\nenum E { A }\n",
         )
         .unwrap();
-        assert_eq!(names(&ix), ["E", "Foo", "MAX", "T", "free"]);
+        assert_eq!(names(&ix), [IMPORTS, "E", "Foo", "MAX", "T", "free"]);
     }
 
     #[test]
@@ -258,25 +368,81 @@ mod tests {
     }
 
     #[test]
-    fn code_outside_symbols_is_top() {
+    fn imports_are_their_own_unit() {
         let a = index("a.rs", b"use x::y;\nfn foo() {}\n").unwrap();
         let b = index("a.rs", b"use x::z;\nfn foo() {}\n").unwrap();
+        assert_ne!(a.symbols[IMPORTS], b.symbols[IMPORTS]);
+        assert_eq!(a.symbols["foo"], b.symbols["foo"]);
+        assert_eq!(a.top, b.top);
+    }
+
+    #[test]
+    fn code_outside_symbols_is_top() {
+        let a = index("a.rs", b"fn foo() {}\nregister!(a);\n").unwrap();
+        let b = index("a.rs", b"fn foo() {}\nregister!(b);\n").unwrap();
         assert_ne!(a.top.hash, b.top.hash);
         assert_eq!(a.symbols, b.symbols);
+    }
+
+    #[test]
+    fn a_body_change_keeps_the_interface() {
+        let a = index("a.rs", b"/// Price.\npub fn price(x: u32) -> u32 { x }\n").unwrap();
+        let body = index("a.rs", b"/// Price.\npub fn price(x: u32) -> u32 { x + 1 }\n").unwrap();
+        let doc = index("a.rs", b"/// The price.\npub fn price(x: u32) -> u32 { x }\n").unwrap();
+        let sig = index("a.rs", b"/// Price.\npub fn price(x: u64) -> u32 { x }\n").unwrap();
+        assert_ne!(a.symbols["price"].hash, body.symbols["price"].hash);
+        assert_eq!(a.symbols["price"].sig, body.symbols["price"].sig);
+        assert_eq!(a.symbols["price"].sig, doc.symbols["price"].sig, "comments are not the interface");
+        assert_ne!(a.symbols["price"].sig, sig.symbols["price"].sig);
+        for (path, before, after) in [
+            ("a.py", "def f(x):\n    return x\n", "def f(x):\n    return x + 1\n"),
+            ("a.ts", "export function f(x: number) { return x }\n", "export function f(x: number) { return x + 1 }\n"),
+            ("a.go", "package a\nfunc F(x int) int { return x }\n", "package a\nfunc F(x int) int { return x + 1 }\n"),
+        ] {
+            let (a, b) = (index(path, before.as_bytes()).unwrap(), index(path, after.as_bytes()).unwrap());
+            let name = a.symbols.keys().find(|k| *k != IMPORTS).unwrap();
+            assert_eq!(a.symbols[name].sig, b.symbols[name].sig, "{path}");
+            assert_ne!(a.symbols[name].hash, b.symbols[name].hash, "{path}");
+        }
+    }
+
+    #[test]
+    fn members_of_values_are_not_references_but_members_of_modules_are() {
+        let ix = index("a.py", b"import lib\ndef run(cache):\n    return cache.get(1) + lib.price(2)\n").unwrap();
+        let refs = &ix.symbols["run"].refs;
+        assert!(refs.contains("price") && !refs.contains("get"), "{refs:?}");
+        let ix = index(
+            "a.ts",
+            b"import * as lib from './lib';\nexport function run(c: C) { return c.get(1) + lib.price(2) }\n",
+        )
+        .unwrap();
+        let refs = &ix.symbols["run"].refs;
+        assert!(refs.contains("price") && !refs.contains("get"), "{refs:?}");
+        let ix = index(
+            "a.go",
+            b"package a\nimport \"example.com/lib\"\nfunc Run(c C) int { return c.Get(1) + lib.Price(2) }\n",
+        )
+        .unwrap();
+        let refs = &ix.symbols["Run"].refs;
+        assert!(refs.contains("Price") && !refs.contains("Get"), "{refs:?}");
+        let ix = index("a.rs", b"fn run(c: &Cache) -> u32 { c.get(1) + lib::price(2) }\n").unwrap();
+        let refs = &ix.symbols["run"].refs;
+        assert!(refs.contains("price") && !refs.contains("get"), "{refs:?}");
     }
 
     #[test]
     fn refs_are_the_identifiers_a_symbol_mentions() {
         let ix = index("a.rs", b"fn foo(c: Client) { stripe::charge(c.id) }\n").unwrap();
         let refs = &ix.symbols["foo"].refs;
-        for id in ["Client", "stripe", "charge", "id"] {
+        for id in ["Client", "stripe", "charge", "c"] {
             assert!(refs.contains(id), "missing {id} in {refs:?}");
         }
+        assert!(!refs.contains("id"), "a field of a value is not a reference: {refs:?}");
     }
 
     #[test]
     fn defining_a_name_is_not_referencing_it() {
-        let ix = index("a.py", b"def run():\n    return lib.f(1)\n").unwrap();
+        let ix = index("a.py", b"import lib\ndef run():\n    return lib.f(1)\n").unwrap();
         assert_eq!(ix.symbols["run"].refs.iter().collect::<Vec<_>>(), ["f", "lib"]);
         let ix = index("a.rs", b"fn run() { f() }\nconst K: u8 = 1;\n").unwrap();
         assert!(!ix.symbols["run"].refs.contains("run") && !ix.symbols["K"].refs.contains("K"));
@@ -298,22 +464,23 @@ mod tests {
     fn python_symbols() {
         let ix = index(
             "a.py",
-            b"import os\nLIMIT = 3\n@cache\ndef price(x):\n    return lib.tax(x)\nclass Shop:\n    def buy(self): pass\nprint(1)\n",
+            b"import os, lib\nLIMIT = 3\n@cache\ndef price(x):\n    return lib.tax(x)\nclass Shop:\n    def buy(self): pass\nprint(1)\n",
         )
         .unwrap();
-        assert_eq!(names(&ix), ["LIMIT", "Shop", "price"]);
+        assert_eq!(names(&ix), [IMPORTS, "LIMIT", "Shop", "price"]);
         assert!(ix.symbols["price"].refs.contains("tax"));
-        assert!(ix.top.refs.contains("os"));
+        assert!(ix.symbols[IMPORTS].refs.contains("os"));
+        assert!(ix.top.refs.contains("print"));
     }
 
     #[test]
     fn typescript_symbols() {
         let ix = index(
             "a.ts",
-            b"import { x } from './x';\nexport function f(a: A): B { return lib.g(a) }\nexport class C {}\ninterface I {}\ntype T = string;\nexport const k = 1, m = 2;\nenum E { A }\nexport default f;\n",
+            b"import * as lib from './lib';\nexport function f(a: A): B { return lib.g(a) }\nexport class C {}\ninterface I {}\ntype T = string;\nexport const k = 1, m = 2;\nenum E { A }\nexport default f;\n",
         )
         .unwrap();
-        assert_eq!(names(&ix), ["C", "E", "I", "T", "f", "k", "m"]);
+        assert_eq!(names(&ix), [IMPORTS, "C", "E", "I", "T", "f", "k", "m"]);
         assert!(ix.symbols["f"].refs.contains("g"));
     }
 
@@ -332,7 +499,7 @@ mod tests {
             b"package a\nimport \"fmt\"\ntype S struct{}\nfunc (s *S) M() { fmt.Println() }\nfunc F() {}\nconst K = 1\nvar V = 2\n",
         )
         .unwrap();
-        assert_eq!(names(&ix), ["F", "K", "S", "V"]);
+        assert_eq!(names(&ix), [IMPORTS, "F", "K", "S", "V"]);
         assert!(ix.symbols["S"].refs.contains("Println"));
     }
 

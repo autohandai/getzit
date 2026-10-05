@@ -34,9 +34,16 @@ fn writes_are_symbol_granular() {
 }
 
 #[test]
-fn editing_module_level_code_writes_top() {
+fn editing_imports_writes_the_imports_unit() {
     let fx = fixture();
     let fp = footprint_of(&fx, &[("src/lib.rs", &LIB.replace("std::fmt", "std::io"))]);
+    assert_eq!(writes(&fp), res(&["src/lib.rs#(imports)"]));
+}
+
+#[test]
+fn editing_module_level_code_writes_top() {
+    let fx = fixture();
+    let fp = footprint_of(&fx, &[("src/lib.rs", &format!("{LIB}\nregister!(price);\n"))]);
     assert_eq!(writes(&fp), res(&["src/lib.rs#"]));
 }
 

@@ -112,7 +112,9 @@ fn staleness(repo: &Repo, base: &Oid, change: &Oid, current: &Oid) -> Result<Vec
     let mut conflicts = mine.conflicts(&footprint::between(repo, base, current)?);
     conflicts.retain(|c| {
         let path = c.resource.path();
-        !generated.iter().any(|g| g == path) && (c.kind != ConflictKind::WriteWrite || !is_prose(path))
+        let text_decides =
+            is_prose(path) || matches!(&c.resource, Resource::Symbol(_, name) if name == crate::symbols::IMPORTS);
+        !generated.iter().any(|g| g == path) && (c.kind != ConflictKind::WriteWrite || !text_decides)
     });
     if conflicts.is_empty() {
         return Ok(vec![]);
@@ -131,7 +133,7 @@ fn staleness(repo: &Repo, base: &Oid, change: &Oid, current: &Oid) -> Result<Vec
         .into_iter()
         .map(|c| {
             let by = steps.iter().find(|(fp, _)| match c.kind {
-                ConflictKind::WriteRead => fp.reads(&c.resource),
+                ConflictKind::WriteRead => fp.reads(&c.resource, mine.signatures.contains(&c.resource)),
                 _ => fp.writes.iter().any(|w| w.overlaps(&c.resource)),
             });
             Staleness { resource: c.resource, kind: c.kind, by: by.map(|(_, id)| id.clone()) }

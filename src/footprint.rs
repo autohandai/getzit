@@ -17,6 +17,10 @@ pub struct Footprint {
     pub refs: BTreeSet<String>,
     /// Reads declared by the changes in the span.
     pub reads: BTreeSet<Resource>,
+    /// Written symbols whose interface changed (everything but function
+    /// bodies). Only these make code that merely names them stale.
+    #[serde(default)]
+    pub signatures: BTreeSet<Resource>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,10 +41,11 @@ pub struct Conflict {
 }
 
 impl Footprint {
-    /// Did this span observe `written`, by declaration or by name?
-    pub fn reads(&self, written: &Resource) -> bool {
+    /// Did this span depend on `written`? A declared read sees any change; a
+    /// mention by name sees only a change to the symbol's interface.
+    pub fn reads(&self, written: &Resource, interface_changed: bool) -> bool {
         self.reads.iter().any(|r| r.overlaps(written))
-            || matches!(written, Resource::Symbol(_, name) if self.refs.contains(name))
+            || (interface_changed && matches!(written, Resource::Symbol(_, name) if self.refs.contains(name)))
     }
 
     /// Why this span cannot be composed with a concurrent `other`; empty when it can.
@@ -49,12 +54,14 @@ impl Footprint {
         for theirs in &other.writes {
             if self.writes.iter().any(|mine| mine.overlaps(theirs)) {
                 found.push(Conflict { resource: theirs.clone(), kind: ConflictKind::WriteWrite });
-            } else if self.reads(theirs) {
+            } else if self.reads(theirs, other.signatures.contains(theirs)) {
                 found.push(Conflict { resource: theirs.clone(), kind: ConflictKind::ReadWrite });
             }
         }
         for mine in &self.writes {
-            if !other.writes.iter().any(|theirs| theirs.overlaps(mine)) && other.reads(mine) {
+            if !other.writes.iter().any(|theirs| theirs.overlaps(mine))
+                && other.reads(mine, self.signatures.contains(mine))
+            {
                 found.push(Conflict { resource: mine.clone(), kind: ConflictKind::WriteRead });
             }
         }
@@ -94,7 +101,12 @@ pub(crate) fn between_states(repo: &Repo, base: &Oid, state: &Oid, reads: &[Reso
 }
 
 fn compute(repo: &Repo, base: &Oid, tip: &Oid, declared: Option<&[Resource]>) -> Result<Footprint> {
-    let cache = repo.home().join("cache/footprint").join(format!("{base}-{tip}.json"));
+    // Versioned by what is extracted; keyed by the declared reads too.
+    let declared_key = match declared {
+        None => "trailers".to_string(),
+        Some(reads) => crate::hash(reads.iter().map(|r| format!("{r}\n")).collect::<String>().as_bytes()),
+    };
+    let cache = repo.home().join("cache/footprint-v2").join(format!("{base}-{tip}-{declared_key}.json"));
     if let Ok(bytes) = std::fs::read(&cache) {
         if let Ok(fp) = serde_json::from_slice(&bytes) {
             return Ok(fp);
@@ -117,9 +129,14 @@ fn compute(repo: &Repo, base: &Oid, tip: &Oid, declared: Option<&[Resource]>) ->
             continue;
         };
         for name in old.symbols.keys().chain(new.symbols.keys()) {
-            if old.symbols.get(name).map(|u| &u.hash) != new.symbols.get(name).map(|u| &u.hash) {
-                fp.writes.insert(Resource::Symbol(path.to_string(), name.clone()));
-                fp.refs.extend(new.symbols.get(name).into_iter().flat_map(|u| u.refs.iter().cloned()));
+            let (before, after) = (old.symbols.get(name), new.symbols.get(name));
+            if before.map(|u| &u.hash) != after.map(|u| &u.hash) {
+                let written = Resource::Symbol(path.to_string(), name.clone());
+                if before.map(|u| &u.sig) != after.map(|u| &u.sig) {
+                    fp.signatures.insert(written.clone());
+                }
+                fp.writes.insert(written);
+                fp.refs.extend(after.into_iter().flat_map(|u| u.refs.iter().cloned()));
             }
         }
         if old.top.hash != new.top.hash {
