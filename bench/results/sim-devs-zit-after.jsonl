@@ -1,0 +1,44 @@
+{"kind": "start", "devs": 20, "agents": 0, "t": 1.3}
+{"kind": "submit", "who": "dev-07", "rev": "origin/dev/dev-07", "attempt": 1, "t": 26.8}
+{"kind": "integrate", "who": "dev-07", "rev": "origin/dev/dev-07", "attempt": 1, "verdict": "accepted", "reason": null, "detail": null, "composed": false, "accept_s": 0.2, "t": 27.0}
+{"kind": "submit", "who": "dev-15", "rev": "origin/dev/dev-15", "attempt": 1, "t": 33.7}
+{"kind": "integrate", "who": "dev-15", "rev": "origin/dev/dev-15", "attempt": 1, "verdict": "accepted", "reason": null, "detail": null, "composed": true, "accept_s": 0.24, "t": 34.0}
+{"kind": "submit", "who": "dev-12", "rev": "origin/dev/dev-12", "attempt": 1, "t": 34.6}
+{"kind": "integrate", "who": "dev-12", "rev": "origin/dev/dev-12", "attempt": 1, "verdict": "accepted", "reason": null, "detail": null, "composed": true, "accept_s": 0.28, "t": 34.9}
+{"kind": "submit", "who": "dev-08", "rev": "origin/dev/dev-08", "attempt": 1, "t": 41.4}
+{"kind": "integrate", "who": "dev-08", "rev": "origin/dev/dev-08", "attempt": 1, "verdict": "accepted", "reason": null, "detail": null, "composed": true, "accept_s": 0.36, "t": 41.8}
+{"kind": "submit", "who": "dev-05", "rev": "origin/dev/dev-05", "attempt": 1, "t": 42.0}
+{"kind": "integrate", "who": "dev-05", "rev": "origin/dev/dev-05", "attempt": 1, "verdict": "accepted", "reason": null, "detail": null, "composed": true, "accept_s": 0.31, "t": 42.4}
+{"kind": "submit", "who": "dev-04", "rev": "origin/dev/dev-04", "attempt": 1, "t": 44.3}
+{"kind": "submit", "who": "dev-01", "rev": "origin/dev/dev-01", "attempt": 1, "t": 44.3}
+{"kind": "integrate", "who": "dev-04", "rev": "origin/dev/dev-04", "attempt": 1, "verdict": "accepted", "reason": null, "detail": null, "composed": true, "accept_s": 0.34, "t": 44.6}
+{"kind": "integrate", "who": "dev-01", "rev": "origin/dev/dev-01", "attempt": 1, "verdict": "accepted", "reason": null, "detail": null, "composed": true, "accept_s": 0.3, "t": 44.9}
+{"kind": "submit", "who": "dev-02", "rev": "origin/dev/dev-02", "attempt": 1, "t": 48.0}
+{"kind": "integrate", "who": "dev-02", "rev": "origin/dev/dev-02", "attempt": 1, "verdict": "accepted", "reason": null, "detail": null, "composed": true, "accept_s": 0.31, "t": 48.3}
+{"kind": "submit", "who": "dev-19", "rev": "origin/dev/dev-19", "attempt": 1, "t": 53.5}
+{"kind": "integrate", "who": "dev-19", "rev": "origin/dev/dev-19", "attempt": 1, "verdict": "accepted", "reason": null, "detail": null, "composed": true, "accept_s": 0.31, "t": 53.8}
+{"kind": "submit", "who": "dev-13", "rev": "origin/dev/dev-13", "attempt": 1, "t": 60.6}
+{"kind": "integrate", "who": "dev-13", "rev": "origin/dev/dev-13", "attempt": 1, "verdict": "accepted", "reason": null, "detail": null, "composed": true, "accept_s": 0.3, "t": 60.9}
+{"kind": "submit", "who": "dev-14", "rev": "origin/dev/dev-14", "attempt": 1, "t": 72.2}
+{"kind": "submit", "who": "dev-03", "rev": "origin/dev/dev-03", "attempt": 1, "t": 72.2}
+{"kind": "integrate", "who": "dev-14", "rev": "origin/dev/dev-14", "attempt": 1, "verdict": "accepted", "reason": null, "detail": null, "composed": true, "accept_s": 0.35, "t": 72.5}
+{"kind": "integrate", "who": "dev-03", "rev": "origin/dev/dev-03", "attempt": 1, "verdict": "accepted", "reason": null, "detail": null, "composed": true, "accept_s": 0.35, "t": 72.9}
+{"kind": "submit", "who": "dev-10", "rev": "origin/dev/dev-10", "attempt": 1, "t": 73.2}
+{"kind": "submit", "who": "dev-06", "rev": "origin/dev/dev-06", "attempt": 1, "t": 73.5}
+{"kind": "integrate", "who": "dev-10", "rev": "origin/dev/dev-10", "attempt": 1, "verdict": "accepted", "reason": null, "detail": null, "composed": true, "accept_s": 0.32, "t": 73.5}
+{"kind": "integrate", "who": "dev-06", "rev": "origin/dev/dev-06", "attempt": 1, "verdict": "accepted", "reason": null, "detail": null, "composed": true, "accept_s": 0.32, "t": 73.9}
+{"kind": "submit", "who": "dev-20", "rev": "origin/dev/dev-20", "attempt": 1, "t": 78.5}
+{"kind": "integrate", "who": "dev-20", "rev": "origin/dev/dev-20", "attempt": 1, "verdict": "accepted", "reason": null, "detail": null, "composed": true, "accept_s": 0.36, "t": 78.8}
+{"kind": "submit", "who": "dev-11", "rev": "origin/dev/dev-11", "attempt": 1, "t": 84.0}
+{"kind": "integrate", "who": "dev-11", "rev": "origin/dev/dev-11", "attempt": 1, "verdict": "rejected", "reason": "conflict", "detail": ["categories/03-infrastructure/docker-expert.md"], "composed": null, "accept_s": 0.1, "t": 84.1}
+{"kind": "submit", "who": "dev-16", "rev": "origin/dev/dev-16", "attempt": 1, "t": 85.6}
+{"kind": "integrate", "who": "dev-16", "rev": "origin/dev/dev-16", "attempt": 1, "verdict": "accepted", "reason": null, "detail": null, "composed": true, "accept_s": 0.28, "t": 85.9}
+{"kind": "submit", "who": "dev-17", "rev": "origin/dev/dev-17", "attempt": 1, "t": 88.2}
+{"kind": "integrate", "who": "dev-17", "rev": "origin/dev/dev-17", "attempt": 1, "verdict": "accepted", "reason": null, "detail": null, "composed": true, "accept_s": 0.26, "t": 88.5}
+{"kind": "submit", "who": "dev-09", "rev": "origin/dev/dev-09", "attempt": 1, "t": 91.2}
+{"kind": "submit", "who": "dev-18", "rev": "origin/dev/dev-18", "attempt": 1, "t": 91.3}
+{"kind": "integrate", "who": "dev-09", "rev": "origin/dev/dev-09", "attempt": 1, "verdict": "accepted", "reason": null, "detail": null, "composed": true, "accept_s": 0.34, "t": 91.6}
+{"kind": "integrate", "who": "dev-18", "rev": "origin/dev/dev-18", "attempt": 1, "verdict": "accepted", "reason": null, "detail": null, "composed": true, "accept_s": 0.33, "t": 91.9}
+{"kind": "submit", "who": "dev-11", "rev": "origin/dev/dev-11", "attempt": 2, "t": 96.1}
+{"kind": "integrate", "who": "dev-11", "rev": "origin/dev/dev-11", "attempt": 2, "verdict": "accepted", "reason": null, "detail": null, "composed": true, "accept_s": 0.34, "t": 96.5}
+{"kind": "end", "t": 96.5}

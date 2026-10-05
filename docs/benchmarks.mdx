@@ -1,0 +1,199 @@
+---
+title: Benchmarks
+description: Zit measured against git worktrees, on one machine, including where it is slower.
+---
+
+Every number on this page is generated from `bench/results/*.json` by `bench/report.py`. Reproduce with `bench/run.sh`.
+
+## How to read this
+
+- **One machine.** A developer laptop that was busy with other work; the load average is printed with each section.
+- **Same git for both arms**: the same binary, called as a process. The worktree arm calls it directly; Zit calls it underneath.
+- **Arms are interleaved** in the workflow experiments: every arm integrates change 1, then every arm integrates change 2, and so on, rotating which goes first. Whatever else the machine is doing slows all arms alike, so the ratios between arms are more trustworthy than the absolute times.
+- **Zit is driven in-process** except in the `zit-cli` arm. In-process is what an agent connected to the long-lived `zit mcp` server gets; `zit-cli` starts a new `zit` process for every operation, as a shell script does.
+- **The agents in sections 2–3 are scripts**, not language models: deterministic edits, so that the arms do identical work and can be compared change by change. Section 4 uses real agents.
+- **Versions.** Sections 1–4 were measured before the changes in [Lesson 02](/lessons). None of those changes apply to their workloads (no Markdown, no generated files, no claims), but they were not re-measured. Sections 5 and 6 are from the current version.
+
+## 1. Creating and destroying workspaces
+
+`git version 2.39.5 (Apple Git-154)`, Darwin 24.5.0 arm64, 16 cores, load average 21.71 29.76 28.71 when the run finished. Time to start a process on this machine, median / 90th percentile in ms over 40 starts: `true` 1.2 / 1.4, `git` 3.3 / 3.6, `python3` 14.4 / 15.3, `zit` 2.1 / 2.6.
+
+Three ways to give an agent an isolated copy of the repository at `HEAD`:
+
+- **worktree** — `git worktree add --detach`, removed with `git worktree remove --force`.
+- **zit-clone** — `zit materialise`: copy-on-write clone of a cached checkout.
+- **zit-checkout** — `zit materialise` with cloning disabled: what zit does on a filesystem that cannot clone.
+
+Median of 3 rounds. "Disk used" is the drop in free space on the volume while the workspaces existed; other activity on the machine makes it approximate.
+
+| Files | At once | Arm | Create all (ms) | Create one, median (ms) | Destroy all (ms) | Disk used (MB) | `git worktree` retries |
+|---:|---:|---|---:|---:|---:|---:|---:|
+| 1,000 | 1 | worktree | 412 | 412 | 134 | 4 | 0 |
+| 1,000 | 1 | zit-clone | 64 | 64 | 39 | 0 | – |
+| 1,000 | 1 | zit-checkout | 373 | 373 | 48 | 4 | – |
+| 1,000 | 10 | worktree | 848 | 848 | 594 | 44 | 0 |
+| 1,000 | 10 | zit-clone | 104 | 104 | 614 | 0 | – |
+| 1,000 | 10 | zit-checkout | 1,054 | 1,053 | 537 | 46 | – |
+| 10,000 | 1 | worktree | 1,088 | 1,088 | 565 | 45 | 0 |
+| 10,000 | 1 | zit-clone | 151 | 150 | 389 | 2 | – |
+| 10,000 | 1 | zit-checkout | 776 | 776 | 455 | 45 | – |
+| 10,000 | 10 | worktree | 7,592 | 7,587 | 7,575 | 494 | 0 |
+| 10,000 | 10 | zit-clone | 1,403 | 1,239 | 6,468 | 18 | – |
+| 10,000 | 10 | zit-checkout | 7,663 | 7,656 | 7,974 | 483 | – |
+| 30,000 | 1 | worktree | 2,612 | 2,612 | 1,868 | 133 | 0 |
+| 30,000 | 1 | zit-clone | 394 | 394 | 1,113 | 10 | – |
+| 30,000 | 1 | zit-checkout | 2,308 | 2,308 | 1,421 | 137 | – |
+| 30,000 | 10 | worktree | 23,404 | 23,371 | 21,998 | 1,390 | 0 |
+| 30,000 | 10 | zit-clone | 3,606 | 2,612 | 19,907 | 98 | – |
+| 30,000 | 10 | zit-checkout | 23,606 | 23,581 | 24,619 | 1,408 | – |
+
+Creating all workspaces, worktree time divided by zit-clone time: 6.5x (1,000 files, 1 at once), 8.1x (1,000 files, 10 at once), 7.2x (10,000 files, 1 at once), 5.4x (10,000 files, 10 at once), 6.6x (30,000 files, 1 at once), 6.5x (30,000 files, 10 at once).
+
+The clone arm pays once per repository to fill its cache: 160 ms for 1,000 files, 2,401 ms for 10,000 files, 4,730 ms for 30,000 files.
+
+## 2. Ten agents, one hundred speculative changes
+
+`git version 2.39.5 (Apple Git-154)`, Darwin 24.5.0 arm64, 16 cores, load average 8.19 15.44 22.12 when the run finished. Time to start a process on this machine, median / 90th percentile in ms over 40 starts: `true` 0.9 / 1.4, `git` 2.3 / 2.5, `python3` 11.9 / 12.3, `zit` 1.9 / 2.7.
+
+The workflow the architecture is for: many agents produce changes at once against the same state, then the changes are integrated one at a time, each gated by checks. A change that cannot land is redone by its agent on the new tip and lands on the second attempt.
+
+Each module has one check (a Python script that imports every caller in the module and runs it), so a caller written against an old signature fails its module's check once the signature change is in.
+
+| Arm | Agent turn | Integration |
+|---|---|---|
+| **worktree-full** | `git worktree add -b`, edit, commit, `worktree remove` | `git merge` into `main`; run **every** check; on failure `git reset --hard` |
+| **worktree-affected** | same | `git merge`; run the checks of the modules the merge touched; on failure reset |
+| **zit** | `materialise`, edit, `record` | `accept` |
+| **zit-allow-stale** | same | `accept --allow-stale` |
+| **zit-cli** | same as Zit, one `zit` process per operation | same as Zit |
+
+The worktree arms test in place: `main` holds the merged commit while its checks run, and is rolled back if they fail. Zit verifies the composed state in a separate workspace before current moves. "Left behind" counts branches (worktree arms) or speculative changes and workspaces (Zit arms) remaining at the end.
+
+10 agents x 10 changes = 100 changes, all made concurrently from the same starting state, on a generated Python project of 10 modules x 5 functions. Task mix (seed 1): 41 change a function body, 47 add a new caller of a function, 12 change a function's signature and fix its existing callers. Median of 3 rounds.
+
+| Arm | Agents' turns (s) | Integration (s) | per round | Checks run | Landed first try | Rejected: conflict | Rejected: stale | Rejected: failed check | Left behind | Final state green |
+|---|---:|---:|---|---:|---:|---:|---:|---:|---:|---|
+| worktree-full | 2.7 | 37.6 | 37.8 / 37.4 / 37.6 | 1070 | 76 | 17 | 0 | 7 | 124 | yes |
+| worktree-affected | 2.8 | 7.5 | 7.5 / 7.7 / 7.4 | 105 | 76 | 17 | 0 | 7 | 124 | yes |
+| zit | 1.8 | 16.8 | 16.8 / 16.8 / 16.6 | 109 | 53 | 0 | 47 | 0 | 0 | yes |
+| zit-allow-stale | 1.9 | 12.6 | 12.6 / 12.7 / 12.6 | 113 | 76 | 17 | 0 | 7 | 0 | yes |
+| zit-cli | 1.8 | 17.0 | 16.9 / 17.0 / 17.2 | 109 | 53 | 0 | 47 | 0 | 0 | yes |
+
+`status` with all 100 changes speculative: zit 161 ms, zit-allow-stale 158 ms, zit-cli 166 ms. `git worktree add`/`remove` had to be retried 0 times across the worktree arms because concurrent calls raced inside git.
+
+The arms ended on 2 different final trees, each passing every check (worktree-full = worktree-affected = zit-allow-stale; zit = zit-cli), and every round made the same decisions.
+
+Change by change, zit (strict) against worktree-affected:
+
+- 24 changes were rejected by both.
+- 7 of the 7 changes the worktree arm merged and then had to roll back after a failing check were rejected by zit as stale **before anything was merged or run**.
+- 23 changes were rejected by zit but landed cleanly in the worktree arm with passing checks. These are zit being conservative.
+- 0 changes were rejected by the worktree arm but accepted by zit.
+
+## 3. One hundred agents, one thousand speculative changes
+
+`git version 2.39.5 (Apple Git-154)`, Darwin 24.5.0 arm64, 16 cores, load average 8.31 11.41 17.32 when the run finished. Time to start a process on this machine, median / 90th percentile in ms over 40 starts: `true` 1.0 / 1.1, `git` 2.3 / 2.6, `python3` 11.7 / 12.4, `zit` 1.7 / 1.8.
+
+The same experiment at ten times the scale. Only the two selective arms were run.
+
+100 agents x 10 changes = 1000 changes, all made concurrently from the same starting state, on a generated Python project of 20 modules x 10 functions. Task mix (seed 1): 498 change a function body, 363 add a new caller of a function, 139 change a function's signature and fix its existing callers. One round.
+
+| Arm | Agents' turns (s) | Integration (s) | per round | Checks run | Landed first try | Rejected: conflict | Rejected: stale | Rejected: failed check | Left behind | Final state green |
+|---|---:|---:|---|---:|---:|---:|---:|---:|---:|---|
+| worktree-affected | 302.2 | 155.1 | 155.1 | 1100 | 455 | 426 | 0 | 119 | 1545 | yes |
+| zit | 123.4 | 356.2 | 356.2 | 1019 | 246 | 0 | 754 | 0 | 0 | yes |
+
+`status` with all 1000 changes speculative: zit 1,675 ms. `git worktree add`/`remove` had to be retried 82 times across the worktree arms because concurrent calls raced inside git.
+
+The arms ended on 2 different final trees, each passing every check (worktree-affected; zit).
+
+Rejected by both: 545. Failing merges caught early by zit: 119 of 119. Rejected only by zit (conservative): 209. Rejected only by the worktree arm: 0.
+
+## 4. Real agents
+
+`git version 2.39.5 (Apple Git-154)`, Darwin 24.5.0 arm64, 16 cores, load average 7.71 11.51 16.24 when the run finished. Time to start a process on this machine, median / 90th percentile in ms over 40 starts: `true` 1.1 / 1.4, `git` 2.4 / 2.6, `python3` 11.8 / 13.0, `zit` 1.6 / 1.8.
+
+Claude Code, Codex and Autohand, each in headless mode, each asked to change one different function in the same file, all three running at the same time. Then the three results are integrated.
+
+- **worktree**: `git worktree add -b <agent>`, run the agent there, `git add -A && git commit`, `git worktree remove`, then `git merge` each branch.
+- **Zit**: `zit run --agent <agent> --intent <prompt>`, then `zit accept` each change.
+
+One task per agent per arm, one run. Model latency dominates and varies from call to call, so the turn times say nothing about which arm is faster; the table is evidence that the integration works with each agent.
+
+| Arm | Agent | Turn (s) | Agent exited 0 | Produced a change | Integrated | Edit is in `main` |
+|---|---|---:|---|---|---|---|
+| worktree | claude | 11.7 | yes | yes | yes | yes |
+| worktree | codex | 28.1 | yes | yes | yes | yes |
+| worktree | autohand | 41.3 | yes | yes | yes | yes |
+| zit | claude | 12.6 | yes | yes | yes | yes |
+| zit | codex | 23.9 | yes | yes | yes | yes |
+| zit | autohand | 57.0 | yes | yes | yes | yes |
+
+All agents working at once, start to finish: worktree 41.3 s (then 191 ms to integrate), zit 57.0 s (then 317 ms to integrate).
+
+## 5. Disk with installed dependencies
+
+`bench/space.sh`: 5 contributors on `status-page`, a real project with 206 MB of installed dependencies. Each worktree gets its own install; Zit installs once with `[prepare]` and clones it into every workspace. The install is the same copy of the project's real `node_modules` in both arms. Median of 3 rounds; disk is the drop in free space.
+
+| | git worktree + install each | Zit with `[prepare]` |
+|---|---:|---:|
+| Disk (MB) | 1,619 | 327 |
+| Disk per round (MB) | 1,562 / 1,654 / 1,619 | 306 / 332 / 327 |
+| Time to set up all (s) | 10.2 | 1.5 |
+| Workspaces with dependencies present | 5 | 5 |
+
+For scale, the machine this ran on had 57 linked worktrees of other projects using 4.42 GB, of which 3.87 GB was installed dependencies and build output (`bench/results/machine-audit.json`).
+
+## 6. Twenty developers and thirty agents on one repository
+
+`bench/sim/simulate.py` on a copy of `awesome-sub-agents`: 50 issue-sized tasks with built-in overlaps, developers using plain git, agents using `zit run`, one integrator accepting arrivals in order. Developer rows ran without agents. The full analysis is in [Lessons](/lessons).
+
+| Run | Landed | Ended without a change | Integration attempts | Rejections by reason | Wall (s) |
+|---|---:|---:|---:|---|---:|
+| 20 developers, Zit before the Lesson 02 changes | 12 / 20 | 0 | 57 | stale 45 | 140 |
+| 20 developers, plain git merge queue | 20 / 20 | 0 | 22 | conflict 2 | 91 |
+| 20 developers, Zit with generated-file and prose rules | 20 / 20 | 0 | 21 | conflict 1 | 96 |
+| 20 developers + 15 Claude Code + 15 Codex, round 1 | 42 / 50 | 7 | 58 | stale 9, conflict 5, error 2 | 877 |
+| 20 developers + 15 Claude Code + 15 Codex, round 2 (after fixes) | 46 / 50 | 3 | 62 | failed 10, conflict 5, stale 1 | 622 |
+| Router, 20 files: 20 developers + 10 Claude Code + 10 Codex (Lesson 03) | 40 / 40 | 0 | 44 | conflict 4 | 363 |
+
+Ended without a change, round 1: 3 correctly found their task already done, 1 waited for a claim and never started, 3 were lost when the machine's disk filled. Round 2: all 3 correctly found their task already done. Round 2's `failed` rejections are changes written against a validator that another agent made stricter while they worked; see [Lessons](/lessons).
+
+## What these numbers say
+
+**Creating workspaces is 5.4x to 8.1x faster with copy-on-write clones**, and uses far less disk (98 MB against 1,390 MB for 10 workspaces of 30,000 files). Without cloning, zit creates workspaces at the same speed as `git worktree`. Deleting workspaces takes about as long either way.
+
+**100 changes from 10 agents.**
+
+- Agents' turns: zit 1.8 s, worktrees 2.8 s.
+- Integration: zit 16.8 s, worktrees with selective checks 7.5 s. **zit is 2.2x slower here.** Against worktrees that re-run every check (37.6 s) it is 2.2x faster.
+- End to end (turns plus integration): zit 18.5 s, worktrees 10.3 s.
+- `--allow-stale` integrates in 12.6 s (1.7x the worktree time) and makes exactly the same decisions, ending on the same tree.
+- Driving zit through its CLI instead of in-process: 17.0 s against 16.8 s.
+- Checks executed: zit 109, worktrees with selective checks 105, worktrees with full checks 1070.
+- Every one of the 7 merges that broke a check in the worktree arm was refused by zit before it merged or ran anything (7 of 7).
+- Strict mode refused 23 further changes (23% of all changes) that would have merged and passed. Each cost its agent a redo.
+- Left behind at the end: 124 branches in the worktree arm, 0 speculative changes or workspaces in zit.
+- `zit status` over 100 speculative changes: 161 ms.
+
+**1000 changes from 100 agents.**
+
+- Agents' turns: zit 123.4 s, worktrees 302.2 s (with 82 `git worktree` calls retried after racing).
+- Integration: zit 356.2 s, worktrees with selective checks 155.1 s. **zit is 2.3x slower here.**
+- End to end (turns plus integration): zit 479.7 s, worktrees 457.4 s.
+- Checks executed: zit 1019, worktrees with selective checks 1100.
+- Every one of the 119 merges that broke a check in the worktree arm was refused by zit before it merged or ran anything (119 of 119).
+- Strict mode refused 209 further changes (21% of all changes) that would have merged and passed. Each cost its agent a redo.
+- Left behind at the end: 1545 branches in the worktree arm, 0 speculative changes or workspaces in zit.
+- `zit status` over 1000 speculative changes: 1,675 ms.
+
+**Where the integration time goes.** Zit makes about 10 git calls to accept a change where a merge makes 1 or 2, and it verifies the composed state in a fresh workspace rather than in place (ADR 7). The strict mode's extra refusals add redos on top; `--allow-stale` removes those and shows the remaining per-accept overhead.
+
+**Where the final trees differ.** In the 100-change run, strict Zit's final tree differs from the others in one function. Two agents made the identical signature change. Git merges identical edits silently; strict Zit calls the second one a write-write conflict, and the scripted agent's redo wrote a different body. Both trees pass every check. The 1,000-change trees were not inspected.
+
+## Not measured
+
+- Language-model agents at scale. Section 4 is three agents, one task each.
+- Any platform other than macOS on APFS. On a filesystem without clones, expect the `zit-checkout` rows of section 1.
+- Repositories above 30,000 files, and more than 100 concurrent agents or 1,000 speculative changes.
+- Checks that take minutes. Here a check takes tens of milliseconds, which makes Zit's fixed per-accept cost as visible as it can be.

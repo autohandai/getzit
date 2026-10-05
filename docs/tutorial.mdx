@@ -1,0 +1,226 @@
+---
+title: Zit 101
+description: Install Zit, add it to a repository, make a change by hand, accept a teammate's branch and an agent's work, and publish to git.
+---
+
+Ten minutes, one repository. Every command and its output below is from a real session; home-directory paths are shortened.
+
+The example is a small Python project, `shop`, with one function under test. You need git 2.38 or newer, and Rust 1.88 or newer to build Zit.
+
+## 1. Install
+
+From a checkout of the Zit repository:
+
+```sh
+cargo install --path . --locked
+```
+
+`--locked` builds with the exact dependency versions the project was tested with; without it, Cargo picks the newest ones, which may need a newer Rust. This installs two binaries into `~/.cargo/bin`:
+
+| Binary | Use it as |
+|---|---|
+| `zit` | `zit status`, `zit accept …` |
+| `git-zit` | `git zit status`, `git zit accept …` |
+
+They are the same program. Git runs any `git-<name>` on your `PATH` as `git <name>`, so Zit works wherever git does. This page uses `git zit`.
+
+```console
+$ git zit -h
+Usage: git zit [OPTIONS] <COMMAND>
+
+Commands:
+  init         Start the graph in this git repository; REV becomes the current state
+  materialise  Create a disposable workspace holding a state; prints its path
+  claim        Claim resources you intend to write; refused if other unaccepted work holds them
+  record       Snapshot a workspace into a change
+  status       Everything that exists: current, speculative changes, workspaces
+  accept       Make a change part of the current state
+  …
+  web          Live graph in the browser: accepted line, speculative changes, workspaces, diffs
+```
+
+:::note
+Use `git zit -h` or `git zit help`. `git zit --help` makes git look for a manual page, which Zit does not install.
+:::
+
+## 2. Start the graph
+
+In any git repository with at least one commit:
+
+```console
+$ git zit init
+current is e6d498aea2
+```
+
+`HEAD` is now the **current state**. Nothing in your working tree, your branches or your history changed. Zit added one ref, `refs/zit/current`.
+
+## 3. Tell Zit how to check a change
+
+A `zit.toml` at the root of the repository lists the checks a state must pass before it can become current. It is a normal committed file, so commit it with git and bring that commit in:
+
+```toml zit.toml
+[[check]]
+name = "tests"
+run = "python3 -m pytest -q"
+inputs = ["shop", "tests"]
+
+# Files tools leave behind that should never be part of a change.
+ignore = [".coverage"]
+```
+
+```console
+$ git add zit.toml && git commit -m "Add zit checks"
+$ git zit sync --branch main
+main is 997778b6b8
+```
+
+`sync` accepts the branch's new commits into current, then moves the branch to current. `inputs` says which paths the check depends on; a change that touches none of them reuses the earlier result ([Checks](/checks)).
+
+If your repository has a generated file, such as a registry or an index built by a script, declare it too. Concurrent edits to it are then never conflicts; Zit rebuilds it on the combined state:
+
+```toml
+[[derive]]
+path = "registry.json"
+run = "python3 scripts/generate_registry.py"
+```
+
+If it has dependencies to install, declare that as well. Zit installs them once, and every workspace starts with them, as a copy-on-write clone that takes almost no extra disk:
+
+```toml
+[prepare]
+run = "npm ci"
+inputs = ["package.json", "package-lock.json"]
+```
+
+All four sections are described in [zit.toml](/checks).
+
+## 4. Make a change by hand
+
+```console
+$ git zit materialise --agent ana --intent "Tax is 20%"
+~/.zit/shop-8bdbd4d96eb6bdd8/ws/cfeffbdb/tree
+```
+
+That directory is a disposable copy of the current state. On macOS it is a copy-on-write clone: it took no extra disk for files you do not edit. It is a working git directory, but not a worktree and not a branch. Edit there with anything, then record from inside it:
+
+```console
+$ git zit record --dispose
+c5dd0df418354c66c8d66ed3354a21f519d02649
+  wrote shop/pricing.py#tax
+  wrote tests/test_pricing.py#test_tax
+```
+
+The change is in the graph; the directory is gone. Zit worked out *what* was written, function by function.
+
+```console
+$ git zit status
+current  997778b6b8  Ana  1s  Add zit checks
+
+CHANGES (1)
+  c5dd0df418  speculative        ana          0s  Tax is 20%
+
+WORKSPACES (0)
+
+$ git zit accept c5dd0df418
+current is c5dd0df418 (fast-forward; checks: 1 run, 0 reused)
+```
+
+`accept` ran the tests on the change's state, then made it current. Had they failed, current would not have moved and the change would be marked invalid with the reason.
+
+## 5. Publish to git
+
+```console
+$ git zit export --branch main
+main is c5dd0df418
+
+$ git log --oneline -3
+c5dd0df Tax is 20%
+997778b Add zit checks
+e6d498a Shop
+```
+
+From here it is ordinary git: `git push`.
+
+## 6. Accept a teammate's branch
+
+Teammates do not need Zit. Bo uses plain git:
+
+```console
+$ git switch -c readme-currency
+$ git commit -qam "Document integer amounts"
+$ git push -q origin readme-currency
+```
+
+In the clone where you integrate:
+
+```console
+$ git fetch -q origin
+$ git zit accept origin/readme-currency
+current is 55fdcf6902 (fast-forward; checks: 0 run, 1 reused)
+
+$ git zit export --branch main
+$ git push -q origin main
+```
+
+`checks: 0 run, 1 reused`: Bo changed only `README.md`, and the tests depend on `shop/` and `tests/`, so the earlier passing result still holds.
+
+If Bo's branch had been built on an older `main` and changed the same function as someone else, `accept` would refuse it and say which function and whose change.
+
+## 7. Let an agent do it
+
+`git zit run` gives an agent CLI its own workspace, runs it, and records whatever it leaves behind, however it ends:
+
+```console
+$ git zit run --agent claude --intent "Add a discount(amount, percent) function with a test" \
+    --timeout 300 -- claude -p "Add a discount(amount, percent) function to shop/pricing.py … Do not commit." \
+    --permission-mode acceptEdits --allowedTools "Bash(python3:*)"
+zit: recorded 6212a64f71 (Add a discount(amount, percent) function with a test)
+
+$ git zit show 6212a64f71
+status   speculative
+agent    claude
+wrote    shop/pricing.py#discount
+wrote    tests/test_pricing.py#
+wrote    tests/test_pricing.py#test_discount
+check    tests: no evidence
+
+$ git zit accept 6212a64f71
+current is 6212a64f71 (fast-forward; checks: 1 run, 0 reused)
+```
+
+`zit show` also prints what the agent reported at the end of its session (`reported …`): Zit keeps the agent's final account with the change, and it becomes the body of the commit when you export.
+
+With `--agent claude`, `codex` or `autohand` and no command, Zit uses that agent's headless mode with `--intent` as the prompt. For agents that should coordinate with each other, give them the MCP server or the claim rules in [Agents](/agents).
+
+## 8. Watch it
+
+```console
+$ git zit web
+zit web: http://127.0.0.1:4747  (read-only; Ctrl-C to stop)
+```
+
+The browser opens on the [live graph](/web): accepted changes in a line, speculative ones above it, open workspaces below, and for any selection, what it wrote, why it stands where it does, its diff and the command to run next.
+
+## 9. Share the graph
+
+The graph is git refs. Push and fetch them like branches:
+
+```sh
+git push origin 'refs/zit/*:refs/zit/*'
+git fetch origin 'refs/zit/*:refs/zit/*'
+```
+
+## Undo everything
+
+```sh
+git zit clean                                                          # every local copy: workspaces, caches
+git for-each-ref refs/zit --format='delete %(refname)' | git update-ref --stdin   # the graph
+```
+
+Your branches, history and working tree were never touched, so this leaves the repository exactly as plain git had it.
+
+## Next
+
+- [What Zit is, and is not](/why) — whether you need it.
+- [Quickstart](/quickstart) — three contributors, one semantic conflict, resolved.
+- [Agents](/agents) — Claude Code, Codex and Autohand, many at once.

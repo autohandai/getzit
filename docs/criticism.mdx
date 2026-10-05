@@ -1,0 +1,42 @@
+---
+title: Criticism
+description: What hostile reviewers said about Zit, which of it was right, and what changed because of it.
+---
+
+Before launch, Zit was reviewed the way a launch thread would review it: four simulated audiences (version-control experts, Rust and systems programmers, engineering leads and security people, heavy users of coding agents), each writing the 30 sharpest comments they could tie to a specific file. Of 120 comments, most were valid or partly valid. The full record, with every comment's verdict and status, is `feedback/review-01.md` in the repository.
+
+## What they got right, and what changed
+
+| Criticism | What changed |
+|---|---|
+| A change could rewrite its own checks (`run = "true"`) and pass its own gate. | Accept runs current's checks as well as the change's own. A change can add checks, not remove them. |
+| Every MCP agent could accept changes and discard other agents' work. | Agents get neither tool; `zit mcp --integrator` does. |
+| The Codex preset let the agent write the repository's `.git`, whose hooks run code outside the sandbox. | Agents need, and get, only Zit's home. Checked with a real Codex run. |
+| Watching work in progress wrote every draft into `.git/objects`. | Drafts go into a throwaway object store. |
+| Children an agent started kept writing while its work was recorded. | Headless agents run in their own process group, stopped before recording. |
+| A hung check blocked accept forever, and infrastructure failures were cached as permanent. | Checks have a `timeout` (default 30 minutes); timed-out or killed checks are not remembered. |
+| A reused build directory skipped the dependency install, so a lockfile change was checked against old dependencies. | Views are reused only when the dependencies match. |
+| An agent killed mid-`git add` lost its work to a stale `index.lock`. | The lock is cleared once the agent is gone. |
+| The documented minimum Rust version could not build the locked dependencies. | Rust 1.88. |
+| Rust attributes and doc comments counted as module-level code. | They belong to the item they annotate. |
+| An intent could forge `Zit-Agent:` and claim to be another agent. | Trailer-shaped lines and control characters are neutralised. |
+
+Each has a test that failed before the fix, except the Rust version and the Codex preset, which was checked with a real Codex run.
+
+## What they got right, and is still open
+
+- **The headline numbers were weaker than they looked.** The "40 of 40" run was Markdown, one file per agent, merged mostly by git; the "developers" were scripts. The [opening](/) now leads with contended runs, says what each number is, and shows the 2.2× integration slowdown.
+- **Cost and quality were never measured.** No experiment reports tokens or money, and "landed" means passed the checks, not good.
+- **Claims were never tested alone.** The run that credits them also changed the prompt.
+- **Name matching is coarse.** `cache.get()` counts as reading every top-level `get`; one method edit touches its whole class; imports collide. See [Limits](/limits#semantics).
+- **It is a Mac tool today.** Copy-on-write needs APFS; most agent fleets run on Linux.
+- **It does not fit a protected `main` by itself.** No PR export, signed commits, linear history or CI integration; [Teams and review](/git#teams-and-review) gives the route that works now.
+- **Fetched evidence is trusted.** See [Another machine](/git#another-machine).
+- **No binaries, no CI for Zit itself, no comparison with GitHub merge queue, Graphite or Conductor.**
+
+## Where they were wrong
+
+- **"`git_stdin` deadlocks."** Every caller's git command reads all of stdin before writing, and inputs are a few kilobytes.
+- **"The name is a pimple."** True, and not a technical problem.
+- **"Pijul's commutation is a theorem; this is a heuristic."** Correct, and stated: Zit's goal is a state that passes its checks, not patches that commute. The heuristic decides what to re-check; the checks decide what lands.
+- **"The web view should accept changes."** Read-only on localhost is deliberate.

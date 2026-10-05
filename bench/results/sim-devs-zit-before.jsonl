@@ -1,0 +1,124 @@
+{"kind": "start", "devs": 20, "agents": 0, "t": 1.3}
+{"kind": "submit", "who": "dev-07", "rev": "origin/dev/dev-07", "attempt": 1, "t": 26.9}
+{"kind": "integrate", "who": "dev-07", "rev": "origin/dev/dev-07", "attempt": 1, "verdict": "accepted", "reason": null, "detail": null, "composed": false, "accept_s": 0.5, "t": 27.4}
+{"kind": "submit", "who": "dev-15", "rev": "origin/dev/dev-15", "attempt": 1, "t": 34.0}
+{"kind": "integrate", "who": "dev-15", "rev": "origin/dev/dev-15", "attempt": 1, "verdict": "accepted", "reason": null, "detail": null, "composed": true, "accept_s": 0.31, "t": 34.4}
+{"kind": "submit", "who": "dev-12", "rev": "origin/dev/dev-12", "attempt": 1, "t": 34.9}
+{"kind": "integrate", "who": "dev-12", "rev": "origin/dev/dev-12", "attempt": 1, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "ca2bff70fc95ddba75523d24dfb8f38d3a0ac2fe"}], "composed": null, "accept_s": 0.17, "t": 35.1}
+{"kind": "submit", "who": "dev-08", "rev": "origin/dev/dev-08", "attempt": 1, "t": 42.8}
+{"kind": "submit", "who": "dev-05", "rev": "origin/dev/dev-05", "attempt": 1, "t": 42.8}
+{"kind": "integrate", "who": "dev-08", "rev": "origin/dev/dev-08", "attempt": 1, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "ca2bff70fc95ddba75523d24dfb8f38d3a0ac2fe"}], "composed": null, "accept_s": 0.14, "t": 42.9}
+{"kind": "integrate", "who": "dev-05", "rev": "origin/dev/dev-05", "attempt": 1, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "ca2bff70fc95ddba75523d24dfb8f38d3a0ac2fe"}], "composed": null, "accept_s": 0.09, "t": 43.0}
+{"kind": "submit", "who": "dev-01", "rev": "origin/dev/dev-01", "attempt": 1, "t": 44.4}
+{"kind": "integrate", "who": "dev-01", "rev": "origin/dev/dev-01", "attempt": 1, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "ca2bff70fc95ddba75523d24dfb8f38d3a0ac2fe"}], "composed": null, "accept_s": 0.11, "t": 44.5}
+{"kind": "submit", "who": "dev-04", "rev": "origin/dev/dev-04", "attempt": 1, "t": 44.5}
+{"kind": "integrate", "who": "dev-04", "rev": "origin/dev/dev-04", "attempt": 1, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "ca2bff70fc95ddba75523d24dfb8f38d3a0ac2fe"}], "composed": null, "accept_s": 0.1, "t": 44.6}
+{"kind": "submit", "who": "dev-12", "rev": "origin/dev/dev-12", "attempt": 2, "t": 47.3}
+{"kind": "integrate", "who": "dev-12", "rev": "origin/dev/dev-12", "attempt": 2, "verdict": "accepted", "reason": null, "detail": null, "composed": false, "accept_s": 0.38, "t": 47.7}
+{"kind": "submit", "who": "dev-02", "rev": "origin/dev/dev-02", "attempt": 1, "t": 48.1}
+{"kind": "integrate", "who": "dev-02", "rev": "origin/dev/dev-02", "attempt": 1, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "ca2bff70fc95ddba75523d24dfb8f38d3a0ac2fe"}], "composed": null, "accept_s": 0.22, "t": 48.4}
+{"kind": "submit", "who": "dev-04", "rev": "origin/dev/dev-04", "attempt": 2, "t": 55.5}
+{"kind": "submit", "who": "dev-08", "rev": "origin/dev/dev-08", "attempt": 2, "t": 55.5}
+{"kind": "submit", "who": "dev-19", "rev": "origin/dev/dev-19", "attempt": 1, "t": 55.7}
+{"kind": "integrate", "who": "dev-04", "rev": "origin/dev/dev-04", "attempt": 2, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "b4bedab73d24227c8134eac040aec2cd7b19efb7"}], "composed": null, "accept_s": 0.2, "t": 55.7}
+{"kind": "integrate", "who": "dev-08", "rev": "origin/dev/dev-08", "attempt": 2, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "b4bedab73d24227c8134eac040aec2cd7b19efb7"}], "composed": null, "accept_s": 0.19, "t": 55.9}
+{"kind": "integrate", "who": "dev-19", "rev": "origin/dev/dev-19", "attempt": 1, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "ca2bff70fc95ddba75523d24dfb8f38d3a0ac2fe"}], "composed": null, "accept_s": 0.09, "t": 56.0}
+{"kind": "submit", "who": "dev-05", "rev": "origin/dev/dev-05", "attempt": 2, "t": 60.3}
+{"kind": "submit", "who": "dev-01", "rev": "origin/dev/dev-01", "attempt": 2, "t": 60.3}
+{"kind": "integrate", "who": "dev-05", "rev": "origin/dev/dev-05", "attempt": 2, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "b4bedab73d24227c8134eac040aec2cd7b19efb7"}], "composed": null, "accept_s": 0.1, "t": 60.4}
+{"kind": "integrate", "who": "dev-01", "rev": "origin/dev/dev-01", "attempt": 2, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "b4bedab73d24227c8134eac040aec2cd7b19efb7"}], "composed": null, "accept_s": 0.11, "t": 60.5}
+{"kind": "submit", "who": "dev-13", "rev": "origin/dev/dev-13", "attempt": 1, "t": 60.9}
+{"kind": "integrate", "who": "dev-13", "rev": "origin/dev/dev-13", "attempt": 1, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "ca2bff70fc95ddba75523d24dfb8f38d3a0ac2fe"}], "composed": null, "accept_s": 0.13, "t": 61.0}
+{"kind": "submit", "who": "dev-02", "rev": "origin/dev/dev-02", "attempt": 2, "t": 62.6}
+{"kind": "integrate", "who": "dev-02", "rev": "origin/dev/dev-02", "attempt": 2, "verdict": "accepted", "reason": null, "detail": null, "composed": false, "accept_s": 0.42, "t": 63.0}
+{"kind": "submit", "who": "dev-13", "rev": "origin/dev/dev-13", "attempt": 2, "t": 68.9}
+{"kind": "integrate", "who": "dev-13", "rev": "origin/dev/dev-13", "attempt": 2, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "bb45f611d5a0acc9262f29838930c6cf1a1032cd"}], "composed": null, "accept_s": 0.17, "t": 69.1}
+{"kind": "submit", "who": "dev-04", "rev": "origin/dev/dev-04", "attempt": 3, "t": 69.2}
+{"kind": "submit", "who": "dev-14", "rev": "origin/dev/dev-14", "attempt": 1, "t": 69.3}
+{"kind": "integrate", "who": "dev-04", "rev": "origin/dev/dev-04", "attempt": 3, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "bb45f611d5a0acc9262f29838930c6cf1a1032cd"}], "composed": null, "accept_s": 0.1, "t": 69.3}
+{"kind": "integrate", "who": "dev-14", "rev": "origin/dev/dev-14", "attempt": 1, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "ca2bff70fc95ddba75523d24dfb8f38d3a0ac2fe"}], "composed": null, "accept_s": 0.27, "t": 69.6}
+{"kind": "submit", "who": "dev-05", "rev": "origin/dev/dev-05", "attempt": 3, "t": 70.4}
+{"kind": "integrate", "who": "dev-05", "rev": "origin/dev/dev-05", "attempt": 3, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "bb45f611d5a0acc9262f29838930c6cf1a1032cd"}], "composed": null, "accept_s": 0.11, "t": 70.5}
+{"kind": "submit", "who": "dev-03", "rev": "origin/dev/dev-03", "attempt": 1, "t": 71.4}
+{"kind": "integrate", "who": "dev-03", "rev": "origin/dev/dev-03", "attempt": 1, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "ca2bff70fc95ddba75523d24dfb8f38d3a0ac2fe"}], "composed": null, "accept_s": 0.27, "t": 71.6}
+{"kind": "submit", "who": "dev-19", "rev": "origin/dev/dev-19", "attempt": 2, "t": 73.1}
+{"kind": "integrate", "who": "dev-19", "rev": "origin/dev/dev-19", "attempt": 2, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "README.md#[03. Infrastructure](categories/03-infrastructure/)", "kind": "write-write", "by": "bb45f611d5a0acc9262f29838930c6cf1a1032cd"}, {"resource": "categories/03-infrastructure/README.md#03. Infrastructure", "kind": "write-write", "by": "bb45f611d5a0acc9262f29838930c6cf1a1032cd"}, {"resource": "registry.json", "kind": "write-write", "by": "bb45f611d5a0acc9262f29838930c6cf1a1032cd"}], "composed": null, "accept_s": 0.27, "t": 73.3}
+{"kind": "submit", "who": "dev-10", "rev": "origin/dev/dev-10", "attempt": 1, "t": 73.7}
+{"kind": "submit", "who": "dev-06", "rev": "origin/dev/dev-06", "attempt": 1, "t": 73.8}
+{"kind": "integrate", "who": "dev-10", "rev": "origin/dev/dev-10", "attempt": 1, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "ca2bff70fc95ddba75523d24dfb8f38d3a0ac2fe"}], "composed": null, "accept_s": 0.25, "t": 73.9}
+{"kind": "integrate", "who": "dev-06", "rev": "origin/dev/dev-06", "attempt": 1, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "ca2bff70fc95ddba75523d24dfb8f38d3a0ac2fe"}], "composed": null, "accept_s": 0.1, "t": 74.0}
+{"kind": "submit", "who": "dev-08", "rev": "origin/dev/dev-08", "attempt": 3, "t": 76.2}
+{"kind": "integrate", "who": "dev-08", "rev": "origin/dev/dev-08", "attempt": 3, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "bb45f611d5a0acc9262f29838930c6cf1a1032cd"}], "composed": null, "accept_s": 0.1, "t": 76.3}
+{"kind": "submit", "who": "dev-14", "rev": "origin/dev/dev-14", "attempt": 2, "t": 77.6}
+{"kind": "submit", "who": "dev-03", "rev": "origin/dev/dev-03", "attempt": 2, "t": 77.7}
+{"kind": "integrate", "who": "dev-14", "rev": "origin/dev/dev-14", "attempt": 2, "verdict": "accepted", "reason": null, "detail": null, "composed": false, "accept_s": 0.31, "t": 77.9}
+{"kind": "integrate", "who": "dev-03", "rev": "origin/dev/dev-03", "attempt": 2, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "458a450418403c936599df96af755cb80b1e6ad8"}], "composed": null, "accept_s": 0.21, "t": 78.1}
+{"kind": "submit", "who": "dev-20", "rev": "origin/dev/dev-20", "attempt": 1, "t": 78.7}
+{"kind": "integrate", "who": "dev-20", "rev": "origin/dev/dev-20", "attempt": 1, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "ca2bff70fc95ddba75523d24dfb8f38d3a0ac2fe"}], "composed": null, "accept_s": 0.12, "t": 78.8}
+{"kind": "submit", "who": "dev-01", "rev": "origin/dev/dev-01", "attempt": 3, "t": 80.8}
+{"kind": "submit", "who": "dev-13", "rev": "origin/dev/dev-13", "attempt": 3, "t": 80.8}
+{"kind": "integrate", "who": "dev-01", "rev": "origin/dev/dev-01", "attempt": 3, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "README.md#[03. Infrastructure](categories/03-infrastructure/)", "kind": "write-write", "by": "bb45f611d5a0acc9262f29838930c6cf1a1032cd"}, {"resource": "categories/03-infrastructure/README.md#03. Infrastructure", "kind": "write-write", "by": "bb45f611d5a0acc9262f29838930c6cf1a1032cd"}, {"resource": "registry.json", "kind": "write-write", "by": "bb45f611d5a0acc9262f29838930c6cf1a1032cd"}], "composed": null, "accept_s": 0.12, "t": 80.9}
+{"kind": "integrate", "who": "dev-13", "rev": "origin/dev/dev-13", "attempt": 3, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "458a450418403c936599df96af755cb80b1e6ad8"}], "composed": null, "accept_s": 0.28, "t": 81.2}
+{"kind": "submit", "who": "dev-05", "rev": "origin/dev/dev-05", "attempt": 4, "t": 83.8}
+{"kind": "integrate", "who": "dev-05", "rev": "origin/dev/dev-05", "attempt": 4, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "458a450418403c936599df96af755cb80b1e6ad8"}], "composed": null, "accept_s": 0.12, "t": 83.9}
+{"kind": "gave-up", "who": "dev-05", "t": 83.9}
+{"kind": "submit", "who": "dev-11", "rev": "origin/dev/dev-11", "attempt": 1, "t": 84.1}
+{"kind": "integrate", "who": "dev-11", "rev": "origin/dev/dev-11", "attempt": 1, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "categories/03-infrastructure/docker-expert.md#", "kind": "write-write", "by": "458a450418403c936599df96af755cb80b1e6ad8"}, {"resource": "registry.json", "kind": "write-write", "by": "ca2bff70fc95ddba75523d24dfb8f38d3a0ac2fe"}], "composed": null, "accept_s": 0.32, "t": 84.5}
+{"kind": "submit", "who": "dev-16", "rev": "origin/dev/dev-16", "attempt": 1, "t": 86.0}
+{"kind": "submit", "who": "dev-04", "rev": "origin/dev/dev-04", "attempt": 4, "t": 86.2}
+{"kind": "integrate", "who": "dev-16", "rev": "origin/dev/dev-16", "attempt": 1, "verdict": "accepted", "reason": null, "detail": null, "composed": true, "accept_s": 0.38, "t": 86.4}
+{"kind": "integrate", "who": "dev-04", "rev": "origin/dev/dev-04", "attempt": 4, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "458a450418403c936599df96af755cb80b1e6ad8"}], "composed": null, "accept_s": 0.38, "t": 86.7}
+{"kind": "gave-up", "who": "dev-04", "t": 86.7}
+{"kind": "submit", "who": "dev-03", "rev": "origin/dev/dev-03", "attempt": 3, "t": 88.4}
+{"kind": "submit", "who": "dev-17", "rev": "origin/dev/dev-17", "attempt": 1, "t": 88.5}
+{"kind": "integrate", "who": "dev-03", "rev": "origin/dev/dev-03", "attempt": 3, "verdict": "accepted", "reason": null, "detail": null, "composed": true, "accept_s": 0.71, "t": 89.1}
+{"kind": "submit", "who": "dev-19", "rev": "origin/dev/dev-19", "attempt": 3, "t": 89.3}
+{"kind": "integrate", "who": "dev-17", "rev": "origin/dev/dev-17", "attempt": 1, "verdict": "accepted", "reason": null, "detail": null, "composed": true, "accept_s": 0.55, "t": 89.6}
+{"kind": "integrate", "who": "dev-19", "rev": "origin/dev/dev-19", "attempt": 3, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "458a450418403c936599df96af755cb80b1e6ad8"}], "composed": null, "accept_s": 0.68, "t": 90.3}
+{"kind": "submit", "who": "dev-06", "rev": "origin/dev/dev-06", "attempt": 2, "t": 90.4}
+{"kind": "integrate", "who": "dev-06", "rev": "origin/dev/dev-06", "attempt": 2, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "458a450418403c936599df96af755cb80b1e6ad8"}], "composed": null, "accept_s": 0.13, "t": 90.5}
+{"kind": "submit", "who": "dev-10", "rev": "origin/dev/dev-10", "attempt": 2, "t": 90.8}
+{"kind": "integrate", "who": "dev-10", "rev": "origin/dev/dev-10", "attempt": 2, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "458a450418403c936599df96af755cb80b1e6ad8"}], "composed": null, "accept_s": 0.23, "t": 91.0}
+{"kind": "submit", "who": "dev-18", "rev": "origin/dev/dev-18", "attempt": 1, "t": 91.4}
+{"kind": "submit", "who": "dev-09", "rev": "origin/dev/dev-09", "attempt": 1, "t": 91.6}
+{"kind": "integrate", "who": "dev-18", "rev": "origin/dev/dev-18", "attempt": 1, "verdict": "accepted", "reason": null, "detail": null, "composed": true, "accept_s": 0.33, "t": 91.7}
+{"kind": "integrate", "who": "dev-09", "rev": "origin/dev/dev-09", "attempt": 1, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "ca2bff70fc95ddba75523d24dfb8f38d3a0ac2fe"}], "composed": null, "accept_s": 0.29, "t": 92.0}
+{"kind": "submit", "who": "dev-20", "rev": "origin/dev/dev-20", "attempt": 2, "t": 94.6}
+{"kind": "integrate", "who": "dev-20", "rev": "origin/dev/dev-20", "attempt": 2, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "f3934dfddcafc6e7997f113933daec2fc2f0d4b4"}], "composed": null, "accept_s": 0.26, "t": 94.9}
+{"kind": "submit", "who": "dev-08", "rev": "origin/dev/dev-08", "attempt": 4, "t": 95.2}
+{"kind": "submit", "who": "dev-13", "rev": "origin/dev/dev-13", "attempt": 4, "t": 95.3}
+{"kind": "submit", "who": "dev-01", "rev": "origin/dev/dev-01", "attempt": 4, "t": 95.4}
+{"kind": "integrate", "who": "dev-08", "rev": "origin/dev/dev-08", "attempt": 4, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "458a450418403c936599df96af755cb80b1e6ad8"}], "composed": null, "accept_s": 0.18, "t": 95.4}
+{"kind": "gave-up", "who": "dev-08", "t": 95.4}
+{"kind": "integrate", "who": "dev-13", "rev": "origin/dev/dev-13", "attempt": 4, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "f3934dfddcafc6e7997f113933daec2fc2f0d4b4"}], "composed": null, "accept_s": 0.23, "t": 95.6}
+{"kind": "gave-up", "who": "dev-13", "t": 95.6}
+{"kind": "integrate", "who": "dev-01", "rev": "origin/dev/dev-01", "attempt": 4, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "f3934dfddcafc6e7997f113933daec2fc2f0d4b4"}], "composed": null, "accept_s": 0.12, "t": 95.8}
+{"kind": "gave-up", "who": "dev-01", "t": 95.8}
+{"kind": "submit", "who": "dev-11", "rev": "origin/dev/dev-11", "attempt": 2, "t": 97.1}
+{"kind": "integrate", "who": "dev-11", "rev": "origin/dev/dev-11", "attempt": 2, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "f3934dfddcafc6e7997f113933daec2fc2f0d4b4"}], "composed": null, "accept_s": 0.17, "t": 97.3}
+{"kind": "submit", "who": "dev-20", "rev": "origin/dev/dev-20", "attempt": 3, "t": 101.4}
+{"kind": "integrate", "who": "dev-20", "rev": "origin/dev/dev-20", "attempt": 3, "verdict": "accepted", "reason": null, "detail": null, "composed": false, "accept_s": 0.29, "t": 101.7}
+{"kind": "submit", "who": "dev-10", "rev": "origin/dev/dev-10", "attempt": 3, "t": 103.7}
+{"kind": "integrate", "who": "dev-10", "rev": "origin/dev/dev-10", "attempt": 3, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "2e740f605a5eb95c6edc74305bdc0b7bab26d0ee"}], "composed": null, "accept_s": 0.13, "t": 103.8}
+{"kind": "submit", "who": "dev-09", "rev": "origin/dev/dev-09", "attempt": 2, "t": 107.3}
+{"kind": "integrate", "who": "dev-09", "rev": "origin/dev/dev-09", "attempt": 2, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "2e740f605a5eb95c6edc74305bdc0b7bab26d0ee"}], "composed": null, "accept_s": 0.09, "t": 107.4}
+{"kind": "submit", "who": "dev-19", "rev": "origin/dev/dev-19", "attempt": 4, "t": 108.5}
+{"kind": "integrate", "who": "dev-19", "rev": "origin/dev/dev-19", "attempt": 4, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "2e740f605a5eb95c6edc74305bdc0b7bab26d0ee"}], "composed": null, "accept_s": 0.36, "t": 108.8}
+{"kind": "gave-up", "who": "dev-19", "t": 108.8}
+{"kind": "submit", "who": "dev-06", "rev": "origin/dev/dev-06", "attempt": 3, "t": 110.1}
+{"kind": "integrate", "who": "dev-06", "rev": "origin/dev/dev-06", "attempt": 3, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "2e740f605a5eb95c6edc74305bdc0b7bab26d0ee"}], "composed": null, "accept_s": 0.1, "t": 110.2}
+{"kind": "submit", "who": "dev-11", "rev": "origin/dev/dev-11", "attempt": 3, "t": 113.4}
+{"kind": "integrate", "who": "dev-11", "rev": "origin/dev/dev-11", "attempt": 3, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "2e740f605a5eb95c6edc74305bdc0b7bab26d0ee"}], "composed": null, "accept_s": 0.09, "t": 113.5}
+{"kind": "submit", "who": "dev-10", "rev": "origin/dev/dev-10", "attempt": 4, "t": 118.9}
+{"kind": "integrate", "who": "dev-10", "rev": "origin/dev/dev-10", "attempt": 4, "verdict": "accepted", "reason": null, "detail": null, "composed": false, "accept_s": 0.27, "t": 119.2}
+{"kind": "submit", "who": "dev-11", "rev": "origin/dev/dev-11", "attempt": 4, "t": 123.2}
+{"kind": "integrate", "who": "dev-11", "rev": "origin/dev/dev-11", "attempt": 4, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "bcfec5cd49d93822c6acad13e184ecce40590bb5"}], "composed": null, "accept_s": 0.13, "t": 123.3}
+{"kind": "gave-up", "who": "dev-11", "t": 123.3}
+{"kind": "submit", "who": "dev-09", "rev": "origin/dev/dev-09", "attempt": 3, "t": 127.9}
+{"kind": "submit", "who": "dev-06", "rev": "origin/dev/dev-06", "attempt": 4, "t": 128.2}
+{"kind": "integrate", "who": "dev-09", "rev": "origin/dev/dev-09", "attempt": 3, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "bcfec5cd49d93822c6acad13e184ecce40590bb5"}], "composed": null, "accept_s": 0.26, "t": 128.2}
+{"kind": "integrate", "who": "dev-06", "rev": "origin/dev/dev-06", "attempt": 4, "verdict": "rejected", "reason": "stale", "detail": [{"resource": "registry.json", "kind": "write-write", "by": "bcfec5cd49d93822c6acad13e184ecce40590bb5"}], "composed": null, "accept_s": 0.12, "t": 128.3}
+{"kind": "gave-up", "who": "dev-06", "t": 128.3}
+{"kind": "submit", "who": "dev-09", "rev": "origin/dev/dev-09", "attempt": 4, "t": 139.7}
+{"kind": "integrate", "who": "dev-09", "rev": "origin/dev/dev-09", "attempt": 4, "verdict": "accepted", "reason": null, "detail": null, "composed": false, "accept_s": 0.31, "t": 140.0}
+{"kind": "end", "t": 140.0}

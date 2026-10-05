@@ -1,0 +1,86 @@
+---
+title: What Zit is, and is not
+description: The problem Zit solves, the problems it does not, and how much disk and time it saves, with the measurements behind each answer.
+---
+
+## The problem
+
+Coding agents mean more contributors on one repository at the same time: more sessions, more changes, overlapping more often ([the measurements](/)). Give one repository to many contributors at once and four things go wrong, whatever tool you use:
+
+1. **Every contributor needs a copy.** A `git worktree` or a clone per contributor rewrites every file, and then each one installs its own dependencies.
+2. **Work collides late.** You find out two people did the same thing, or changed things that cannot coexist, when you merge. By then both have finished.
+3. **Git's merge only sees lines.** One agent changes a function's signature and another adds a call to it in a different file. Git merges them without complaint, and the build breaks after the merge.
+4. **Nobody remembers why.** Each agent ends by explaining what it did and why. That explanation disappears with the terminal; the commit message says "Update docs".
+
+## What Zit does about it
+
+| Problem | What Zit does | Measured |
+|---|---|---|
+| A copy per contributor | Workspaces are copy-on-write clones of one cached checkout. Dependencies are installed once (`[prepare]`) and cloned too. | 5 contributors with 206 MB of dependencies: **327 MB instead of 1,619 MB**, set up in **1.5 s instead of 10.2 s** |
+| Collisions found late | Contributors can claim what they will change and see what everyone else is changing right now. | 10 agents with one prompt: **5 changes landed instead of 1**, in **a sixth of the agent time** |
+| Merges that only see lines | Each change records what it wrote, function by function, and what it read. A change that relied on something that has since changed is refused, with the reason. The combined result must pass your checks before it becomes current. | In 1,000 scripted changes, **every merge that would have broken a check (119 of 119) was refused before it merged** |
+| Generated files and docs | A generated file is rebuilt on the combined state instead of conflicting. Two edits to one Markdown section merge if their text does. | 20 developers on a catalogue repo: **20 of 20 landed**, against **12 of 20** before this rule |
+| Lost reasons | Every change keeps its author's own account: an agent's final message, captured by `zit run`, or a git commit's body. It travels with the change into the exported history. | All 20 agents' accounts captured in the router run; the 20 developers there were scripts with pre-written messages ([Lessons](/lessons)) |
+| Integrating agents and people | One integration path for both: a developer's pushed branch and an agent's recorded change are accepted the same way. | **20 scripted git clients + 30 real agents** (Claude Code and Codex), one run, on one repository: **46 of 50 landed, 3 correctly did nothing** because their task was already done, final state valid |
+
+Sources: [Benchmarks](/benchmarks), [Lessons](/lessons), `bench/results/space-status-page.json`.
+
+## What Zit is not
+
+| It is not | Because | Use instead, or alongside |
+|---|---|---|
+| **A version control system** | Zit stores nothing git does not. States are git trees, changes are git commits, the graph is `refs/zit/*`. Delete those refs and you have your plain repository back. | Git |
+| **A replacement for branches and pull requests** | Branches still work. People can keep using them; `zit accept origin/my-branch` integrates one. Zit removes the need for a branch *per agent*. | Your code host, for review |
+| **A CRDT or a real-time editor** | CRDTs guarantee that copies converge on the same text. Zit guarantees that what becomes current was checked. It deliberately coordinates at one point (accept) to get that. | Zed and similar, for live co-editing |
+| **A build system or CI** | Zit runs the checks you declare and reuses results whose inputs did not change. It does not schedule distributed builds. | Your CI, for anything beyond the checks |
+| **A merge driver** | For code, Zit is *stricter* than git: two edits to one function are refused even when the text merges. | — |
+| **A sandbox** | Workspaces isolate files, not processes, ports or network. Agents still run with the permissions you give them. | Your agent's own sandbox, containers |
+| **A server** | There is no service, account or access control. Whoever can write the repository's refs can accept. | Your code host's permissions |
+| **Proven at a thousand agents** | The largest real run is 50 contributors on one machine; the largest scripted one, 1,000 changes from 100 agents. The design aims higher than that; the measurements do not go there yet. | — |
+
+## How much space it saves
+
+It depends on what a workspace has in it, so here is each part measured separately.
+
+### Source files
+
+`git worktree add` writes every tracked file. A Zit workspace is a copy-on-write clone: the file system shares the blocks until something is written.
+
+| Repository | 10 contributors with `git worktree` | 10 with Zit |
+|---|---:|---:|
+| 30,000 files (synthetic) | 1,390 MB, 23.4 s | 98 MB, 3.6 s |
+
+From `bench/results/lifecycle.json`; [Benchmarks](/benchmarks) has 1,000 and 10,000 files too.
+
+### Installed dependencies
+
+This is usually the larger part. On the machine these docs were written on, 57 existing linked worktrees of 40 repositories take **4.42 GB**, and **3.87 GB of that (88%) is installed dependencies and build output** (`node_modules`, `.next`, `dist`, `target`). The source files they duplicate are 0.45 GB.
+
+With `[prepare]`, dependencies are installed once into the cached checkout and cloned with it:
+
+```toml zit.toml
+[prepare]
+run = "npm ci"
+inputs = ["package.json", "package-lock.json"]
+```
+
+| `status-page` (206 MB of dependencies), 5 contributors | git worktree + install each | Zit with `[prepare]` |
+|---|---:|---:|
+| Disk, median of 3 | 1,619 MB | 327 MB |
+| Time to set up all five | 10.2 s | 1.5 s |
+
+One worktree with its install took about 324 MB on disk (1,619 MB for five). The five Zit workspaces together took about the same as one install: the install was paid once and every workspace cloned it. It runs again only when `package.json` or `package-lock.json` change.
+
+### The fine print
+
+- **The savings need a copy-on-write file system.** APFS (macOS) is implemented and tested. On anything else Zit falls back to a plain checkout and saves nothing on source files; Linux reflinks are not built yet.
+- **Clones share until written.** A workspace that rewrites `node_modules` pays for what it rewrites.
+- **Compiled projects may rebuild per workspace path.** Build tools that key their caches on absolute paths (Cargo, for example) are expected to rebuild the project's own code in each new workspace even when the build directory was cloned. This has not been measured with `[prepare]`.
+
+## When you do not need it
+
+- **One person, one task at a time.** A branch is simpler.
+- **A few long-lived branches, merged weekly.** A merge queue or ordinary pull requests are enough.
+- **Agents that never run concurrently on the same repository.** The coordination is the point; without concurrency it only adds a step.
+
+You need it when many contributors change one repository *at the same time*, especially when some of them are agents that can produce changes faster than people can review merges.

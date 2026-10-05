@@ -1,0 +1,66 @@
+---
+title: CLI reference
+description: Every Zit command.
+---
+
+Every command works as `zit <command>` or `git zit <command>`; `git-zit` is installed next to `zit` for that. For help use `git zit -h` or `git zit help` (git turns `--help` into a manual-page lookup).
+
+All commands take `--json`. Changes can be named by any unique id prefix, any git revision, or `current`.
+
+## Graph
+
+| Command | Does |
+|---|---|
+| `zit init [--from REV]` | Start the graph; `REV` (default `HEAD`) becomes current. Idempotent. |
+| `zit status` | Current, every speculative change with its status and reason, every workspace. |
+| `zit show CHANGE` | One change: intent, agent, parents, writes, declared reads, status, evidence. |
+| `zit check CHANGE [--rerun]` | Run the state's checks that have no evidence. Exit 1 if any fails. |
+| `zit accept CHANGE [--allow-stale] [--rerun]` | Make it part of current. Exit 1 if rejected, with the reason. `--rerun` runs every check again. |
+| `zit retry CHANGE` | New workspace on current with the change's edits applied; prints its path. |
+| `zit discard CHANGE…` | Remove speculative changes from the graph. |
+
+## Workspaces
+
+| Command | Does |
+|---|---|
+| `zit materialise [--from CHANGE] [--intent TEXT] [--agent NAME] [--session ID]` | Create a workspace; prints its path. |
+| `zit claim [--workspace ID] RESOURCE…` | Claim what you intend to write. Exit 1, naming the holder, if other unaccepted work already holds it. |
+| `zit read [--workspace ID] RESOURCE…` | Declare observed resources: `path`, `path#Symbol`, `path#`. |
+| `zit record [--workspace ID] [--intent TEXT] [--summary TEXT] [--read RESOURCE]… [--dispose]` | Snapshot into a change; prints its id. `--summary` is what was done and why. |
+| `zit dispose ID… \| --all` | Delete workspaces. Recorded changes are unaffected. |
+| `zit clean [--force]` | Delete every local copy Zit made for the repository: workspaces, cached checkouts, verification views, caches. Refuses while a workspace has unrecorded edits or a running agent, unless `--force`. The graph is untouched. |
+
+Inside a workspace, `record`, `read` and `claim` need no `--workspace`. `status` lists, for each workspace, what it has claimed, what it is writing right now, and overlaps with other unaccepted work.
+
+## Agents
+
+| Command | Does |
+|---|---|
+| `zit run [--agent NAME] [--intent TEXT] [--from CHANGE] [--keep] [--accept] [--timeout SECONDS] [-- COMMAND…]` | Run a command in a fresh workspace and record its work however it ends. |
+| `zit mcp` | Serve the graph over the Model Context Protocol on stdio. |
+| `zit ui` | Interactive list of changes and workspaces, in the terminal. |
+| `zit web [--port 4747] [--no-open]` | [Live graph in the browser](/web). Read-only. |
+
+With `--agent claude`, `codex` or `autohand` and no command, `run` uses that agent's headless invocation with `--intent` as the prompt.
+
+## Git
+
+| Command | Does |
+|---|---|
+| `zit export [--branch main]` | Fast-forward the branch to current. |
+| `zit sync [--branch main]` | Accept the branch into current, then export. |
+
+## The UI
+
+`zit ui` shows the same data as `zit status` and refreshes every two seconds.
+
+| Key | Action |
+|---|---|
+| `↑` `↓` / `j` `k` | move |
+| `tab` | switch between changes and workspaces |
+| `a` | accept the selected change |
+| `c` | run its checks |
+| `t` | retry it |
+| `d` | discard the change, or dispose the workspace |
+| `r` | refresh |
+| `q` | quit |

@@ -1,0 +1,171 @@
+---
+title: Quickstart
+description: From a git repository to three concurrent changes, one of them stale, all resolved.
+---
+
+The output below is a real session, with home-directory paths shortened.
+
+## Install
+
+```sh
+cargo install --path . --locked     # from a checkout of this repository
+```
+
+Needs Rust 1.88+ and git 2.38+.
+
+## Start the graph
+
+In any git repository with at least one commit:
+
+```console
+$ git zit init
+current is f239ffed45
+```
+
+`HEAD` is now the current state. Nothing else in the repository changed.
+
+The example repository has two files and one check:
+
+```rust src/lib.rs
+pub fn price(x: u32) -> u32 {
+    x
+}
+
+pub fn tax(x: u32) -> u32 {
+    x / 10
+}
+```
+
+```toml zit.toml
+[[check]]
+name = "no-todo"
+run = "! grep -rn TODO src"
+inputs = ["src"]
+```
+
+## Make a change
+
+```console
+$ git zit materialise --agent alice --intent "price takes a tax argument"
+~/.zit/shop-36c21a74e718d1ac/ws/15f7a98b/tree
+```
+
+That directory holds the current state. Edit files there with anything. Then, from inside it:
+
+```console
+$ git zit record --dispose
+d7a928567d69813f3c8edb83c40eac0b308e2ea2
+  wrote src/lib.rs#price
+```
+
+The change is in the graph; the directory is gone. `wrote` is derived from the edit: one symbol, not one file.
+
+With an agent, the three steps are one command:
+
+```sh
+zit run --agent claude --intent "price takes a tax argument"
+```
+
+## Three agents at once
+
+Two more changes were made the same way, from the same starting state: bob made `buy` call `price(3)`, carol changed the body of `tax`.
+
+```console
+$ git zit status
+current  f239ffed45  you  1s  Shop
+
+CHANGES (3)
+  3fc1fff629  speculative        bob          0s  buy calls price
+  d7a928567d  speculative        alice        0s  price takes a tax argument
+  da8aef5292  speculative        carol        0s  tax is 20%
+
+WORKSPACES (0)
+```
+
+## Accept
+
+```console
+$ git zit accept d7a928567d
+current is d7a928567d (fast-forward; checks: 1 run, 0 reused)
+```
+
+Carol's change was made against the old state, in the same file as alice's, but in a different function:
+
+```console
+$ git zit accept da8aef5292
+current is 87f2622acc (composed onto current; checks: 1 run, 0 reused)
+```
+
+Bob's change calls `price` with one argument. Alice changed its signature. They touch different files, so git would merge them:
+
+```console
+$ git zit accept 3fc1fff629
+rejected: stale
+  src/lib.rs#price read here, written by d7a928567d (alice: price takes a tax argument)
+next: `zit retry <change>` rebuilds it on current for the agent to reconsider
+```
+
+Exit code 1. Nothing was merged, nothing was deleted:
+
+```console
+$ git zit status
+current  87f2622acc  carol  0s  Compose da8aef5292: tax is 20%
+
+CHANGES (1)
+  3fc1fff629  invalid: stale     bob          0s  buy calls price
+              src/lib.rs#price read here, written by d7a928567d
+
+WORKSPACES (0)
+```
+
+## Retry
+
+```console
+$ git zit retry 3fc1fff629
+~/.zit/shop-36c21a74e718d1ac/ws/024e8f1e/tree
+```
+
+A new workspace on the current state, with bob's edit applied. Fix the call there, then:
+
+```console
+$ git zit record --dispose
+bfd0170ca679273c88a86755cdaf654bff8a886b
+  wrote src/shop.rs#buy
+$ git zit accept bfd0170ca6
+current is bfd0170ca6 (fast-forward; checks: 1 run, 0 reused)
+$ git zit discard 3fc1fff629
+```
+
+## Publish to git
+
+```console
+$ git zit export --branch main
+main is bfd0170ca6
+$ git log --graph --format='%h %an: %s' main
+*   bfd0170 bob: buy calls price
+|\
+| * 3fc1fff bob: buy calls price
+* |   87f2622 carol: Compose da8aef5292: tax is 20%
+|\ \
+| * | da8aef5 carol: tax is 20%
+| |/
+* / d7a9285 alice: price takes a tax argument
+|/
+* f239ffe you: Shop
+```
+
+The history records what happened, including bob's first attempt as the second parent of his fix. Throughout, no branch and no worktree was created:
+
+```console
+$ git branch
+* main
+$ git worktree list
+/path/to/shop  bfd0170 [main]
+```
+
+## Next
+
+- [Concepts](/concepts) explains why bob's change was stale.
+- [Agents](/agents) connects Claude Code, Codex and Autohand.
+- [Checks](/checks) explains `checks: 1 run, 0 reused`.
+- `zit web` draws all of this live in the browser; `zit ui` does it in the terminal, with keys to accept, check, retry and discard.

@@ -1,0 +1,94 @@
+{
+  "zit": "0.1.0",
+  "zit_driven": "in-process (as the MCP server)",
+  "cpus": 16,
+  "git": "git version 2.39.5 (Apple Git-154)",
+  "load_average": "{ 7.71 11.51 16.24 }",
+  "os": "Darwin 24.5.0 arm64",
+  "results": [
+    {
+      "agent": "claude",
+      "agent_exit_ok": true,
+      "arm": "worktree",
+      "edit_is_in_main": true,
+      "integrated": true,
+      "produced_change": true,
+      "turn_ms": 11696.2
+    },
+    {
+      "agent": "codex",
+      "agent_exit_ok": true,
+      "arm": "worktree",
+      "edit_is_in_main": true,
+      "integrated": true,
+      "produced_change": true,
+      "turn_ms": 28112.3
+    },
+    {
+      "agent": "autohand",
+      "agent_exit_ok": true,
+      "arm": "worktree",
+      "edit_is_in_main": true,
+      "integrated": true,
+      "produced_change": true,
+      "turn_ms": 41279.6
+    },
+    {
+      "agent": "(all, concurrent)",
+      "arm": "worktree",
+      "integrate_ms": 190.6,
+      "wall_ms": 41279.7
+    },
+    {
+      "agent": "claude",
+      "agent_exit_ok": true,
+      "arm": "zit",
+      "edit_is_in_main": true,
+      "integrated": true,
+      "produced_change": true,
+      "turn_ms": 12585.9
+    },
+    {
+      "agent": "codex",
+      "agent_exit_ok": true,
+      "arm": "zit",
+      "edit_is_in_main": true,
+      "integrated": true,
+      "produced_change": true,
+      "turn_ms": 23877.4
+    },
+    {
+      "agent": "autohand",
+      "agent_exit_ok": true,
+      "arm": "zit",
+      "edit_is_in_main": true,
+      "integrated": true,
+      "produced_change": true,
+      "turn_ms": 57039.7
+    },
+    {
+      "agent": "(all, concurrent)",
+      "arm": "zit",
+      "integrate_ms": 316.8,
+      "wall_ms": 57039.8
+    }
+  ],
+  "spawn_ms": {
+    "zit": [
+      1.6,
+      1.8
+    ],
+    "git": [
+      2.4,
+      2.6
+    ],
+    "python": [
+      11.8,
+      13.0
+    ],
+    "true": [
+      1.1,
+      1.4
+    ]
+  }
+}

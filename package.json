@@ -1,0 +1,14 @@
+{
+  "name": "zit-docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "blume dev",
+    "build": "blume build",
+    "doctor": "blume doctor",
+    "validate": "blume validate"
+  },
+  "dependencies": {
+    "blume": "^2.1.1"
+  }
+}

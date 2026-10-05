@@ -1,0 +1,26 @@
+{
+ "project": "status-page",
+ "contributors": 5,
+ "tracked_files": 12,
+ "dependencies_mb": 206,
+ "worktree": {
+  "disk_mb": 1619,
+  "seconds": 10.2,
+  "disk_mb_rounds": [
+   1562,
+   1654,
+   1619
+  ]
+ },
+ "zit": {
+  "disk_mb": 327,
+  "seconds": 1.5,
+  "disk_mb_rounds": [
+   306,
+   332,
+   327
+  ],
+  "workspaces_with_dependencies": 5
+ },
+ "rounds": 3
+}

@@ -1,0 +1,56 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  macos:
+    name: macOS (arm64)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --check
+      - name: Lint
+        run: cargo clippy --release --all-targets --features bench --locked -- -D warnings
+      - name: Test
+        run: |
+          git config --global user.name ci
+          git config --global user.email ci@example.com
+          cargo test --release --locked
+      - name: Package
+        run: |
+          cargo build --release --locked
+          mkdir -p out
+          cp target/release/zit target/release/git-zit out/
+          tar -C out -czf zit-macos-arm64.tar.gz zit git-zit
+          shasum -a 256 zit-macos-arm64.tar.gz > zit-macos-arm64.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zit-macos-arm64
+          path: |
+            zit-macos-arm64.tar.gz
+            zit-macos-arm64.tar.gz.sha256
+
+  linux:
+    name: Linux (x86_64, not yet supported)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release --locked
+      - name: Test
+        run: |
+          git config --global user.name ci
+          git config --global user.email ci@example.com
+          cargo test --release --locked

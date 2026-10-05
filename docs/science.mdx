@@ -1,0 +1,153 @@
+---
+title: How it works
+description: The ideas Zit is built from, where each comes from, and how each is implemented.
+---
+
+Zit invents very little. It combines seven known ideas, each with decades of work behind it, and applies them to one problem: many agents changing one program at the same time.
+
+```mermaid
+flowchart TB
+    P["Many agents, one program"] --> Q1["Where does each agent work?"]
+    P --> Q2["Whose work is still valid?"]
+    P --> Q3["What must be re-checked?"]
+    Q1 --> A1["Copy-on-write snapshots"]
+    Q1 --> A2["Content addressing"]
+    Q2 --> A3["Optimistic concurrency control"]
+    Q2 --> A4["Read and write sets at symbol granularity"]
+    Q3 --> A5["Memoised evidence"]
+    Q2 --> A6["Derived status"]
+    Q3 --> A6
+    P --> Q4["Who is already doing this?"]
+    Q4 --> A7["Claims before validation"]
+```
+
+## 1. Content addressing: a state is its hash
+
+**The idea.** Name a thing by the hash of its content. A directory's name is the hash of its entries' names, so the root hash names the whole tree (a Merkle tree, 1979). Equal content has equal names; any change changes the name of everything above it and nothing else.
+
+**In zit.** A state is a git tree; its id is the root hash. This gives three properties for free:
+
+- Two agents that produce the same program produce the same state. There is nothing to reconcile.
+- "Did anything under `ui/` change?" is one comparison of two ids.
+- States, changes and evidence are immutable, so they can be copied between machines without coordination.
+
+## 2. Optimistic concurrency control: work first, validate at the end
+
+**The idea.** Kung and Robinson (1981) observed that locking is wasteful when conflicts are rare. Let every transaction run against a private snapshot with no locks. At commit time, **validate**: if anything the transaction *read* was *written* by a transaction that committed in the meantime, it saw a world that no longer exists, so restart it. Otherwise its effects are the same as if it had run alone, after the others.
+
+**In zit.** An agent's turn is a transaction.
+
+| Database term | Zit |
+|---|---|
+| snapshot | the state a workspace was materialised from |
+| private workspace | the workspace |
+| write set | symbols whose content differs between base and result |
+| read set | symbols the change mentions, plus those the agent declared |
+| validation | `accept` compares the change's sets with what current wrote since their common ancestor |
+| abort and restart | rejected as stale; `retry` on the new current |
+| commit | `refs/zit/current` moves by compare-and-swap |
+
+```mermaid
+sequenceDiagram
+    participant T1 as Agent A
+    participant T2 as Agent B
+    participant G as current
+    Note over T1,T2: both read snapshot S0
+    T1->>T1: writes price()
+    T2->>T2: writes buy(), reads price()
+    T1->>G: validate: nothing it read changed. Commit.
+    T2->>G: validate: price() was written since S0
+    G-->>T2: abort (stale). Restart on the new state.
+```
+
+**Why git alone is not enough.** A text merge detects one kind of conflict: both sides wrote the same lines (write-write). It cannot see that one side *read* what the other wrote. Databases call the resulting anomaly **write skew** (Berenson et al., 1995): each transaction is consistent alone, they touch different rows, and together they break an invariant. A "semantic merge conflict" — one agent changes a function's signature while another adds a call to it in a different file — is write skew. Detecting it requires read sets. That is the reason Zit tracks them.
+
+**What is guaranteed.** If read sets were complete, the accepted history would be equivalent to running the changes one at a time in acceptance order. They are not complete (next section), so Zit runs the checks on the composed state before current moves. Validation catches what it can name; checks catch the rest.
+
+## 3. Granularity: symbols, found by parsing
+
+**The idea.** The unit of conflict decides how much concurrency survives. Files are too coarse: two agents editing different functions of one file would always conflict. Lines are too fine and carry no meaning.
+
+**In zit.** Each changed file is parsed (tree-sitter) into top-level symbols. A symbol is written if the hash of its text changed. A symbol is read if a written symbol mentions its name. This is a deliberate over-approximation:
+
+- It needs no type checker or build, so it works on code that does not compile yet.
+- It matches by name, so it sometimes refuses changes that were fine. Measured: 21–23% of changes in the scripted benchmark; see [Benchmarks](/benchmarks).
+- It cannot see dynamic dispatch or names built at runtime. The checks are the backstop.
+
+## 4. Memoised evidence: never compute the same answer twice
+
+**The idea.** A build system is a memoised function from inputs to outputs. Mokhov, Mitchell and Peyton Jones ("Build Systems à la Carte", 2018) show that the essential trick is recording, for each result, the hashes of the inputs it depended on; if those hashes are unchanged, the result is still valid and work stops early. Adapton (Hammer et al., 2014) does the same on demand: nothing is recomputed until someone asks.
+
+**In zit.** A check result is stored under `hash(check, hashes of its input paths)`. Because a path's hash is a Merkle hash (idea 1), "are the inputs unchanged?" is exact and costs one lookup. A change that touches only `docs/` reuses every result whose inputs do not include `docs/`.
+
+**Generated files are outputs, not inputs.** A build system never asks two developers to reconcile a compiled binary; it rebuilds it. A file a script derives from other files is the same. Zit regenerates declared generated files on the composed state instead of treating concurrent writes to them as conflicts (ADR 12). On a catalogue repository, this alone took 20 concurrent developers from 12 landed to 20.
+
+## 5. Copy-on-write snapshots: isolation without copying
+
+**The idea.** Give each writer what looks like a private copy, but share the underlying blocks until someone writes. Filesystems expose this as clones (APFS) or reflinks (btrfs, XFS).
+
+**In Zit.** A workspace is a clone of a cached checkout of its state. Creating one copies metadata only. Measured: 5–8x faster than `git worktree add`, and about 14x less disk for ten workspaces of a 30,000-file tree.
+
+## 6. Derived status: no invalidation protocol
+
+**The idea.** State that can be computed should not be stored. Stored state needs a protocol to keep it true; computed state is true by construction.
+
+**In zit.** A change's status (verified, stale, …) is a function of the graph and the evidence, computed when asked. When current moves, every speculative change's status changes with it, and nothing had to be notified.
+
+## 7. Contention management: ask before, validate after
+
+**The idea.** Optimistic schemes are efficient when conflicts are rare and wasteful when they are common, because every loser has already done its work. Databases and transactional memory handle this by putting a cheap, early signal in front of validation: declare intent, and back off if someone else has it. Collaboration research found the same for people: Crystal (Brun et al., 2011) showed that telling developers about conflicts with unmerged work early makes them cheap to avoid.
+
+**In zit.** Two things sit in front of `accept`:
+
+- **Claims.** A workspace announces the resources it intends to write. An overlapping claim is refused, atomically, naming the holder.
+- **In-flight write sets.** `status` and the [web view](/web) show what every open workspace is writing now and where unaccepted work overlaps.
+
+They are advisory. An agent that ignores them is still caught by validation. Their purpose is to stop the work before it is done.
+
+**Measured.** Ten agents with one prompt: 1 change accepted and 9 rejected without claims; 5 accepted and 1 rejected with them, in a sixth of the agent time ([Lessons](/lessons)). This idea was not in the first design. It was added because the experiment showed the first six were correct and wasteful.
+
+## What Zit is not
+
+| Approach | What it guarantees | Why Zit is not that |
+|---|---|---|
+| **CRDTs** (Shapiro et al., 2011) | Replicas that apply the same edits converge to the same text, with no coordination | Convergence is about the text. It says nothing about whether the converged program is correct. Zit wants a *validated* state, and accepts coordination at one point (acceptance) to get it. |
+| **Patch theories** (Darcs, Pijul; Mimram and Di Giusto, 2013) | Independent patches commute, so order does not matter | Independence is defined on text. Zit defines it on what was read and written. The idea that a change records its dependencies comes from here. |
+| **Merge queues** (for example Uber's SubmitQueue, 2019) | The main branch stays green by testing each candidate before it lands | Zit's `accept` is a merge queue. What it adds is validation before testing, and evidence reuse. |
+| **Locking** (file locks, exclusive checkouts) | Nobody else can touch what you hold | Zit's claims are advisory and lapse on their own. Nothing is ever blocked from being recorded; a claim only tells the next agent to choose other work. |
+
+## The cost model
+
+For *n* speculative changes against one current:
+
+| Step | Work | Grows with |
+|---|---|---|
+| Materialise | a copy-on-write clone: metadata only | number of files in the repository |
+| Record | a few git calls, plus parsing the files the change touched | size of the change |
+| Claim | a scan of the open workspaces | how many agents are working right now |
+| Validation | one diff of current against the merge base, cached and shared by every change with that base | what current changed |
+| Verification | only checks whose inputs changed | the checks' own cost |
+| Acceptance | one ref compare-and-swap | nothing |
+
+Acceptance is a single line: changes land one at a time, each verified against the state it will actually join. That is the throughput limit, and it is set by how long the checks take, not by zit.
+
+**What limits a thousand agents.** From the measurements so far, in order:
+
+1. **Wasted work**, when agents share a task. Addressed by claims (idea 7).
+2. **Build state per agent.** On a compiled project each agent rebuilds the project at its own path. Verification no longer does (ADR 10); agent workspaces still do. Not solved.
+3. **Check time on the accepted line.** Evidence reuse removes checks whose inputs did not change (idea 4). What remains is serial. Verifying several non-conflicting changes as one batch, as merge queues do, is not built.
+4. **Zit's own overhead**: about ten git processes per accept, a few milliseconds each. Last, not first.
+
+The largest runs so far are 1,000 scripted changes from 100 scripted agents ([Benchmarks](/benchmarks)) and 20 git developers with 30 real agents on one repository ([Lessons](/lessons)). Nothing larger is claimed.
+
+## References
+
+- R. Merkle, *A Certified Digital Signature*, 1979.
+- H. T. Kung and J. T. Robinson, *On Optimistic Methods for Concurrency Control*, ACM TODS, 1981.
+- H. Berenson et al., *A Critique of ANSI SQL Isolation Levels*, SIGMOD, 1995.
+- M. Shapiro et al., *Conflict-free Replicated Data Types*, SSS, 2011.
+- Y. Brun et al., *Proactive Detection of Collaboration Conflicts*, ESEC/FSE, 2011.
+- S. Mimram and C. Di Giusto, *A Categorical Theory of Patches*, 2013.
+- M. Hammer et al., *Adapton: Composable, Demand-Driven Incremental Computation*, PLDI, 2014.
+- A. Mokhov, N. Mitchell and S. Peyton Jones, *Build Systems à la Carte*, ICFP, 2018.
+- S. Ananthanarayanan et al., *Keeping Master Green at Scale*, EuroSys, 2019.

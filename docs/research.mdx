@@ -1,0 +1,72 @@
+---
+title: Research
+description: What is measured about coding agents, parallel sessions, change volume and merge conflicts, with sources, and what it is not evidence for.
+---
+
+Zit exists because of a change in how code arrives. This page collects what has actually been measured about that change, and where the evidence stops. Every figure links to its source in [References](#references). Figures were checked against the source on 5 October 2026.
+
+**Interest.** Zit is built by Autohand, which also makes a coding agent (the `autohand` preset). Two sources below are other vendors with an interest in agents being used: Anthropic [7] and GitHub [6]. Independent sources: the surveys [1–3], DORA [9], METR [10, 11] and the arXiv study [8], a preprint.
+
+## Agents are mainstream
+
+| Finding | Source |
+|---|---|
+| 59% of developers use AI agents at work, up from 31% in 2025 (two different samples) | Stack Overflow, April 2026, 1,100 respondents [1] |
+| 84% of developers use or plan to use AI tools; 51% of professional developers use them daily | Stack Overflow Developer Survey 2025 [2] |
+| 85% of developers regularly use AI for coding | JetBrains, State of Developer Ecosystem 2025, 24,534 respondents [3] |
+
+## Running several at once is a documented workflow
+
+| Finding | Source |
+|---|---|
+| Claude Code documents running parallel sessions, each in its own git worktree: "Work on a feature in one terminal while Claude fixes a bug in another, without the edits colliding" | Claude Code documentation [4] |
+| Cursor: "Use worktrees when you want to start several agents on the same repo without conflicts"; 25 worktrees per machine by default | Cursor documentation [5] |
+| Most developers still use one agent: 69% a single agent, 17% several specialised agents, 16% several coordinated agents (groups can overlap) | Stack Overflow, April 2026 [1] |
+
+## Change volume is rising
+
+| Finding | Source |
+|---|---|
+| Across GitHub in 2025: nearly 1 billion commits (+25.1% year over year) and 43.2 million merged pull requests a month (+23%) | GitHub Octoverse 2025 [6] |
+| GitHub's coding agent created more than 1 million pull requests between May and September 2025 | GitHub Octoverse 2025 [6] |
+| At Anthropic, "the typical engineer was merging 8× as much code per day" in Q2 2026 as in 2024. Anthropic adds that this "is almost certainly an overstatement of the true productivity gain" | Anthropic, 2026 [7] |
+
+## Agents' changes overlap, and collide
+
+| Finding | Source |
+|---|---|
+| Of 33,596 agent-authored pull requests in 2,807 repositories, 79.4% were open at the same time as another agent's pull request on the same repository | Xu, Subramanian, Karthik, arXiv, July 2026 [8] |
+| Overlapping pairs had textual merge conflicts 19.8% of the time when both came from the same agent, and 41.7% when they came from different agents | Same study [8] |
+| More AI use goes with more throughput and less stability: "An increase in change volume leads to instability" | DORA 2025, nearly 5,000 respondents [9] |
+
+## Review became the bottleneck
+
+| Finding | Source |
+|---|---|
+| "As we've begun to push more code around the organization, human code review has become a new bottleneck" | Anthropic, 2026 [7] |
+
+## Caveats
+
+- **"5 to 10 times more changes" is not an industry measurement.** The only figure near it is Anthropic's 8×, for its own engineers, measured in lines of code. Across GitHub as a whole, 2025 grew by about a quarter.
+- **Faster is contested.** In METR's early-2025 randomized trial, 16 experienced open-source developers took 19% longer on 246 tasks with AI tools (confidence interval +2% to +39%), while believing they had been sped up by 20% [10]. METR's follow-up on late-2025 tools points the other way: tasks took 18% less time for returning developers (interval −38% to +9%) and 4% less for new ones (−15% to +9%). METR calls this "only very weak evidence" for the size of the gain and says the true speedup "could be much higher", because developers avoided tasks they did not want to do without AI [11].
+- **The arXiv study is a preprint**, and the surveys sample different populations each year.
+
+## What this means for Zit
+
+The evidence does not say every developer runs ten agents. It says agents are now common, running several at once is a supported workflow, and when agents' changes overlap they collide often: one in five to two in five pairs. Review is where the cost lands. Zit is built for that situation: many changes in flight on one repository, found to collide before anyone reviews them, each one carrying its author's account of what it did and why.
+
+What Zit itself has measured is on [Benchmarks](/benchmarks) and [Lessons](/lessons).
+
+## References
+
+1. Stack Overflow, "Agents on a leash: agentic AI remains mostly monitored at work", 27 May 2026. https://stackoverflow.blog/2026/05/27/agents-on-a-leash-agentic-ai-remains-mostly-monitored-at-work/
+2. Stack Overflow, Developer Survey 2025, AI section. https://survey.stackoverflow.co/2025/ai
+3. JetBrains, "The State of Developer Ecosystem 2025", October 2025. https://blog.jetbrains.com/research/2025/10/state-of-developer-ecosystem-2025/
+4. Anthropic, Claude Code documentation, "Common workflows". https://code.claude.com/docs/en/common-workflows
+5. Cursor documentation, "Worktrees". https://cursor.com/docs/configuration/worktrees
+6. GitHub, "Octoverse: a new developer joins GitHub every second as AI leads TypeScript to #1", 28 October 2025. https://github.blog/news-insights/octoverse/octoverse-a-new-developer-joins-github-every-second-as-ai-leads-typescript-to-1/
+7. Anthropic, "When AI builds itself", 2026. https://www.anthropic.com/institute/recursive-self-improvement
+8. G. Xu, A. Subramanian, N. Karthik, "AI Agent Pull Requests on GitHub: Frequency, Structure, and Merge Conflict Rates", arXiv:2607.04697, July 2026. https://arxiv.org/abs/2607.04697
+9. Google Cloud, "Announcing the 2025 DORA report", 24 September 2025. https://cloud.google.com/blog/products/ai-machine-learning/announcing-the-2025-dora-report
+10. METR, "Measuring the impact of early-2025 AI on experienced open-source developer productivity", 10 July 2025. https://metr.org/blog/2025-07-10-early-2025-ai-experienced-os-dev-study/
+11. METR, "Uplift update", 24 February 2026. https://metr.org/blog/2026-02-24-uplift-update/

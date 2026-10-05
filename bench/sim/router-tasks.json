@@ -1,0 +1,259 @@
+{
+ "project": "autohand/router: a Rust LLM router; 20 of its Markdown files, each changed at the same time by one developer and one agent",
+ "zit_toml": "[[check]]\nname = \"doc-links\"\nrun = \"python3 bench-check-doc-links.py\"\n",
+ "setup_files": {
+  "bench-check-doc-links.py": "@check_doc_links.py"
+ },
+ "setup_edits": [
+  {
+   "file": "examples/README.md",
+   "old": "router.local.yaml",
+   "new": "router.minimal.yaml"
+  }
+ ],
+ "rules": "\nYou are one of 40 contributors (20 coding agents and 20 developers) changing this repository's documentation at the same time. Work is coordinated with zit.\n- Before you edit, claim what you will change: `zit claim <path>`, or one section with `zit claim '<path>#<Section heading>'`. If a claim is refused, someone else holds it: change a different part, or stop.\n- `zit status` shows what everyone else is changing right now.\n- Edit Markdown only. Do not run cargo or any build; zit runs the checks.\n- Do not commit and do not push.\n- End with a short report: what you changed, and why. It is stored with your change.\n",
+ "developers": [
+  {
+   "id": "dev-01",
+   "action": "after_title",
+   "file": "README.md",
+   "text": "This page is for operators who run Routes in production.",
+   "message": "State who README.md is for\n\nWhy: readers land on this page from search and could not tell whether it was meant for them."
+  },
+  {
+   "id": "dev-02",
+   "action": "append_end",
+   "file": "CONTRIBUTING.md",
+   "text": "## Review checklist\n\n- Read the page top to bottom once before acting.\n- Run `cargo run -- --config examples/router.yaml validate` after any config change.\n- Keep the change small enough to roll back.",
+   "message": "Add a review checklist to CONTRIBUTING.md\n\nWhy: the steps were spread across the page and reviewers kept asking for them in one place."
+  },
+  {
+   "id": "dev-03",
+   "action": "after_title",
+   "file": "AGENTS.md",
+   "text": "This page is for contributors changing the router.",
+   "message": "State who AGENTS.md is for\n\nWhy: readers land on this page from search and could not tell whether it was meant for them."
+  },
+  {
+   "id": "dev-04",
+   "action": "append_end",
+   "file": "SKILL.md",
+   "text": "## Before you deploy\n\n- Read the page top to bottom once before acting.\n- Run `cargo run -- --config examples/router.yaml validate` after any config change.\n- Keep the change small enough to roll back.",
+   "message": "Add a before you deploy to SKILL.md\n\nWhy: the steps were spread across the page and reviewers kept asking for them in one place."
+  },
+  {
+   "id": "dev-05",
+   "action": "after_title",
+   "file": "docs/README.md",
+   "text": "This page is for coding agents working in this repository.",
+   "message": "State who docs/README.md is for\n\nWhy: readers land on this page from search and could not tell whether it was meant for them."
+  },
+  {
+   "id": "dev-06",
+   "action": "append_end",
+   "file": "docs/usage.md",
+   "text": "## Common mistakes\n\n- Read the page top to bottom once before acting.\n- Run `cargo run -- --config examples/router.yaml validate` after any config change.\n- Keep the change small enough to roll back.",
+   "message": "Add a common mistakes to docs/usage.md\n\nWhy: the steps were spread across the page and reviewers kept asking for them in one place."
+  },
+  {
+   "id": "dev-07",
+   "action": "after_title",
+   "file": "docs/self-hosting.md",
+   "text": "This page is for agents integrating with Routes.",
+   "message": "State who docs/self-hosting.md is for\n\nWhy: readers land on this page from search and could not tell whether it was meant for them."
+  },
+  {
+   "id": "dev-08",
+   "action": "append_end",
+   "file": "docs/security.md",
+   "text": "## Verification steps\n\n- Read the page top to bottom once before acting.\n- Run `cargo run -- --config examples/router.yaml validate` after any config change.\n- Keep the change small enough to roll back.",
+   "message": "Add a verification steps to docs/security.md\n\nWhy: the steps were spread across the page and reviewers kept asking for them in one place."
+  },
+  {
+   "id": "dev-09",
+   "action": "after_title",
+   "file": "docs/replay.md",
+   "text": "This page is for anyone looking for the right page.",
+   "message": "State who docs/replay.md is for\n\nWhy: readers land on this page from search and could not tell whether it was meant for them."
+  },
+  {
+   "id": "dev-10",
+   "action": "append_end",
+   "file": "docs/task-contracts.md",
+   "text": "## Upgrade notes\n\n- Read the page top to bottom once before acting.\n- Run `cargo run -- --config examples/router.yaml validate` after any config change.\n- Keep the change small enough to roll back.",
+   "message": "Add a upgrade notes to docs/task-contracts.md\n\nWhy: the steps were spread across the page and reviewers kept asking for them in one place."
+  },
+  {
+   "id": "dev-11",
+   "action": "after_title",
+   "file": "docs/egress.md",
+   "text": "This page is for developers calling the API.",
+   "message": "State who docs/egress.md is for\n\nWhy: readers land on this page from search and could not tell whether it was meant for them."
+  },
+  {
+   "id": "dev-12",
+   "action": "append_end",
+   "file": "docs/model-catalog.md",
+   "text": "## Operational checklist\n\n- Read the page top to bottom once before acting.\n- Run `cargo run -- --config examples/router.yaml validate` after any config change.\n- Keep the change small enough to roll back.",
+   "message": "Add a operational checklist to docs/model-catalog.md\n\nWhy: the steps were spread across the page and reviewers kept asking for them in one place."
+  },
+  {
+   "id": "dev-13",
+   "action": "after_title",
+   "file": "docs/production-readiness.md",
+   "text": "This page is for people self-hosting the console.",
+   "message": "State who docs/production-readiness.md is for\n\nWhy: readers land on this page from search and could not tell whether it was meant for them."
+  },
+  {
+   "id": "dev-14",
+   "action": "append_end",
+   "file": "docs/live-evidence.md",
+   "text": "## Rollback steps\n\n- Read the page top to bottom once before acting.\n- Run `cargo run -- --config examples/router.yaml validate` after any config change.\n- Keep the change small enough to roll back.",
+   "message": "Add a rollback steps to docs/live-evidence.md\n\nWhy: the steps were spread across the page and reviewers kept asking for them in one place."
+  },
+  {
+   "id": "dev-15",
+   "action": "after_title",
+   "file": "docs/deployment/container.md",
+   "text": "This page is for maintainers handling dependency advisories.",
+   "message": "State who docs/deployment/container.md is for\n\nWhy: readers land on this page from search and could not tell whether it was meant for them."
+  },
+  {
+   "id": "dev-16",
+   "action": "append_end",
+   "file": "docs/deployment/aws-apprunner.md",
+   "text": "## Security checklist\n\n- Read the page top to bottom once before acting.\n- Run `cargo run -- --config examples/router.yaml validate` after any config change.\n- Keep the change small enough to roll back.",
+   "message": "Add a security checklist to docs/deployment/aws-apprunner.md\n\nWhy: the steps were spread across the page and reviewers kept asking for them in one place."
+  },
+  {
+   "id": "dev-17",
+   "action": "after_title",
+   "file": "docs/deployment/google-cloud-run.md",
+   "text": "This page is for engineers comparing routing changes.",
+   "message": "State who docs/deployment/google-cloud-run.md is for\n\nWhy: readers land on this page from search and could not tell whether it was meant for them."
+  },
+  {
+   "id": "dev-18",
+   "action": "append_end",
+   "file": "docs/deployment/azure-container-apps.md",
+   "text": "## Release checklist\n\n- Read the page top to bottom once before acting.\n- Run `cargo run -- --config examples/router.yaml validate` after any config change.\n- Keep the change small enough to roll back.",
+   "message": "Add a release checklist to docs/deployment/azure-container-apps.md\n\nWhy: the steps were spread across the page and reviewers kept asking for them in one place."
+  },
+  {
+   "id": "dev-19",
+   "action": "after_title",
+   "file": "docs/deployment/cloudflare-containers.md",
+   "text": "This page is for engineers writing task contracts.",
+   "message": "State who docs/deployment/cloudflare-containers.md is for\n\nWhy: readers land on this page from search and could not tell whether it was meant for them."
+  },
+  {
+   "id": "dev-20",
+   "action": "append_end",
+   "file": "examples/README.md",
+   "text": "## Smoke test\n\n- Read the page top to bottom once before acting.\n- Run `cargo run -- --config examples/router.yaml validate` after any config change.\n- Keep the change small enough to roll back.",
+   "message": "Add a smoke test to examples/README.md\n\nWhy: the steps were spread across the page and reviewers kept asking for them in one place."
+  }
+ ],
+ "agents": [
+  {
+   "id": "claude-01",
+   "tool": "claude",
+   "task": "In README.md, make the opening paragraph say plainly who the page is for and what it covers, and fix one statement in the page that you can verify is out of date or wrong against the code in this repository. Change only README.md."
+  },
+  {
+   "id": "codex-01",
+   "tool": "codex",
+   "task": "In CONTRIBUTING.md, make the opening paragraph say plainly who the page is for and what it covers, and fix one statement in the page that you can verify is out of date or wrong against the code in this repository. Change only CONTRIBUTING.md."
+  },
+  {
+   "id": "claude-02",
+   "tool": "claude",
+   "task": "In AGENTS.md, make the opening paragraph say plainly who the page is for and what it covers, and fix one statement in the page that you can verify is out of date or wrong against the code in this repository. Change only AGENTS.md."
+  },
+  {
+   "id": "codex-02",
+   "tool": "codex",
+   "task": "In SKILL.md, make the opening paragraph say plainly who the page is for and what it covers, and fix one statement in the page that you can verify is out of date or wrong against the code in this repository. Change only SKILL.md."
+  },
+  {
+   "id": "claude-03",
+   "tool": "claude",
+   "task": "In docs/README.md, make the opening paragraph say plainly who the page is for and what it covers, and fix one statement in the page that you can verify is out of date or wrong against the code in this repository. Change only docs/README.md."
+  },
+  {
+   "id": "codex-03",
+   "tool": "codex",
+   "task": "In docs/usage.md, make the opening paragraph say plainly who the page is for and what it covers, and fix one statement in the page that you can verify is out of date or wrong against the code in this repository. Change only docs/usage.md."
+  },
+  {
+   "id": "claude-04",
+   "tool": "claude",
+   "task": "In docs/self-hosting.md, make the opening paragraph say plainly who the page is for and what it covers, and fix one statement in the page that you can verify is out of date or wrong against the code in this repository. Change only docs/self-hosting.md."
+  },
+  {
+   "id": "codex-04",
+   "tool": "codex",
+   "task": "In docs/security.md, make the opening paragraph say plainly who the page is for and what it covers, and fix one statement in the page that you can verify is out of date or wrong against the code in this repository. Change only docs/security.md."
+  },
+  {
+   "id": "claude-05",
+   "tool": "claude",
+   "task": "In docs/replay.md, make the opening paragraph say plainly who the page is for and what it covers, and fix one statement in the page that you can verify is out of date or wrong against the code in this repository. Change only docs/replay.md."
+  },
+  {
+   "id": "codex-05",
+   "tool": "codex",
+   "task": "In docs/task-contracts.md, make the opening paragraph say plainly who the page is for and what it covers, and fix one statement in the page that you can verify is out of date or wrong against the code in this repository. Change only docs/task-contracts.md."
+  },
+  {
+   "id": "claude-06",
+   "tool": "claude",
+   "task": "In docs/egress.md, make the opening paragraph say plainly who the page is for and what it covers, and fix one statement in the page that you can verify is out of date or wrong against the code in this repository. Change only docs/egress.md."
+  },
+  {
+   "id": "codex-06",
+   "tool": "codex",
+   "task": "In docs/model-catalog.md, make the opening paragraph say plainly who the page is for and what it covers, and fix one statement in the page that you can verify is out of date or wrong against the code in this repository. Change only docs/model-catalog.md."
+  },
+  {
+   "id": "claude-07",
+   "tool": "claude",
+   "task": "In docs/production-readiness.md, make the opening paragraph say plainly who the page is for and what it covers, and fix one statement in the page that you can verify is out of date or wrong against the code in this repository. Change only docs/production-readiness.md."
+  },
+  {
+   "id": "codex-07",
+   "tool": "codex",
+   "task": "In docs/live-evidence.md, make the opening paragraph say plainly who the page is for and what it covers, and fix one statement in the page that you can verify is out of date or wrong against the code in this repository. Change only docs/live-evidence.md."
+  },
+  {
+   "id": "claude-08",
+   "tool": "claude",
+   "task": "In docs/deployment/container.md, add a short '## Troubleshooting' section at the end with the two most likely failure modes for this deployment target and how to recognise and fix each, based only on what the page and the repository actually contain."
+  },
+  {
+   "id": "codex-08",
+   "tool": "codex",
+   "task": "In docs/deployment/aws-apprunner.md, add a short '## Troubleshooting' section at the end with the two most likely failure modes for this deployment target and how to recognise and fix each, based only on what the page and the repository actually contain."
+  },
+  {
+   "id": "claude-09",
+   "tool": "claude",
+   "task": "In docs/deployment/google-cloud-run.md, add a short '## Troubleshooting' section at the end with the two most likely failure modes for this deployment target and how to recognise and fix each, based only on what the page and the repository actually contain."
+  },
+  {
+   "id": "codex-09",
+   "tool": "codex",
+   "task": "In docs/deployment/azure-container-apps.md, add a short '## Troubleshooting' section at the end with the two most likely failure modes for this deployment target and how to recognise and fix each, based only on what the page and the repository actually contain."
+  },
+  {
+   "id": "claude-10",
+   "tool": "claude",
+   "task": "In docs/deployment/cloudflare-containers.md, add a short '## Troubleshooting' section at the end with the two most likely failure modes for this deployment target and how to recognise and fix each, based only on what the page and the repository actually contain."
+  },
+  {
+   "id": "codex-10",
+   "tool": "codex",
+   "task": "In examples/README.md, make the opening paragraph say plainly who the page is for and what it covers, and fix one statement in the page that you can verify is out of date or wrong against the code in this repository. Change only examples/README.md."
+  }
+ ]
+}

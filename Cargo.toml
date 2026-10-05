@@ -1,0 +1,41 @@
+[package]
+name = "zit"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+description = "A git extension for many developers and coding agents changing one repository at once: disposable workspaces, changes checked against what they read and wrote, one accepted state."
+license = "Apache-2.0"
+
+[features]
+# Builds the benchmark harness, `zit-bench`. Not installed by default.
+bench = []
+
+[[bin]]
+name = "zit-bench"
+path = "src/bin/zit-bench.rs"
+required-features = ["bench"]
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+libc = "0.2"
+ratatui = "0.30"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+signal-hook = "0.3"
+thiserror = "2"
+toml = "0.8"
+tree-sitter = "0.25"
+tree-sitter-go = "0.25"
+tree-sitter-javascript = "0.25"
+tree-sitter-python = "0.25"
+tree-sitter-rust = "0.24"
+tree-sitter-typescript = "0.23"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 4

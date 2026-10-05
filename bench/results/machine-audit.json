@@ -1,0 +1,392 @@
+{
+ "families": [
+  {
+   "family": "dev",
+   "checkouts": 10,
+   "linked_worktrees": 9,
+   "tracked_mb_each": 21.2,
+   "files_each": 1332,
+   "duplicate_mb": 155.9
+  },
+  {
+   "family": "community-skills",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 37.5,
+   "files_each": 5263,
+   "duplicate_mb": 28.5
+  },
+  {
+   "family": "autohandsite",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 43.3,
+   "files_each": 133,
+   "duplicate_mb": 21.3
+  },
+  {
+   "family": "composer_compact",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 31.6,
+   "files_each": 169,
+   "duplicate_mb": 31.6
+  },
+  {
+   "family": "docs",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 27.9,
+   "files_each": 578,
+   "duplicate_mb": 27.9
+  },
+  {
+   "family": "console-v2",
+   "checkouts": 4,
+   "linked_worktrees": 3,
+   "tracked_mb_each": 13.8,
+   "files_each": 388,
+   "duplicate_mb": 41.2
+  },
+  {
+   "family": "cli-3",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 24.5,
+   "files_each": 1854,
+   "duplicate_mb": 24.2
+  },
+  {
+   "family": "kimi-code-ref",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 19.6,
+   "files_each": 2177,
+   "duplicate_mb": 19.6
+  },
+  {
+   "family": "expect",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 19.0,
+   "files_each": 726,
+   "duplicate_mb": 19.0
+  },
+  {
+   "family": "code",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 19.9,
+   "files_each": 1589,
+   "duplicate_mb": 10.6
+  },
+  {
+   "family": "api",
+   "checkouts": 9,
+   "linked_worktrees": 8,
+   "tracked_mb_each": 3.7,
+   "files_each": 350,
+   "duplicate_mb": 25.2
+  },
+  {
+   "family": "vscode-autohand",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 11.9,
+   "files_each": 255,
+   "duplicate_mb": 8.5
+  },
+  {
+   "family": "autohand-link",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 9.6,
+   "files_each": 68,
+   "duplicate_mb": 9.5
+  },
+  {
+   "family": "skilled",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 15.5,
+   "files_each": 1181,
+   "duplicate_mb": 1.8
+  },
+  {
+   "family": "slm",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 7.5,
+   "files_each": 90,
+   "duplicate_mb": 7.5
+  },
+  {
+   "family": "agent-browser",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 7.0,
+   "files_each": 414,
+   "duplicate_mb": 5.9
+  },
+  {
+   "family": "workshop",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 5.3,
+   "files_each": 544,
+   "duplicate_mb": 2.3
+  },
+  {
+   "family": "autohand-console",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 3.5,
+   "files_each": 270,
+   "duplicate_mb": 3.3
+  },
+  {
+   "family": "aurora",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 6.1,
+   "files_each": 258,
+   "duplicate_mb": 0.5
+  },
+  {
+   "family": "native",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 5.8,
+   "files_each": 187,
+   "duplicate_mb": 0.0
+  },
+  {
+   "family": "shepherd",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 2.2,
+   "files_each": 229,
+   "duplicate_mb": 2.2
+  },
+  {
+   "family": "router",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 3.0,
+   "files_each": 150,
+   "duplicate_mb": 0.9
+  },
+  {
+   "family": "dataroom",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 2.9,
+   "files_each": 166,
+   "duplicate_mb": 0.3
+  },
+  {
+   "family": "chrome-ext",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 1.8,
+   "files_each": 568,
+   "duplicate_mb": 1.2
+  },
+  {
+   "family": "inference",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 1.3,
+   "files_each": 43,
+   "duplicate_mb": 1.3
+  },
+  {
+   "family": "l2m",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 0.5,
+   "files_each": 58,
+   "duplicate_mb": 0.5
+  },
+  {
+   "family": "asc-studio-v2",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 0.5,
+   "files_each": 145,
+   "duplicate_mb": 0.5
+  },
+  {
+   "family": "knowledge-graph",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 0.4,
+   "files_each": 43,
+   "duplicate_mb": 0.4
+  },
+  {
+   "family": "autohand-dev",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 0.3,
+   "files_each": 17,
+   "duplicate_mb": 0.1
+  },
+  {
+   "family": "autohand-gh-action",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 0.2,
+   "files_each": 62,
+   "duplicate_mb": 0.2
+  },
+  {
+   "family": "pulse",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 0.2,
+   "files_each": 19,
+   "duplicate_mb": 0.1
+  },
+  {
+   "family": "code-web",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 0.1,
+   "files_each": 17,
+   "duplicate_mb": 0.0
+  },
+  {
+   "family": "evograph-lib",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 0.1,
+   "files_each": 16,
+   "duplicate_mb": 0.1
+  },
+  {
+   "family": "zig-inference",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 0.0,
+   "files_each": 1,
+   "duplicate_mb": 0.0
+  },
+  {
+   "family": "small-language-models",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 0.0,
+   "files_each": 1,
+   "duplicate_mb": 0.0
+  },
+  {
+   "family": "homebrew-code",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 0.0,
+   "files_each": 2,
+   "duplicate_mb": 0.0
+  },
+  {
+   "family": "agentic-teaser",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 0.0,
+   "files_each": 0,
+   "duplicate_mb": 0.0
+  },
+  {
+   "family": "cli-2",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 0.0,
+   "files_each": 0,
+   "duplicate_mb": 0.0
+  },
+  {
+   "family": "cli-4",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 0.0,
+   "files_each": 0,
+   "duplicate_mb": 0.0
+  },
+  {
+   "family": "distill-models",
+   "checkouts": 2,
+   "linked_worktrees": 1,
+   "tracked_mb_each": 0.0,
+   "files_each": 0,
+   "duplicate_mb": 0.0
+  }
+ ],
+ "extra_checkouts": 57,
+ "duplicate_tracked_bytes": 452260310,
+ "duplicate_files": 27641,
+ "linked_worktrees_on_disk_bytes": 4418641920,
+ "linked_worktrees_dependency_bytes": 3870674944,
+ "linked_worktrees_measured": 57,
+ "top": [
+  [
+   "dev-wt-datasources",
+   1.49,
+   1.47
+  ],
+  [
+   "docs-wt-worktrees",
+   0.86,
+   0.82
+  ],
+  [
+   "dev-wt-sites-hub",
+   0.31,
+   0.28
+  ],
+  [
+   "dev-wt-2fa",
+   0.29,
+   0.26
+  ],
+  [
+   "api-wt-academy",
+   0.28,
+   0.26
+  ],
+  [
+   "api-wt-entitlement-batch",
+   0.27,
+   0.26
+  ],
+  [
+   "dev-wt-site-publish",
+   0.27,
+   0.25
+  ],
+  [
+   "dev-wt-fable-speed",
+   0.25,
+   0.22
+  ],
+  [
+   "community-skills-workshop-autohand-shop-run-qt5ux5",
+   0.04,
+   0.0
+  ],
+  [
+   "cli-3-wt-capped",
+   0.03,
+   0.0
+  ],
+  [
+   "composer_compact-workshop-autohand-shop-run-jknjvz",
+   0.03,
+   0.03
+  ],
+  [
+   "dev-wt-desktop-sandboxes",
+   0.03,
+   0.0
+  ]
+ ]
+}

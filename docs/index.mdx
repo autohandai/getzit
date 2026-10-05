@@ -1,0 +1,105 @@
+---
+title: Zit
+description: Coding agents put more changes into a repository at the same time. Zit is a git extension that lets many developers and agents change one repository at the same time, and remembers why each change was made.
+---
+
+You start an agent on a bug. While it works, you start another on a feature, and a third on the docs. Your teammates do the same, in the same repository. Each agent finishes in minutes, in its own copy of the code, and the changes arrive together.
+
+Most developers are not there yet: most who use agents run one at a time. But the tools now ship this workflow (Claude Code and Cursor both document running several agents in parallel worktrees), and the teams that adopt it hit the same problems:
+
+- **The copies pile up.** Every session gets its own worktree, and every worktree installs its own dependencies: gigabytes, for files that are mostly identical.
+- **Collisions show up last.** In a study of 33,596 agent pull requests, four in five were open at the same time as another agent's on the same repository. Among pairs that overlapped, 20% hit a merge conflict when one agent wrote both, and 42% when two different agents did [^research].
+- **Git merges what it should not.** One agent changes a function's signature; another, in another file, adds a call to the old one. Git merges both without complaint, and the build breaks afterwards.
+- **The reason is lost.** Each agent ends by explaining what it did and why. That explanation disappears with its terminal; the commit says "Update README".
+
+**Zit** is a git extension for teams already running several agents on one repository. It does four things:
+
+1. **Copies.** Each contributor, person or agent, gets a disposable copy of the code with dependencies installed: about 0.4 s for a 30,000-file repository on APFS, sharing disk with every other copy. On other file systems it is a plain checkout, no faster than a worktree.
+2. **Awareness.** Agents on the same machine can see what the others are changing right now and claim work before starting it.
+3. **Integration.** Changes land one at a time. Each is compared with what landed since it started, by the functions it changed and the names it uses, and the combined result must pass your checks (current's and the change's own) before it becomes the current state.
+4. **Reasons.** Every change keeps its author's own account of what it did and why, as the body of its commit.
+
+Zit does not review code. It hands the reviewer changes that are already checked, already combined, and explained by their authors; whether a person reads them before they reach `main` is your process (see [Teams and review](/git#teams-and-review)).
+
+Your branches, history and remotes stay plain git. Teammates who never install Zit keep working as before.
+
+| Measured | Result |
+|---|---|
+| 10 Claude Code agents, one prompt, on a real Rust repository ([Lesson 01](/lessons)) | **5 changes landed instead of 1**, in a sixth of the agent time (one run each) |
+| 1,000 scripted changes on a generated Python project ([Benchmarks](/benchmarks)) | **119 of 119** merges that would have broken a check stopped before reaching current; also **21–23%** of good changes refused (the price of being conservative) |
+| 5 contributors on a project with 206 MB of npm dependencies ([Benchmarks](/benchmarks)) | **327 MB instead of 1,619 MB**, against `npm ci` per worktree (pnpm not yet measured) |
+| 20 scripted git clients and 20 agents on the same 20 Markdown files ([Lesson 03](/lessons)) | **40 of 40 landed** (git's text merge did most of the work); all 20 agents' accounts captured |
+
+Integration is slower than a plain merge loop: 2.2× on cheap checks ([Benchmarks](/benchmarks)). Every number above comes from one machine, a Mac; what is not measured is on [Limits](/limits).
+
+**CPSG**, the Causal Program State Graph, is the design underneath: a program's state is a git tree, a change is a git commit carrying its intent, its author's account and what it read, and the graph of changes lives in `refs/zit/*` beside your branches. [How it works](/science) explains the ideas and where they come from. The critics' view, and what changed because of it, is on [Criticism](/criticism).
+
+```mermaid
+flowchart LR
+    subgraph people["Developers (plain git)"]
+        D1[git push]
+    end
+    subgraph agents["Agents (zit run, MCP)"]
+        A1[Claude Code]
+        A2[Codex]
+    end
+    D1 & A1 & A2 --> S[(changes)]
+    S -- "zit accept: compose, regenerate, check" --> K((current))
+    S -. "rejected, with the reason, kept" .-> S
+    K -- "zit export" --> G[main]
+```
+
+New here? [Zit 101](/tutorial) sets it up in ten minutes. [What Zit is, and is not](/why) answers whether you need it.
+
+## What it does
+
+- **Work outlives the agent.** A change is a git object. Kill the agent, delete its directory, move to another machine: the change is still there.
+- **Concurrent work is composed by what it read and wrote, not by which lines it touched.** Two agents editing different functions of one file both land. An agent that called a function another agent rewrote is stopped, even though git would merge the two silently.
+- **Rejection explains itself and destroys nothing.** A stale change names the symbol and the change that invalidated it, and stays in the graph to be retried.
+- **Checks run only where their inputs changed.** Results are stored against the content they depend on.
+- **Agents can see each other.** Claims and live write sets let agents sharing a task split it instead of repeating it.
+- **You can watch it.** `zit web` draws the graph live in the browser.
+- **People keep using git.** A developer's pushed branch is accepted like any agent's change. `git zit …` works wherever `git` does.
+- **It is git.** States are trees, changes are commits, the graph is `refs/zit/*`. Any commit can be accepted; current can be exported to any branch.
+
+## Evidence, and where
+
+| Claim | Evidence |
+|---|---|
+| A change survives its workspace | `a_change_outlives_its_workspace` |
+| No worktree or branch is created | `materialise_registers_no_git_worktree_and_no_branch` |
+| Different symbols of one file compose | `concurrent_changes_to_different_symbols_of_one_file_compose` |
+| A semantic conflict git would merge is caught | `a_change_that_read_what_current_rewrote_is_stale_even_if_git_would_merge_it` |
+| Current never moves to a failing state | `the_composed_state_must_pass_its_checks` |
+| Racing accepts are safe | `racing_accepts_all_land_exactly_once` |
+| Checks are reused when inputs are unchanged | `only_checks_whose_inputs_changed_run_again` |
+| Interrupted agents keep their work | `sigint_stops_the_agent_and_records_its_partial_work` |
+| The graph moves between machines with git | `the_graph_replicates_with_plain_git` |
+| Overlapping claims are refused, exactly one of several racing | `of_racing_claims_exactly_one_wins` |
+| Checks stay warm between states | `verification_reuses_one_view_keeping_ignored_build_output_and_nothing_else` |
+| Claude Code, Codex and Autohand work with it | run for real; see [Agents](/agents) and [Benchmarks](/benchmarks) |
+| It holds up with ten agents on a real repository | two one-off runs, not repeated; see [Lessons](/lessons) |
+| Generated files are rebuilt, not conflicted | `generated_files_are_regenerated_on_compose_not_conflicted` |
+| It works as `git zit` | `zit_is_a_git_extension` |
+| 20 scripted git clients and 30 agents on one repository | two one-off runs; see [Lessons](/lessons) |
+
+Test names are in `tests/`; `cargo test` runs them against real git repositories. They show the behaviour exists, on small repositories. The real-agent runs are single runs on one machine: evidence, not statistics.
+
+## Where to go
+
+- [Zit 101](/tutorial) — install it and use it, step by step.
+- [What Zit is, and is not](/why) — what it solves, what it does not, and how much disk it saves.
+- [Research](/research) — what is measured about coding agents and parallel work, with sources.
+- [Quickstart](/quickstart) — three agents, one conflict, resolved.
+- [Concepts](/concepts) — the six primitives.
+- [How it works](/science) — the ideas behind it and where they come from.
+- [Agents](/agents) — Claude Code, Codex, Autohand, and anything else.
+- [Benchmarks](/benchmarks) — measured against `git worktree`, including where it is slower.
+- [Lessons](/lessons) — what broke with ten real agents, and what changed.
+- [Web view](/web) — `zit web`.
+- [Limits](/limits) — what it does not do.
+
+Design decisions (the "ADR" references in these pages) are kept with the code, in the repository's `adr/` folder.
+
+[^research]: The figures and their sources are on [Research](/research): Xu et al., arXiv:2607.04697 (2026), on overlapping agent pull requests; Anthropic (2026) on code review as the bottleneck.
+
