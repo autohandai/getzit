@@ -107,6 +107,42 @@ They are advisory. An agent that ignores them is still caught by validation. The
 
 **Measured.** Ten agents with one prompt: 1 change accepted and 9 rejected without claims; 5 accepted and 1 rejected with them, in a sixth of the agent time ([Lessons](/lessons)). This idea was not in the first design. It was added because the experiment showed the first six were correct and wasteful.
 
+## What Zit stores, and what it does not
+
+The graph lives in the repository's git object store. Workspaces and caches live under `$ZIT_HOME` (default `~/.zit`), in a directory named from the repository and a hash of its git-directory path. Each clone has its own local state.
+
+| Where | What | Pushed? | Deleted by |
+|---|---|---|---|
+| Git objects and `refs/zit/*` | Accepted history, recorded changes, evidence | With push/fetch of these refs | Ref deletion, then `git gc` for unreachable objects |
+| Git directory: `zit/evidence-produced/` (usually `.git/zit/evidence-produced/`) | Local evidence ledger: one file per check key, containing the state id | No | Manual removal; `zit clean` keeps it |
+| Zit home: `ws/<id>/` | Working tree, git index, `meta.json`, `claims`, `reads`, `summary.txt`, `tmp/`, `inflight.json` | No | `zit dispose <id>` or `zit clean` |
+| Zit home: `trees/` | Cached checkouts, including installed dependencies | No | Cache eviction or `zit clean` |
+| Zit home: `verify/` | Reused verification views and their build files | No | Replacement of a view or `zit clean` |
+| Zit home: `cache/footprint-v2/` | Computed writes, inferred reads, declared reads and interface changes | No | `zit clean` |
+| Zit home: `shared/` | Shared build and package caches, exposed to agents and checks as `$ZIT_CACHE_DIR` | No | `zit clean` |
+
+**The git record.** `refs/zit/current` points to the accepted current commit. `refs/zit/changes/<id>` keeps a recorded speculative change. `refs/zit/evidence/<key>` points to a JSON blob containing a check result.
+
+A change commit contains its resulting tree, parents, author and committer identities and dates. Its message contains the intent and the author's account of what was done and why. Trailers carry `Zit-Agent`, optional `Zit-Session`, declared `Zit-Read` resources, and reported `Zit-Tokens` and `Zit-Cost-USD` when available. Linear acceptance of a composed change adds `Zit-Change`, naming the original change.
+
+An evidence blob contains the check name, cache key, state id, pass/fail result, exit code, duration in milliseconds, timestamp and up to 4,000 bytes from the end of combined stdout and stderr. Results with exit code `-1` (including timeouts) are not persisted. The local ledger marks which check keys this clone has run; fetched evidence is otherwise untrusted unless `zit.trustFetchedEvidence` is enabled.
+
+**Local state and lifetime.** Workspace metadata records its id, base commit and tree, optional merge parent, intent, agent, session, creation time, owner pid and path. `summary.txt` is the agent's summary file (`$ZIT_SUMMARY_FILE`). Each workspace has a separate `tmp/`, passed as `$TMPDIR`.
+
+Claims last until disposal. Declared reads are copied into a change and their local file is removed after recording it. `zit run` normally records the work and disposes the workspace; `--keep` leaves it in place. Other workspaces stay until disposed or cleaned.
+
+Cache eviction tries to keep the two newest cached checkouts, skipping eviction while they are in use. Up to eight verification views are reused; reuse removes untracked files and edits but keeps ignored build files. Their temporary files are cleared before the next verification. In-flight write sets are reused for up to two seconds, then recomputed on demand; the cache file stays until replaced or the workspace is deleted. Footprint and shared caches stay until cleaned. Graph refs and the evidence ledger have no timed expiry; acceptance retires a speculative ref, and a new verdict can replace an evidence ref.
+
+**What is not kept.** Zit has no separate agent transcript or prompt archive. `zit run` records the intent and a summary taken from the summary file, the agent's final message, or, as a fallback, the tail of stdout. The captured summary is limited to the last 8,000 bytes (at most 8,000 characters). This limit does not apply to a summary supplied directly to `zit record` or MCP. With a preset agent, the stored intent is also the prompt passed to that agent.
+
+Zit has no model credential store, hosted service or telemetry. Its web view listens only on localhost; MCP uses stdin and stdout. Agents and check commands can still send or save data themselves, and `zit export --pr` explicitly pushes a branch and opens a pull request. There is no second history database outside git: the local directories hold working files and caches.
+
+**Who can read it.** Local files are subject to filesystem permissions. If you push `refs/zit/*`, anyone who can fetch those refs can read their commits and evidence. Exported commits also travel with the branch you publish. Summaries and check output can contain whatever the agent or check printed. Treat them like commit messages and CI logs.
+
+**Removal.** `zit dispose <id>` deletes one workspace. Edits not recorded or otherwise saved are lost; in-flight inspection uses temporary git objects and removes them afterwards. `zit clean` deletes this repository's directory under Zit's home, including every cache listed above. It refuses live runs, unrecorded edits and busy clone or verification locks unless forced. The graph and evidence ledger survive.
+
+To remove the graph refs, delete them all at once: `git for-each-ref refs/zit --format='delete %(refname)' | git update-ref --stdin`. `zit discard <change>` removes just that speculative change's ref. Objects remain while another ref or history still reaches them; `git gc` eventually drops unreachable objects under git's retention rules. Local deletion does not remove refs or objects already pushed to another repository.
+
 ## What Zit is not
 
 | Approach | What it guarantees | Why Zit is not that |
