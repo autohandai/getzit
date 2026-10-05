@@ -3,8 +3,14 @@ name = "zit"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
-description = "A git extension for many developers and coding agents changing one repository at once: disposable workspaces, changes checked against what they read and wrote, one accepted state."
-license = "Apache-2.0"
+description = "A git extension for many developers and coding agents changing one repository at once: copy-on-write workspaces, changes checked against what they read and wrote, and every change's reason kept."
+license = "GPL-2.0-only"
+authors = ["Autohand AI LLC"]
+repository = "https://github.com/autohandai/getzit"
+readme = "README.md"
+keywords = ["git", "agents", "worktree", "merge-queue", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+include = ["/src/**", "/tests/**", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE", "/CHANGELOG.md"]
 
 [features]
 # Builds the benchmark harness, `zit-bench`. Not installed by default.

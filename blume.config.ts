@@ -6,6 +6,10 @@ export default defineConfig({
   content: {
     root: "docs",
   },
+  ai: {
+    // Autohand Dev is added first by components/OpenInAutohand.astro; v0 goes last.
+    openInChat: ["chatgpt", "claude", "t3", "cursor", "v0"],
+  },
   navigation: {
     sidebar: [
       { label: "Get started", items: ["index", "tutorial", "quickstart", "why"] },

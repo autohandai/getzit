@@ -25,6 +25,8 @@ jobs:
           git config --global user.name ci
           git config --global user.email ci@example.com
           cargo test --release --locked
+      - name: The crate packages
+        run: cargo publish --dry-run --locked --allow-dirty
       - name: Package
         run: |
           cargo build --release --locked

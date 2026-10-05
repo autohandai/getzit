@@ -51,6 +51,27 @@ pub struct Repo {
     alternate: Option<PathBuf>,
 }
 
+/// The oldest git Zit works with: `merge-tree --write-tree` arrived in 2.38.
+pub const MIN_GIT: (u32, u32) = (2, 38);
+
+/// Fail early, naming the version needed, when git is older than [`MIN_GIT`].
+pub fn require_git() -> Result<()> {
+    let out = git_command().arg("--version").output().map_err(|e| Error::msg(format!("cannot run git: {e}")))?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let version = text.split_whitespace().nth(2).unwrap_or_default();
+    let mut parts = version.split('.').map(|p| p.parse::<u32>().unwrap_or(0));
+    let found = (parts.next().unwrap_or(0), parts.next().unwrap_or(0));
+    if found < MIN_GIT {
+        return Err(Error::msg(format!(
+            "Zit needs git {}.{} or newer (for `merge-tree --write-tree`); found {}",
+            MIN_GIT.0,
+            MIN_GIT.1,
+            text.trim()
+        )));
+    }
+    Ok(())
+}
+
 /// A `git` invocation (binary overridable with `$ZIT_GIT`) isolated from
 /// any ambient repository environment.
 pub(crate) fn git_command() -> Command {

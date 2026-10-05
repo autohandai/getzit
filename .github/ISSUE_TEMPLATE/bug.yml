@@ -1,0 +1,35 @@
+name: Bug report
+description: Something Zit did that it should not have, or did not do that it should
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Smallest steps to reproduce
+      description: Commands from `git init` onwards are ideal.
+      render: sh
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: zit --version, git --version
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: OS and file system (APFS, btrfs, ext4, …)
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output (with ZIT_TRACE=1 if it is about speed)
+      render: text

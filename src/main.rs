@@ -253,6 +253,7 @@ const OK: ExitCode = ExitCode::SUCCESS;
 const NO: u8 = 1;
 
 fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
+    zit::git::require_git()?;
     let json = cli.json;
     let cwd = std::env::current_dir()?;
     if let Cmd::Mcp { integrator } = cli.command {

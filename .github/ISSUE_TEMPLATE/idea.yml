@@ -1,0 +1,20 @@
+name: Idea or feature
+description: Something Zit should do
+labels: [idea]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem, in your words
+      description: What were you trying to do, with which agents, on what kind of repository?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like Zit to do
+  - type: textarea
+    id: evidence
+    attributes:
+      label: How we would know it works
+      description: A test, a measurement, or a run that would show it.

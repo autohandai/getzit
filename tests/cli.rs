@@ -199,3 +199,17 @@ fn zit_is_a_git_extension() {
         assert!(out.contains("Usage: git zit"), "help names the command the user typed: {out}");
     }
 }
+
+/// Zit needs git 2.38 (`merge-tree --write-tree`); an older git is named, not failed on later.
+#[test]
+fn an_old_git_is_refused_with_the_version_needed() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = Cli::new(dir.path(), &[("a.txt", "a\n")]);
+    let fake = dir.path().join("old-git");
+    std::fs::write(&fake, "#!/bin/sh\necho 'git version 2.30.1'\n").unwrap();
+    std::fs::set_permissions(&fake, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let out = cli.command(&cli.root).env("ZIT_GIT", &fake).args(["status"]).output().unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("git 2.38 or newer") && err.contains("2.30.1"), "{err}");
+}

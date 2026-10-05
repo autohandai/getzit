@@ -1,0 +1,30 @@
+name: dco
+
+on:
+  pull_request:
+
+jobs:
+  signoff:
+    name: Every commit is signed off
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check Signed-off-by
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          missing=0
+          for c in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            author=$(git log -1 --format='%ae' "$c")
+            if ! git log -1 --format='%B' "$c" | grep -qiE "^Signed-off-by: .+ <$author>$"; then
+              echo "::error::$(git log -1 --format='%h %s' "$c") has no Signed-off-by matching its author ($author)"
+              missing=1
+            fi
+          done
+          if [ "$missing" = 1 ]; then
+            echo "Sign your commits off with 'git commit -s' (fix a branch with 'git rebase --signoff $BASE')."
+            exit 1
+          fi
