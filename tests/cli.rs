@@ -213,3 +213,17 @@ fn an_old_git_is_refused_with_the_version_needed() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("git 2.38 or newer") && err.contains("2.30.1"), "{err}");
 }
+
+/// Code in a language Zit cannot parse is one resource with no inferred reads; recording says so.
+#[test]
+fn recording_code_zit_cannot_parse_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = Cli::new(dir.path(), &[("Shop.java", "class Shop {}\n"), ("a.rs", "fn a() {}\n")]);
+    cli.run(&["init"]).ok();
+    let ws = cli.run(&["materialise", "--agent", "a", "--intent", "x"]).ok().stdout.trim().to_string();
+    std::fs::write(format!("{ws}/Shop.java"), "class Shop { int price() { return 1; } }\n").unwrap();
+    std::fs::write(format!("{ws}/a.rs"), "fn a() { 1; }\n").unwrap();
+    let out = cli.run_in(std::path::Path::new(&ws), &["record", "--dispose"]).ok();
+    assert!(out.stderr.contains("Shop.java is not parsed"), "{}", out.stderr);
+    assert!(!out.stderr.contains("a.rs is not parsed"), "{}", out.stderr);
+}

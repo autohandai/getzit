@@ -187,3 +187,14 @@ fn watching_work_in_progress_writes_nothing_into_the_repository() {
         .unwrap();
     assert!(!stored.success(), "status wrote the draft into .git/objects");
 }
+
+/// Claiming a type holds its methods too, and a method's claim blocks claiming its type.
+#[test]
+fn a_claim_on_a_type_covers_its_methods() {
+    let src = "pub struct Shape;\n\nimpl Shape {\n    pub fn area(&self) -> u32 {\n        1\n    }\n}\n";
+    let fx = Fixture::new(&[("src/shape.rs", src)]);
+    let (a, b) = (fx.workspace("a"), fx.workspace("b"));
+    let res = |s: &str| vec![zit::resource::Resource::parse(s)];
+    assert!(matches!(claim::claim(&fx.repo, &a.id, &res("src/shape.rs#Shape")).unwrap(), Claimed::Granted));
+    assert!(matches!(claim::claim(&fx.repo, &b.id, &res("src/shape.rs#Shape::area")).unwrap(), Claimed::Refused(_)));
+}

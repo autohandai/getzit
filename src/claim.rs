@@ -94,7 +94,7 @@ pub fn claim(repo: &Repo, workspace: &str, resources: &[Resource]) -> Result<Cla
     let taken: Vec<Held> = held
         .into_iter()
         .filter(|h| h.by != mine && !free(&h.resource))
-        .filter(|h| resources.iter().any(|r| !free(r) && r.overlaps(&h.resource)))
+        .filter(|h| resources.iter().any(|r| !free(r) && r.held_with(&h.resource)))
         .collect();
     if !taken.is_empty() {
         return Ok(Claimed::Refused(taken));

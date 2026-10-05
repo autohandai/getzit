@@ -310,6 +310,12 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
                 Some(c) => {
                     println!("{}", c.id);
                     recorded.writes.iter().for_each(|w| eprintln!("  wrote {w}"));
+                    for w in recorded.writes.iter().filter(|w| zit::symbols::unparsed_code(w.path())) {
+                        eprintln!(
+                            "  note: {} is not parsed: it is one resource, and Zit cannot tell what it calls",
+                            w.path()
+                        );
+                    }
                 }
             })?;
         }

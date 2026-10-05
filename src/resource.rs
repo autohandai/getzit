@@ -39,6 +39,19 @@ impl Resource {
         let whole = matches!(self, Resource::File(_)) || matches!(other, Resource::File(_));
         whole && self.path() == other.path()
     }
+
+    /// For claims: as `overlaps`, and a type also holds its methods (`Type` and
+    /// `Type::method`). Writes do not use this: a field and a method of one
+    /// type can be changed at the same time.
+    pub fn held_with(&self, other: &Resource) -> bool {
+        let member = |a: &Resource, b: &Resource| match (a, b) {
+            (Resource::Symbol(p, owner), Resource::Symbol(q, name)) => {
+                p == q && name.strip_prefix(owner.as_str()).is_some_and(|rest| rest.starts_with("::"))
+            }
+            _ => false,
+        };
+        self.overlaps(other) || member(self, other) || member(other, self)
+    }
 }
 
 /// Ordered by path first, so everything about one file sorts together.

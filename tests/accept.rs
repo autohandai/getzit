@@ -420,3 +420,43 @@ fn concurrent_imports_to_one_file_compose() {
     let (_, composed) = accepted(accept::accept(&fx.repo, &two.id).unwrap());
     assert!(composed);
 }
+
+/// Two agents editing different methods of one type compose; the type is not one indivisible unit.
+#[test]
+fn edits_to_different_methods_of_one_type_compose() {
+    for (path, src, (a_from, a_to), (b_from, b_to)) in [
+        (
+            "src/shape.rs",
+            "pub struct Shape { w: u32, h: u32 }\n\nimpl Shape {\n    pub fn area(&self) -> u32 {\n        self.w * self.h\n    }\n\n    pub fn perimeter(&self) -> u32 {\n        2 * (self.w + self.h)\n    }\n}\n",
+            ("self.w * self.h", "self.h * self.w"),
+            ("2 * (self.w + self.h)", "(self.w + self.h) * 2"),
+        ),
+        (
+            "shape.py",
+            "class Shape:\n    def area(self):\n        return self.w * self.h\n\n    def perimeter(self):\n        return 2 * (self.w + self.h)\n",
+            ("self.w * self.h", "self.h * self.w"),
+            ("2 * (self.w + self.h)", "(self.w + self.h) * 2"),
+        ),
+    ] {
+        let fx = Fixture::new(&[(path, src)]);
+        let one = fx.change("a", &[(path, &src.replace(a_from, a_to))]);
+        let two = fx.change("b", &[(path, &src.replace(b_from, b_to))]);
+        accepted(accept::accept(&fx.repo, &one.id).unwrap());
+        let (_, composed) = accepted(accept::accept(&fx.repo, &two.id).unwrap());
+        assert!(composed, "{path}");
+    }
+}
+
+/// Changing a method's signature still stales code that uses the type.
+#[test]
+fn a_method_signature_change_stales_users_of_the_type() {
+    let src = "pub struct Shape;\n\nimpl Shape {\n    pub fn area(&self) -> u32 {\n        1\n    }\n}\n";
+    let fx = Fixture::new(&[("src/shape.rs", src), ("src/use.rs", "pub fn f() {}\n")]);
+    let sig = fx.change("a", &[("src/shape.rs", &src.replace("area(&self) -> u32", "area(&self, k: u32) -> u32"))]);
+    let user = fx.change("b", &[("src/use.rs", "pub fn f(s: &Shape) -> u32 { s.area() }\n")]);
+    accepted(accept::accept(&fx.repo, &sig.id).unwrap());
+    let Outcome::Rejected(Invalid::Stale(why)) = accept::accept(&fx.repo, &user.id).unwrap() else {
+        panic!("expected stale");
+    };
+    assert_eq!(why[0].resource.to_string(), "src/shape.rs#Shape::area");
+}

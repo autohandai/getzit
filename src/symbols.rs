@@ -99,6 +99,62 @@ fn imported_names(node: tree_sitter::Node, text: &str, out: &mut BTreeSet<String
     });
 }
 
+/// `node`'s text without the byte ranges in `cut` (which lie inside it).
+fn without(node: tree_sitter::Node, text: &str, cut: &[std::ops::Range<usize>]) -> String {
+    let (mut out, mut at) = (String::new(), node.start_byte());
+    let mut cut: Vec<_> = cut.iter().filter(|c| c.start >= node.start_byte() && c.end <= node.end_byte()).collect();
+    cut.sort_by_key(|c| c.start);
+    for c in cut {
+        if c.start >= at {
+            out.push_str(&text[at..c.start]);
+            at = c.end;
+        }
+    }
+    out.push_str(&text[at..node.end_byte()]);
+    out
+}
+
+/// The methods a type-defining node contains, as `(Type::method, node, name node id)`:
+/// Rust `impl` blocks, Python classes, JavaScript and TypeScript classes.
+fn methods<'t>(lang: Lang, node: tree_sitter::Node<'t>, text: &str) -> Vec<(String, tree_sitter::Node<'t>, usize)> {
+    let name_of =
+        |n: tree_sitter::Node| n.child_by_field_name("name").map(|c| (text[c.byte_range()].to_string(), c.id()));
+    let (owner, body, kinds): (Option<String>, Option<tree_sitter::Node>, &[&str]) = match (lang, node.kind()) {
+        (Lang::Rust, "impl_item") => (
+            node.child_by_field_name("type").map(|t| type_name(&text[t.byte_range()])),
+            node.child_by_field_name("body"),
+            &["function_item"],
+        ),
+        (Lang::Python, "class_definition") => (
+            name_of(node).map(|(n, _)| n),
+            node.child_by_field_name("body"),
+            &["function_definition", "decorated_definition"],
+        ),
+        (Lang::Python, "decorated_definition") => {
+            return node.child_by_field_name("definition").map(|d| methods(lang, d, text)).unwrap_or_default()
+        }
+        (Lang::Js, "export_statement") => {
+            return node.child_by_field_name("declaration").map(|d| methods(lang, d, text)).unwrap_or_default()
+        }
+        (Lang::Js, "class_declaration" | "abstract_class_declaration") => {
+            (name_of(node).map(|(n, _)| n), node.child_by_field_name("body"), &["method_definition"])
+        }
+        _ => return vec![],
+    };
+    let (Some(owner), Some(body)) = (owner, body) else { return vec![] };
+    let mut cursor = body.walk();
+    body.named_children(&mut cursor)
+        .filter(|m| kinds.contains(&m.kind()))
+        .filter_map(|m| {
+            let named = match m.kind() {
+                "decorated_definition" => m.child_by_field_name("definition").and_then(name_of),
+                _ => name_of(m),
+            };
+            named.map(|(name, id)| (format!("{owner}::{name}"), m, id))
+        })
+        .collect()
+}
+
 /// The unit's interface: its text without function bodies or comments.
 fn signature(node: tree_sitter::Node, text: &str) -> String {
     if is_comment(node.kind()) {
@@ -125,6 +181,18 @@ fn signature(node: tree_sitter::Node, text: &str) -> String {
     }
     out.push_str(&text[at.max(node.start_byte())..node.end_byte().max(at)]);
     out
+}
+
+/// Source code Zit cannot parse into symbols: such a file is one resource
+/// and no reads are inferred from it, so semantic staleness is not detected.
+pub fn unparsed_code(path: &str) -> bool {
+    const CODE: &[&str] = &[
+        "java", "kt", "kts", "scala", "cs", "fs", "c", "h", "cc", "cpp", "cxx", "hpp", "hh", "m", "mm", "swift", "rb",
+        "php", "pl", "lua", "dart", "ex", "exs", "erl", "hs", "ml", "clj", "zig", "nim", "jl", "r", "sql", "sh",
+        "bash", "vue", "svelte",
+    ];
+    let ext = path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
+    language(path).is_none() && ext.is_some_and(|e| CODE.contains(&e.as_str()))
 }
 
 /// Index `src`. `None` when the language is unsupported or the file is not
@@ -164,14 +232,43 @@ pub fn index(path: &str, src: &[u8]) -> Option<FileIndex> {
             (false, true) => vec![None],
             (false, false) => defs.into_iter().map(|d| Some(d.name)).collect(),
         };
+        // Methods are units of their own, `Type::method`; the rest of the type stays `Type`.
+        let methods = methods(lang, node, text);
+        let cut: Vec<std::ops::Range<usize>> = methods.iter().map(|(_, m, _)| m.byte_range()).collect();
+        for (name, method, declared_by) in &methods {
+            let (body, sig, refs) = texts.entry(Some(name.clone())).or_default();
+            body.push_str(&text[method.byte_range()]);
+            sig.push_str(&signature(*method, text));
+            collect_identifiers(lang, *method, text, &[*declared_by], &imports, refs);
+        }
         for key in keys {
             let (body, sig, refs) = texts.entry(key).or_default();
             for part in leading.iter().chain([&node]) {
-                body.push_str(&text[part.byte_range()]);
+                let rest = without(*part, text, &cut);
+                body.push_str(&rest);
                 body.push('\n');
-                sig.push_str(&signature(*part, text));
+                sig.push_str(&match cut.is_empty() {
+                    true => signature(*part, text),
+                    false => rest,
+                });
                 sig.push('\n');
-                collect_identifiers(lang, *part, text, &declared, &imports, refs);
+                let mut found = BTreeSet::new();
+                collect_identifiers(lang, *part, text, &declared, &imports, &mut found);
+                if !cut.is_empty() {
+                    // Identifiers inside methods belong to the methods.
+                    let mut inside = BTreeSet::new();
+                    for (_, method, _) in &methods {
+                        collect_identifiers(lang, *method, text, &[], &imports, &mut inside);
+                    }
+                    let mut outside = BTreeSet::new();
+                    walk(*part, |n| {
+                        if n.child_count() == 0 && !cut.iter().any(|c| c.contains(&n.start_byte())) {
+                            outside.insert(text[n.byte_range()].to_string());
+                        }
+                    });
+                    found.retain(|id| !inside.contains(id) || outside.contains(id));
+                }
+                refs.extend(found);
             }
         }
         leading.clear();
@@ -289,9 +386,11 @@ fn definitions(lang: Lang, node: tree_sitter::Node, text: &str) -> Vec<Def> {
         (Lang::Js, "lexical_declaration" | "variable_declaration") => specs(node, &["variable_declarator"]),
         (Lang::Js, k) if k.ends_with("_declaration") || k == "internal_module" => named(node),
         (Lang::Go, "method_declaration") => field(node, "receiver")
-            .map(|r| {
+            .zip(node.child_by_field_name("name"))
+            .map(|(r, name)| {
                 let inner = r.trim_matches(['(', ')']);
-                Def::using(type_name(inner.rsplit([' ', '*']).next().unwrap_or(inner)))
+                let owner = type_name(inner.rsplit([' ', '*']).next().unwrap_or(inner));
+                Def { name: format!("{owner}::{}", &text[name.byte_range()]), declared_by: Some(name.id()) }
             })
             .into_iter()
             .collect(),
@@ -349,13 +448,13 @@ mod tests {
     }
 
     #[test]
-    fn rust_methods_belong_to_their_type() {
+    fn rust_methods_are_units_of_their_type() {
         let ix = index(
             "a.rs",
             b"use std::fmt;\nstruct Foo;\nimpl Foo { fn new() -> Foo { Foo } }\nimpl fmt::Debug for Foo<'_> {}\nfn free() {}\nconst MAX: u8 = 1;\ntrait T {}\nenum E { A }\n",
         )
         .unwrap();
-        assert_eq!(names(&ix), [IMPORTS, "E", "Foo", "MAX", "T", "free"]);
+        assert_eq!(names(&ix), [IMPORTS, "E", "Foo", "Foo::new", "MAX", "T", "free"]);
     }
 
     #[test]
@@ -467,7 +566,7 @@ mod tests {
             b"import os, lib\nLIMIT = 3\n@cache\ndef price(x):\n    return lib.tax(x)\nclass Shop:\n    def buy(self): pass\nprint(1)\n",
         )
         .unwrap();
-        assert_eq!(names(&ix), [IMPORTS, "LIMIT", "Shop", "price"]);
+        assert_eq!(names(&ix), [IMPORTS, "LIMIT", "Shop", "Shop::buy", "price"]);
         assert!(ix.symbols["price"].refs.contains("tax"));
         assert!(ix.symbols[IMPORTS].refs.contains("os"));
         assert!(ix.top.refs.contains("print"));
@@ -493,20 +592,20 @@ mod tests {
     }
 
     #[test]
-    fn go_methods_belong_to_their_receiver() {
+    fn go_methods_are_units_of_their_receiver() {
         let ix = index(
             "a.go",
             b"package a\nimport \"fmt\"\ntype S struct{}\nfunc (s *S) M() { fmt.Println() }\nfunc F() {}\nconst K = 1\nvar V = 2\n",
         )
         .unwrap();
-        assert_eq!(names(&ix), [IMPORTS, "F", "K", "S", "V"]);
-        assert!(ix.symbols["S"].refs.contains("Println"));
+        assert_eq!(names(&ix), [IMPORTS, "F", "K", "S", "S::M", "V"]);
+        assert!(ix.symbols["S::M"].refs.contains("Println"));
     }
 
     #[test]
-    fn go_methods_on_generic_types_belong_to_the_type() {
+    fn go_methods_on_generic_types_are_named_after_the_type() {
         let ix = index("a.go", b"package a\ntype Stack[T any] struct{}\nfunc (s *Stack[T]) Push(v T) {}\n").unwrap();
-        assert_eq!(names(&ix), ["Stack"]);
+        assert_eq!(names(&ix), ["Stack", "Stack::Push"]);
     }
 
     #[test]

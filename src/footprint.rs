@@ -45,7 +45,13 @@ impl Footprint {
     /// mention by name sees only a change to the symbol's interface.
     pub fn reads(&self, written: &Resource, interface_changed: bool) -> bool {
         self.reads.iter().any(|r| r.overlaps(written))
-            || (interface_changed && matches!(written, Resource::Symbol(_, name) if self.refs.contains(name)))
+            || (interface_changed && matches!(written, Resource::Symbol(_, name) if self.names(name)))
+    }
+
+    /// Whether this span mentions `symbol`: by its name, or, for a method
+    /// (`Type::method`), by its type.
+    fn names(&self, symbol: &str) -> bool {
+        self.refs.contains(symbol) || symbol.split_once("::").is_some_and(|(owner, _)| self.refs.contains(owner))
     }
 
     /// Why this span cannot be composed with a concurrent `other`; empty when it can.

@@ -100,7 +100,7 @@ pub fn overview(repo: &Repo) -> Result<Overview> {
             let mut overlaps: Vec<Overlap> = touching
                 .iter()
                 .filter(|(_, _, holder)| *holder != workspace.id)
-                .filter(|(theirs, _, _)| writes.iter().chain(&claims).any(|mine| mine.overlaps(theirs)))
+                .filter(|(theirs, _, _)| writes.iter().chain(&claims).any(|mine| mine.held_with(theirs)))
                 .map(|(resource, with, holder)| Overlap {
                     resource: resource.clone(),
                     with: with.clone(),
