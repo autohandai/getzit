@@ -920,7 +920,7 @@ fn main() {
         "zit": env!("CARGO_PKG_VERSION"),
         "os": must(Command::new("uname").arg("-srm")),
         "cpus": std::thread::available_parallelism().map_or(0, |n| n.get()),
-        "load_average": must(Command::new("sysctl").args(["-n", "vm.loadavg"])),
+        "load_average": load_average(),
         "zit_driven": if env.cli { "cli (one process per operation)" } else { "in-process (as the MCP server)" },
         "spawn_ms": calibration,
         "results": results,
@@ -932,5 +932,15 @@ fn main() {
     println!("{text}");
     if !cli.keep {
         let _ = fs::remove_dir_all(&env.work);
+    }
+}
+
+/// The 1, 5 and 15 minute load averages, on macOS and Linux alike.
+fn load_average() -> String {
+    let mut loads = [0f64; 3];
+    // SAFETY: `loads` has room for the three values requested.
+    match unsafe { libc::getloadavg(loads.as_mut_ptr(), 3) } {
+        3 => format!("{:.2} {:.2} {:.2}", loads[0], loads[1], loads[2]),
+        _ => "unknown".into(),
     }
 }
