@@ -298,8 +298,12 @@ impl Env {
     fn free_bytes(&self) -> u64 {
         use std::os::unix::ffi::OsStrExt;
         let path = std::ffi::CString::new(self.work.as_os_str().as_bytes()).expect("path");
-        // SAFETY: `path` is a valid C string and `stat` is a properly sized out-parameter.
+        // Flush first: btrfs (and delayed allocation elsewhere) reports free
+        // space only once writes are committed.
+        // SAFETY: `sync` takes no arguments; `path` is a valid C string and
+        // `stat` is a properly sized out-parameter.
         unsafe {
+            libc::sync();
             let mut stat: libc::statfs = std::mem::zeroed();
             assert_eq!(libc::statfs(path.as_ptr(), &mut stat), 0);
             // The field widths differ between platforms and SDKs.
