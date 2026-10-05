@@ -165,6 +165,7 @@ pub fn run(repo: &Repo, opts: &Run) -> Result<Report> {
         (None, None, None);
     let deadline = opts.timeout.map(|limit| Instant::now() + limit);
     let mut timed_out = false;
+    let mut killed = false;
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break status;
@@ -192,12 +193,14 @@ pub fn run(repo: &Repo, opts: &Run) -> Result<Report> {
         }
         if kill_at.is_some_and(|at| now >= at) {
             kill_at = None;
+            killed = true;
             signal(libc::SIGKILL);
         }
         std::thread::sleep(POLL);
     };
 
-    if own_group {
+    // Already SIGKILLed as a group: nothing is left to ask nicely.
+    if own_group && !killed {
         stop_group(pid);
     }
     // The agent and everything it started are gone: a lock it left behind is stale.
