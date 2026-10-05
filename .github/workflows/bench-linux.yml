@@ -1,0 +1,41 @@
+name: bench-linux
+
+# The workspace lifecycle benchmark (docs/benchmarks.mdx, section 1) on Linux:
+# btrfs, where workspaces are reflink clones, and ext4, where they are checkouts.
+on:
+  workflow_dispatch:
+
+jobs:
+  lifecycle:
+    name: Lifecycle on ${{ matrix.fs }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        fs: [btrfs, ext4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88
+      - uses: Swatinem/rust-cache@v2
+      - name: A ${{ matrix.fs }} file system for the scratch directory
+        run: |
+          sudo apt-get install -y -qq btrfs-progs
+          truncate -s 12G "$RUNNER_TEMP/fs.img"
+          if [ "${{ matrix.fs }}" = btrfs ]; then mkfs.btrfs -q "$RUNNER_TEMP/fs.img"; else mkfs.ext4 -q -F "$RUNNER_TEMP/fs.img"; fi
+          sudo mkdir -p /mnt/bench
+          sudo mount -o loop "$RUNNER_TEMP/fs.img" /mnt/bench
+          sudo chown "$USER" /mnt/bench
+      - name: Run
+        env:
+          TMPDIR: /mnt/bench
+        run: |
+          git config --global user.name bench
+          git config --global user.email bench@example.com
+          cargo build --release --locked --features bench
+          mkdir -p out
+          ./target/release/zit-bench --git "$(command -v git)" --python "$(command -v python3)" \
+            --dir /mnt/bench/l --out "out/lifecycle-linux-${{ matrix.fs }}.json" \
+            lifecycle --files 1000,10000,30000 --agents 1,10 --rounds 3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lifecycle-linux-${{ matrix.fs }}
+          path: out/

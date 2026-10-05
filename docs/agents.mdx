@@ -160,7 +160,13 @@ Verified with the same keys passed as `-c` overrides to `codex exec`. Without th
 
 **Pi**
 
-Use `zit run --agent pi`. Connecting Pi to `zit mcp` has not been tried.
+The Pi extension in [`integrations/pi`](https://github.com/autohandai/getzit/tree/main/integrations/pi) gives Pi the same workflow natively: `/zit <intent>` (or `pi --zit "<intent>"`) moves the session into a fresh workspace, the model gets `zit_claim`, `zit_status` and `zit_record` tools and the claim rules in its system prompt, and quitting records the work with Pi's last reply as its reason.
+
+```sh
+pi install /path/to/getzit/integrations/pi      # npm:pi-zit once it is published
+```
+
+Tested with Pi 0.84.4 and the real `zit` binary (17 tests, and the commands driven through Pi's RPC mode); a turn with a live model has not been run yet.
 
 ### Tools
 
