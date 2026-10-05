@@ -2,7 +2,7 @@
 //! the agent ends — exit, crash, SIGINT, SIGTERM — its work is recorded.
 
 use crate::accept::{self, Outcome};
-use crate::change::{self, Change, Record};
+use crate::change::{self, Change, Record, Usage};
 use crate::git::{Oid, Repo};
 use crate::workspace::{self, NewWorkspace};
 use crate::{Error, Result};
@@ -28,6 +28,9 @@ pub struct Run {
     pub quiet_stdout: bool,
     /// Stop the agent after this long; its partial work is still recorded.
     pub timeout: Option<Duration>,
+    /// The agent prints JSON events (a preset in its JSON mode): read its final
+    /// message and usage from them, and show the final message instead of the raw stream.
+    pub structured: bool,
     pub command: Vec<String>,
 }
 
@@ -57,17 +60,18 @@ const MAX_SUMMARY: usize = 8_000;
 pub fn preset(agent: &str, prompt: &str, writable: &[PathBuf]) -> Option<Vec<String>> {
     let s = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     Some(match agent {
-        "claude" => s(&["claude", "-p", prompt, "--permission-mode", "acceptEdits"]),
+        "claude" => s(&["claude", "-p", prompt, "--permission-mode", "acceptEdits", "--output-format", "json"]),
         "codex" => {
             // Codex writes its final message where zit picks it up as the change's account.
-            let mut argv = s(&["codex", "exec", "--sandbox", "workspace-write", "--output-last-message", SUMMARY_FILE]);
+            let mut argv =
+                s(&["codex", "exec", "--json", "--sandbox", "workspace-write", "--output-last-message", SUMMARY_FILE]);
             for dir in writable {
                 argv.extend(["--add-dir".to_string(), dir.display().to_string()]);
             }
             argv.push(prompt.to_string());
             argv
         }
-        "autohand" => s(&["autohand", "-p", prompt, "--yes"]),
+        "autohand" => s(&["autohand", "-p", prompt, "--yes", "--output-format", "stream-json"]),
         "pi" => s(&["pi", "-p", prompt]),
         _ => return None,
     })
@@ -138,6 +142,17 @@ pub fn run(repo: &Repo, opts: &Run) -> Result<Report> {
     if let Some(mut out) = child.stdout.take() {
         let tail = tail.clone();
         let quiet = opts.quiet_stdout;
+        let (echo, keep) = match opts.structured {
+            true => (false, 64 * MAX_SUMMARY),
+            false => (true, 4 * MAX_SUMMARY),
+        };
+        if opts.structured {
+            eprintln!(
+                "zit: {} is working in {}; its final message follows when it is done",
+                opts.agent,
+                ws.path().display()
+            );
+        }
         std::thread::spawn(move || {
             use std::io::{Read, Write};
             let mut buf = [0u8; 8192];
@@ -145,11 +160,16 @@ pub fn run(repo: &Repo, opts: &Run) -> Result<Report> {
                 if n == 0 {
                     break;
                 }
-                let _ =
-                    if quiet { std::io::stderr().write_all(&buf[..n]) } else { std::io::stdout().write_all(&buf[..n]) };
+                if echo {
+                    let _ = if quiet {
+                        std::io::stderr().write_all(&buf[..n])
+                    } else {
+                        std::io::stdout().write_all(&buf[..n])
+                    };
+                }
                 let mut kept = tail.lock().expect("tail lock");
                 kept.extend_from_slice(&buf[..n]);
-                let excess = kept.len().saturating_sub(4 * MAX_SUMMARY);
+                let excess = kept.len().saturating_sub(keep);
                 kept.drain(..excess);
             }
             let _ = done_tx.send(());
@@ -207,10 +227,19 @@ pub fn run(repo: &Repo, opts: &Run) -> Result<Report> {
     let _ = std::fs::remove_file(ws.dir().join("git/index.lock"));
     // Children the agent left running may hold the pipe open; do not wait for them.
     let _ = done_rx.recv_timeout(Duration::from_secs(2));
+    let output = String::from_utf8_lossy(&tail.lock().expect("tail lock")).into_owned();
+    let (said, usage) = if opts.structured { read_events(&output) } else { (None, None) };
     let reported = std::fs::read_to_string(&summary_file).ok().filter(|s| !s.trim().is_empty());
-    let summary =
-        account(&reported.unwrap_or_else(|| String::from_utf8_lossy(&tail.lock().expect("tail lock")).into_owned()));
-    let change = change::record(repo, &ws.id, &Record { summary, ..Default::default() })?;
+    let summary = account(&reported.or(said).unwrap_or(output));
+    if opts.structured {
+        if let Some(text) = &summary {
+            match opts.quiet_stdout {
+                true => eprintln!("{text}"),
+                false => println!("{text}"),
+            }
+        }
+    }
+    let change = change::record(repo, &ws.id, &Record { summary, usage, ..Default::default() })?;
     if !opts.keep {
         workspace::dispose(repo, &ws.id)?;
     }
@@ -237,6 +266,43 @@ pub fn run(repo: &Repo, opts: &Run) -> Result<Report> {
 
 /// The agent's account: colour codes removed, trimmed, at most
 /// `MAX_SUMMARY` bytes from the end.
+/// The final message and usage in an agent's JSON output: Claude Code's
+/// result object, Codex's JSONL events, Autohand's stream-json.
+fn read_events(output: &str) -> (Option<String>, Option<Usage>) {
+    let (mut said, mut usage): (Option<String>, Option<Usage>) = (None, None);
+    let n = |v: &serde_json::Value, k: &str| v[k].as_u64().unwrap_or(0);
+    for line in output.lines() {
+        let Ok(event) = serde_json::from_str::<serde_json::Value>(line.trim()) else { continue };
+        match event["type"].as_str() {
+            Some("result") => {
+                if let Some(text) = event["result"].as_str().or(event["content"].as_str()) {
+                    said = Some(text.to_string());
+                }
+                let u = &event["usage"];
+                if u.is_object() || event["total_cost_usd"].is_number() {
+                    let input =
+                        n(u, "input_tokens") + n(u, "cache_creation_input_tokens") + n(u, "cache_read_input_tokens");
+                    usage = Some(Usage {
+                        input_tokens: input,
+                        output_tokens: n(u, "output_tokens"),
+                        cost_usd: event["total_cost_usd"].as_f64(),
+                    });
+                }
+            }
+            Some("item.completed") if event["item"]["type"] == "agent_message" => {
+                said = event["item"]["text"].as_str().map(str::to_string).or(said);
+            }
+            Some("turn.completed") => {
+                let u = usage.get_or_insert_with(Usage::default);
+                u.input_tokens += n(&event["usage"], "input_tokens");
+                u.output_tokens += n(&event["usage"], "output_tokens");
+            }
+            _ => {}
+        }
+    }
+    (said, usage)
+}
+
 fn account(raw: &str) -> Option<String> {
     let mut clean = String::with_capacity(raw.len());
     let mut chars = raw.chars().peekable();

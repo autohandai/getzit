@@ -22,7 +22,21 @@ pub struct Change {
     /// Resources the agent declared it observed.
     pub reads: Vec<Resource>,
     pub time: u64,
+    /// What producing it cost, when the agent reported it.
+    pub usage: Option<Usage>,
 }
+
+/// Tokens and money one agent turn used, as the agent reported them.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Usage {
+    /// Every input token, cached or not.
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    /// In US dollars, when the agent prices its own turns (Claude Code does).
+    pub cost_usd: Option<f64>,
+}
+
+impl Eq for Usage {}
 
 #[derive(Debug, Default)]
 pub struct Record {
@@ -32,6 +46,8 @@ pub struct Record {
     pub summary: Option<String>,
     /// Observed resources, in addition to those declared on the workspace.
     pub reads: Vec<Resource>,
+    /// What the turn cost.
+    pub usage: Option<Usage>,
 }
 
 const FORMAT: &str = "--format=%H%x00%T%x00%P%x00%an%x00%ct%x00%B%x01";
@@ -46,8 +62,16 @@ fn parse(record: &str) -> Option<Change> {
     let message = fields.next()?;
 
     let (mut agent, mut session, mut reads, mut text) = (author, None, Vec::new(), Vec::new());
+    let mut usage: Option<Usage> = None;
     for line in message.lines() {
-        if let Some(v) = line.strip_prefix("Zit-Agent: ") {
+        if let Some(v) = line.strip_prefix("Zit-Tokens: ") {
+            let mut n =
+                v.split(|c: char| !c.is_ascii_digit()).filter(|s| !s.is_empty()).map(|s| s.parse().unwrap_or(0));
+            let u = usage.get_or_insert_with(Usage::default);
+            (u.input_tokens, u.output_tokens) = (n.next().unwrap_or(0), n.next().unwrap_or(0));
+        } else if let Some(v) = line.strip_prefix("Zit-Cost-USD: ") {
+            usage.get_or_insert_with(Usage::default).cost_usd = v.trim().parse().ok();
+        } else if let Some(v) = line.strip_prefix("Zit-Agent: ") {
             agent = v.to_string();
         } else if let Some(v) = line.strip_prefix("Zit-Session: ") {
             session = Some(v.to_string());
@@ -64,7 +88,7 @@ fn parse(record: &str) -> Option<Change> {
         Some((intent, rest)) => (intent.trim().to_string(), Some(rest.trim().to_string()).filter(|s| !s.is_empty())),
         None => (text.to_string(), None),
     };
-    Some(Change { id, state, parents, intent, summary, agent, session, reads, time })
+    Some(Change { id, state, parents, intent, summary, agent, session, reads, time, usage })
 }
 
 fn load_many(repo: &Repo, ids: &str) -> Result<Vec<Change>> {
@@ -143,6 +167,14 @@ pub(crate) fn message(
     msg
 }
 
+fn usage_trailers(usage: &Usage) -> String {
+    let mut out = format!("Zit-Tokens: {} in, {} out\n", usage.input_tokens, usage.output_tokens);
+    if let Some(cost) = usage.cost_usd {
+        out.push_str(&format!("Zit-Cost-USD: {cost:.4}\n"));
+    }
+    out
+}
+
 /// Write a change object. It is not referenced yet: `keep` it as a
 /// speculative change, or make it current.
 pub(crate) fn commit(repo: &Repo, state: &Oid, parents: &[&Oid], agent: &str, message: &str, time: u64) -> Result<Oid> {
@@ -152,12 +184,19 @@ pub(crate) fn commit(repo: &Repo, state: &Oid, parents: &[&Oid], agent: &str, me
     }
     let email = format!("{}@zit", agent.replace(|c: char| c.is_whitespace() || c == '<' || c == '>', "-"));
     let date = format!("@{time} +0000");
+    // The agent wrote it; the person running Zit committed it, and signs it if git is set to.
+    let setting = |key: &str| repo.git(&["config", key]).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    let committer = setting("user.name").unwrap_or_else(|| "zit".into());
+    let committer_email = setting("user.email").unwrap_or_else(|| "zit@localhost".into());
+    if setting("commit.gpgsign").is_some_and(|v| v == "true") {
+        args.push("-S".to_string());
+    }
     let env = [
         ("GIT_AUTHOR_NAME", agent),
         ("GIT_AUTHOR_EMAIL", email.as_str()),
         ("GIT_AUTHOR_DATE", date.as_str()),
-        ("GIT_COMMITTER_NAME", "zit"),
-        ("GIT_COMMITTER_EMAIL", "zit@localhost"),
+        ("GIT_COMMITTER_NAME", committer.as_str()),
+        ("GIT_COMMITTER_EMAIL", committer_email.as_str()),
         ("GIT_COMMITTER_DATE", date.as_str()),
     ];
     Ok(Oid::new(repo.git_stdin(&args, &env, message)?))
@@ -183,7 +222,10 @@ pub fn record(repo: &Repo, workspace: &str, opts: &Record) -> Result<Option<Chan
     reads.dedup();
     let intent = one_paragraph(opts.intent.as_deref().unwrap_or(&ws.intent));
     let summary = opts.summary.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
-    let msg = message(&intent, summary.as_deref(), &ws.agent, ws.session.as_deref(), &reads);
+    let mut msg = message(&intent, summary.as_deref(), &ws.agent, ws.session.as_deref(), &reads);
+    if let Some(usage) = &opts.usage {
+        msg.push_str(&usage_trailers(usage));
+    }
     let mut parents = vec![ws.base.clone()];
     parents.extend(ws.merge_parent.clone());
     let time = workspace::now();
@@ -199,6 +241,7 @@ pub fn record(repo: &Repo, workspace: &str, opts: &Record) -> Result<Option<Chan
         session: ws.session.clone(),
         reads,
         time,
+        usage: opts.usage.clone(),
     };
 
     // The view now sits on the new change; further edits chain from it.

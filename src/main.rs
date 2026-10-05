@@ -98,6 +98,9 @@ enum Cmd {
         /// Run every check again instead of trusting existing evidence.
         #[arg(long)]
         rerun: bool,
+        /// Compose as one commit on top of current, never a merge commit.
+        #[arg(long)]
+        linear: bool,
     },
     /// Rebuild a stale change on current, in a new workspace, to reconsider.
     Retry { change: String },
@@ -119,10 +122,19 @@ enum Cmd {
         #[arg(long)]
         force: bool,
     },
-    /// Fast-forward a git branch to the current state.
+    /// Fast-forward a git branch to the current state; with --pr, push it and open a pull request.
     Export {
         #[arg(long, default_value = "main")]
         branch: String,
+        /// Push the branch and open a pull request into --base (needs the GitHub CLI, `gh`).
+        #[arg(long)]
+        pr: bool,
+        /// The branch the pull request goes into.
+        #[arg(long, default_value = "main")]
+        base: String,
+        /// The remote to push to.
+        #[arg(long, default_value = "origin")]
+        remote: String,
     },
     /// Accept a git branch's commits into current, then export current to it.
     Sync {
@@ -289,7 +301,8 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
         }
         Cmd::Record { workspace, intent, summary, reads, dispose } => {
             let id = workspace_id(&repo, workspace)?;
-            let opts = Record { intent, summary, reads: reads.iter().map(|r| Resource::parse(r)).collect() };
+            let opts =
+                Record { intent, summary, reads: reads.iter().map(|r| Resource::parse(r)).collect(), usage: None };
             let recorded = api::record(&repo, &id, &opts, dispose)?;
             emit(json, &recorded, || match &recorded.change {
                 None => println!("nothing to record"),
@@ -327,8 +340,8 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
                 return Ok(ExitCode::from(NO));
             }
         }
-        Cmd::Accept { change, allow_stale, rerun } => {
-            let policy = accept::Policy { allow_stale, rerun };
+        Cmd::Accept { change, allow_stale, rerun, linear } => {
+            let policy = accept::Policy { allow_stale, rerun, linear };
             let outcome = accept::accept_with(&repo, &repo.resolve(&change)?, &policy)?;
             return report_outcome(&repo, json, &outcome);
         }
@@ -361,7 +374,13 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
                 )
             })?;
         }
-        Cmd::Export { branch } => {
+        Cmd::Export { branch, pr: true, base, remote } => {
+            let url = accept::pull_request(&repo, &branch, &base, &remote)?;
+            emit(json, &serde_json::json!({"branch": branch, "base": base, "pull_request": url}), || {
+                println!("{url}")
+            })?;
+        }
+        Cmd::Export { branch, .. } => {
             let current = accept::export(&repo, &branch)?;
             emit(json, &serde_json::json!({"branch": branch, "current": current}), || {
                 println!("{branch} is {}", current.short())
@@ -380,6 +399,8 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
         }
         Cmd::Run { who, keep, accept, timeout, command } => {
             let agent = who.agent.unwrap_or_else(default_agent);
+            // Presets that print JSON events: their final message and usage are read from them.
+            let structured = command.is_empty() && matches!(agent.as_str(), "claude" | "codex" | "autohand");
             let command = match command.is_empty() {
                 false => command,
                 true => run::preset(&agent, &who.intent, &[repo.home().to_path_buf()])
@@ -395,6 +416,7 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
                 accept,
                 quiet_stdout: json,
                 timeout: timeout.map(std::time::Duration::from_secs),
+                structured,
                 command,
             };
             let report = run::run(&repo, &opts)?;

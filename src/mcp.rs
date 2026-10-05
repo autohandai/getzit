@@ -88,7 +88,7 @@ fn all_tools() -> Value {
         tool(
             "zit_accept",
             "Make a change part of the current state. If current has moved, the change is composed onto it when their read/write sets do not conflict, then re-verified. A stale, conflicting or failing change is rejected with the exact reason and left intact.",
-            json!({"change": change(), "allow_stale": flag("Compose a stale change anyway and let the checks on the composed state decide. Only when the acceptance authority asked for it."), "rerun": flag("Run every check again instead of trusting existing evidence.")}),
+            json!({"change": change(), "allow_stale": flag("Compose a stale change anyway and let the checks on the composed state decide. Only when the acceptance authority asked for it."), "rerun": flag("Run every check again instead of trusting existing evidence."), "linear": flag("Compose as one commit on top of current, never a merge commit.")}),
             &["change"],
         ),
         tool(
@@ -147,6 +147,7 @@ fn call(cwd: &Path, client: &str, integrator: bool, name: &str, args: &Value) ->
                     intent: args["intent"].as_str().map(str::to_string),
                     summary: args["summary"].as_str().map(str::to_string),
                     reads: resources(args, "reads"),
+                    usage: None,
                 };
                 let dispose = args["dispose"].as_bool().unwrap_or(false);
                 json!(api::record(&repo, text(args, "workspace")?, &opts, dispose)?)
@@ -156,7 +157,8 @@ fn call(cwd: &Path, client: &str, integrator: bool, name: &str, args: &Value) ->
             "zit_check" => json!(evidence::verify(&repo, &change()?, args["rerun"].as_bool().unwrap_or(false))?),
             "zit_accept" => {
                 let flag = |name: &str| args[name].as_bool().unwrap_or(false);
-                let policy = accept::Policy { allow_stale: flag("allow_stale"), rerun: flag("rerun") };
+                let policy =
+                    accept::Policy { allow_stale: flag("allow_stale"), rerun: flag("rerun"), linear: flag("linear") };
                 json!(accept::accept_with(&repo, &change()?, &policy)?)
             }
             "zit_retry" => json!(accept::retry(&repo, &change()?)?),

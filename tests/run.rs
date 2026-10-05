@@ -127,7 +127,7 @@ fn a_known_agent_needs_no_command() {
     let writable = [Path::new("/zit-home").to_path_buf()];
     assert_eq!(
         zit::run::preset("claude", "Fix it", &writable).unwrap(),
-        ["claude", "-p", "Fix it", "--permission-mode", "acceptEdits"]
+        ["claude", "-p", "Fix it", "--permission-mode", "acceptEdits", "--output-format", "json"]
     );
     // Codex's sandbox must be allowed to write where zit claim and zit status write.
     assert_eq!(
@@ -135,6 +135,7 @@ fn a_known_agent_needs_no_command() {
         [
             "codex",
             "exec",
+            "--json",
             "--sandbox",
             "workspace-write",
             "--output-last-message",
@@ -144,7 +145,10 @@ fn a_known_agent_needs_no_command() {
             "Fix it"
         ]
     );
-    assert_eq!(zit::run::preset("autohand", "Fix it", &writable).unwrap(), ["autohand", "-p", "Fix it", "--yes"]);
+    assert_eq!(
+        zit::run::preset("autohand", "Fix it", &writable).unwrap(),
+        ["autohand", "-p", "Fix it", "--yes", "--output-format", "stream-json"]
+    );
     assert_eq!(zit::run::preset("pi", "Fix it", &writable).unwrap(), ["pi", "-p", "Fix it"]);
     assert!(zit::run::preset("unknown", "x", &writable).is_none());
 }

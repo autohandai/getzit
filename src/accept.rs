@@ -175,7 +175,7 @@ fn try_evaluate(repo: &Repo, change: &Change, current: &Oid) -> Result<Status> {
         return Ok(Status::Current);
     }
     let base = repo.merge_base(&change.id, current)?.ok_or_else(|| no_shared_history(&change.id))?;
-    if base == change.id {
+    if base == change.id || landed_linearly(repo, &change.id, &base, current)? {
         return Ok(Status::Accepted);
     }
     if base != *current {
@@ -214,6 +214,16 @@ pub struct Policy {
     pub allow_stale: bool,
     /// Run every check again instead of trusting existing evidence (a flaky failure).
     pub rerun: bool,
+    /// Compose as one commit on top of current instead of a merge commit.
+    /// Also on when current's zit.toml says `[accept] linear = true`.
+    pub linear: bool,
+}
+
+/// The commit on current's first-parent line that landed `change` linearly, if any.
+fn landed_linearly(repo: &Repo, change: &Oid, base: &Oid, current: &Oid) -> Result<bool> {
+    let grep = format!("--grep=^Zit-Change: {change}$");
+    let found = repo.git(&["log", "--first-parent", "-1", "--format=%H", &grep, &format!("{base}..{current}")])?;
+    Ok(!found.trim().is_empty())
 }
 
 /// Failed ref updates with current unchanged before giving up.
@@ -226,7 +236,7 @@ pub fn accept_with(repo: &Repo, change: &Oid, policy: &Policy) -> Result<Outcome
             return Ok(Outcome::AlreadyAccepted);
         };
         let base = repo.merge_base(change, &current)?.ok_or_else(|| no_shared_history(change))?;
-        if base == *change {
+        if base == *change || landed_linearly(repo, change, &base, &current)? {
             return Ok(Outcome::AlreadyAccepted);
         }
 
@@ -243,14 +253,21 @@ pub fn accept_with(repo: &Repo, change: &Oid, policy: &Policy) -> Result<Outcome
                 return Ok(Outcome::Rejected(Invalid::Conflict(merged.conflicts)));
             }
             let subject = source.intent.lines().next().unwrap_or_default();
-            let msg = change::message(
-                &format!("Compose {}: {subject}", change.short()),
+            let linear = policy.linear || evidence::linear(repo, &current)?;
+            let mut msg = change::message(
+                &match linear {
+                    true => subject.to_string(),
+                    false => format!("Compose {}: {subject}", change.short()),
+                },
                 source.summary.as_deref(),
                 &source.agent,
                 None,
                 &[],
             );
-            let parents = [&current, change];
+            if linear {
+                msg.push_str(&format!("Zit-Change: {change}\n"));
+            }
+            let parents: Vec<&Oid> = if linear { vec![&current] } else { vec![&current, change] };
             let id = change::commit(repo, &merged.state, &parents, &source.agent, &msg, workspace::now())?;
             let rules = evidence::derived(repo, &id)?;
             if rules.is_empty() {
@@ -331,6 +348,62 @@ pub fn retry(repo: &Repo, change: &Oid) -> Result<Workspace> {
 
 /// Publish current to a git branch (fast-forward only). If the branch is
 /// checked out somewhere, that checkout's files move with it.
+/// Export current to `branch`, push it to `remote` and open a pull request
+/// into `base` whose body carries every change's intent and reason. Uses
+/// the GitHub CLI (`gh`, or `$ZIT_GH`). Returns what `gh` printed: the URL.
+pub fn pull_request(repo: &Repo, branch: &str, base: &str, remote: &str) -> Result<String> {
+    if branch == base {
+        return Err(Error::msg(format!("the pull request needs its own branch: `--branch <name>`, not {base}")));
+    }
+    let current = export(repo, branch)?;
+    repo.git(&["push", "--quiet", remote, &format!("refs/heads/{branch}:refs/heads/{branch}")])?;
+
+    // What the pull request brings: first-parent commits not on the base yet.
+    let upstream = [format!("refs/remotes/{remote}/{base}"), format!("refs/heads/{base}")]
+        .into_iter()
+        .find(|r| repo.git(&["rev-parse", "--verify", "--quiet", r]).is_ok());
+    let range = upstream.map_or(current.to_string(), |u| format!("{u}..{current}"));
+    let log = repo.git(&["log", "--first-parent", "--reverse", "--format=%B%x01", &range])?;
+    let changes: Vec<(String, String)> = log
+        .split('\x01')
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .map(|m| {
+            let text: Vec<&str> = m.lines().filter(|l| !l.starts_with("Zit-")).collect();
+            let text = text.join("\n");
+            let (subject, rest) = text.split_once("\n\n").unwrap_or((&text, ""));
+            let subject =
+                subject.split_once(": ").filter(|(p, _)| p.starts_with("Compose ")).map_or(subject, |(_, s)| s);
+            (subject.trim().to_string(), rest.trim().to_string())
+        })
+        .collect();
+    let title = match changes.as_slice() {
+        [(only, _)] => only.clone(),
+        many => format!("{} changes", many.len()),
+    };
+    let body: String = changes
+        .iter()
+        .map(|(subject, reason)| match reason.is_empty() {
+            true => format!("### {subject}\n\n"),
+            false => format!("### {subject}\n\n{reason}\n\n"),
+        })
+        .collect();
+
+    let gh = std::env::var_os("ZIT_GH").unwrap_or_else(|| "gh".into());
+    let workdir =
+        repo.git_dir().parent().map(std::path::Path::to_path_buf).unwrap_or_else(|| repo.git_dir().to_path_buf());
+    let out = std::process::Command::new(&gh)
+        .current_dir(workdir)
+        .args(["pr", "create", "--base", base, "--head", branch, "--title", &title, "--body", body.trim_end()])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| Error::msg(format!("cannot run the GitHub CLI ({}): {e}", gh.to_string_lossy())))?;
+    if !out.status.success() {
+        return Err(Error::msg(format!("gh pr create failed: {}", String::from_utf8_lossy(&out.stderr).trim())));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
 pub fn export(repo: &Repo, branch: &str) -> Result<Oid> {
     let current = repo.current()?;
     let name = format!("refs/heads/{branch}");

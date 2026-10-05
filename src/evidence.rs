@@ -58,6 +58,21 @@ pub(crate) struct Config {
     ignore: Vec<String>,
     #[serde(default)]
     prepare: Option<Prepare>,
+    #[serde(default)]
+    accept: AcceptRules,
+}
+
+/// `[accept]` in zit.toml: rules for how changes land.
+#[derive(Deserialize, Default)]
+struct AcceptRules {
+    /// Compose onto current as one commit, never a merge commit.
+    #[serde(default)]
+    linear: bool,
+}
+
+/// Whether the state at `rev` asks for linear history.
+pub fn linear(repo: &Repo, rev: &Oid) -> Result<bool> {
+    Ok(config(repo, rev)?.accept.linear)
 }
 
 /// How to install dependencies into a fresh checkout (`npm ci`, `uv sync`,
@@ -218,12 +233,19 @@ fn lookup_keyed(repo: &Repo, state: &Oid, governing: Option<&Oid>) -> Result<Vec
         return Ok(vec![]);
     }
     let keys = keys(repo, state, &checks)?;
+    let trust_fetched = repo.git(&["config", "--bool", "zit.trustFetchedEvidence"]).is_ok_and(|v| v.trim() == "true");
     checks
         .into_iter()
         .zip(keys)
         .map(|(check, key)| {
-            let found =
-                objects.read(&format!("{EVIDENCE}/{key}"))?.and_then(|bytes| serde_json::from_slice(&bytes).ok());
+            // Evidence from elsewhere is trusted only when this machine is told to.
+            let trusted = trust_fetched || produced_here(repo, &key);
+            let found = match trusted {
+                true => {
+                    objects.read(&format!("{EVIDENCE}/{key}"))?.and_then(|bytes| serde_json::from_slice(&bytes).ok())
+                }
+                false => None,
+            };
             Ok((check, key, found))
         })
         .collect()
@@ -234,9 +256,34 @@ pub fn lookup(repo: &Repo, state: &Oid) -> Result<Vec<(Check, Option<Evidence>)>
     Ok(lookup_keyed(repo, state, None)?.into_iter().map(|(check, _, found)| (check, found)).collect())
 }
 
+/// This clone's record of the evidence it produced. Evidence refs travel
+/// with the graph and anyone who can push refs can write one; the ledger is
+/// what says "I ran this".
+fn ledger(repo: &Repo) -> std::path::PathBuf {
+    // In the clone's own git directory: never pushed, and kept by `zit clean`.
+    repo.git_dir().join("zit/evidence-produced")
+}
+
+fn produced_here(repo: &Repo, key: &str) -> bool {
+    ledger(repo).join(key).exists()
+}
+
 fn store(repo: &Repo, fresh: &[&Evidence]) -> Result<()> {
-    let mut updates = Vec::new();
+    let dir = ledger(repo);
+    std::fs::create_dir_all(&dir)?;
     for evidence in fresh {
+        std::fs::write(dir.join(&evidence.key), evidence.state.as_str())?;
+    }
+    let mut updates = Vec::new();
+    let mut objects = repo.objects()?;
+    for evidence in fresh {
+        // Already recorded (fetched) with the same verdict: keep that object, so
+        // machines that agree never fight over the ref.
+        let existing: Option<Evidence> =
+            objects.read(&format!("{EVIDENCE}/{}", evidence.key))?.and_then(|b| serde_json::from_slice(&b).ok());
+        if existing.is_some_and(|e| e.passed == evidence.passed && e.exit_code == evidence.exit_code) {
+            continue;
+        }
         let blob = repo.git_stdin(&["hash-object", "-w", "--stdin"], &[], &serde_json::to_string(evidence)?)?;
         updates.push(format!("update {EVIDENCE}/{} {blob}", evidence.key));
     }

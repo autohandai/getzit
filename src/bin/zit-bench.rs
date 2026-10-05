@@ -165,7 +165,8 @@ impl<'a> Graph<'a> {
             self.json(&args)
         } else {
             let id = self.repo.resolve(change).expect("resolve");
-            json!(accept::accept_with(&self.repo, &id, &accept::Policy { allow_stale, rerun: false }).expect("accept"))
+            json!(accept::accept_with(&self.repo, &id, &accept::Policy { allow_stale, ..Default::default() })
+                .expect("accept"))
         };
         match outcome["outcome"].as_str() {
             Some("accepted") => "first-try".to_string(),

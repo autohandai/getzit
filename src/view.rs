@@ -152,6 +152,10 @@ pub fn detail_text(d: &Detail) -> String {
     if let Some(summary) = &c.summary {
         let _ = writeln!(out, "reported {}", summary.replace('\n', "\n         "));
     }
+    if let Some(u) = &c.usage {
+        let cost = u.cost_usd.map(|c| format!(", ${c:.4}")).unwrap_or_default();
+        let _ = writeln!(out, "usage    {} tokens in, {} out{cost}", u.input_tokens, u.output_tokens);
+    }
     let _ = writeln!(
         out,
         "agent    {}{}",
