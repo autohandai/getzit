@@ -66,6 +66,8 @@ Or take a prebuilt binary for macOS (arm64, x86_64) or Linux (x86_64, arm64) fro
 |---|---:|---:|
 | 5 contributors, 206 MB of npm dependencies: disk | 1,619 MB (worktree + `npm ci` each) | 327 MB |
 | 10 contributors, 30,000-file repository: disk | 1,390 MB (worktrees) | 98 MB |
+| 5 Claude Code agents, same task, same prompt: changes landed (2 rounds) | 4 of 10 | 10 of 10 (with claims) |
+| Same: cost per landed change, from Claude Code's own figures | $2.54 | $1.01 |
 | 10 Claude Code agents, one prompt, a real Rust repository: changes landed | 1 | 5 (one run each) |
 | 20 scripted git clients + 20 agents on the same 20 Markdown files | | 40 of 40 landed (one run) |
 | Integration time against a plain merge loop, cheap checks | 1× | 2.2× slower |

@@ -3,7 +3,21 @@ title: Lessons
 description: What broke when real agents and developers used Zit on real repositories, and what changed because of it.
 ---
 
-The best test of Zit is agents doing real work. Three experiments so far. The full records, with every number and the test that now covers each fix, are in `lessons_learnt/` in the repository.
+The best test of Zit is agents doing real work. Four experiments so far. The full records, with every number and the test that now covers each fix, are in `lessons_learnt/` in the repository.
+
+## Lesson 04: claims, not the prompt, split the work
+
+Lesson 01 added claims and a coordination prompt together, so it could not say which helped. Here both arms get the same coordination prompt; only one can use `zit claim`. Five Claude Code agents, the same documentation task on the router, two interleaved rounds per arm.
+
+| | prompt only | prompt + claims |
+|---|---:|---:|
+| Landed | **4 of 10** (6 refused: agents rewrote the same files) | **10 of 10** |
+| Files edited by more than one agent | 6, 5 | 0, 0 |
+| Agents' cost (Claude Code's own figure) | $10.18 | $10.09 |
+| **Cost per landed change** | **$2.54** | **$1.01** |
+| Blind model judge, mean score of what landed (1–5) | 3.75 | 3.80 |
+
+Told to "work on a different part", agents without claims still picked the same files: every refused change collided on the same deployment guides. With claims, none overlapped. The same money bought 2.5× the landed work, at the same judged quality. Small (two rounds per arm, one repository, documentation only, a model judge), but large and consistent. Full record: `lessons_learnt/lesson_04.md`.
 
 ## Lesson 03: 20 developers and 20 agents on the same 20 files
 
