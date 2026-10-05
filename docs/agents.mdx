@@ -125,7 +125,7 @@ autohand --zit "Add a Usage section to README.md"
 autohand --zit -p "Add a short Usage section to README.md" --yes
 ```
 
-It runs `zit init` if the repository has none, materialises a workspace, and works there. Its file tools claim each file before writing it: if another agent holds the file, the tool writes nothing and tells the model who holds it, so the model picks other work or stops. Edits made through the shell are covered only by the instruction to run `zit claim` first. When the session ends (normally, on Ctrl-C, or after an error) records the workspace as a change with the model's final message as its reason. `--zit` cannot be combined with `--worktree` or `--tmux`. It finds `zit` on `PATH` or through `ZIT_BIN`.
+It runs `zit init` if the repository has none, materialises a workspace, and works there. Its file tools claim each file before writing it: if another agent holds the file, the tool writes nothing and tells the model who holds it, so the model picks other work or stops. Edits made through the shell are covered only by the instruction to run `zit claim` first; sub-agents that start their own runtime, and writes outside the workspace, are not claimed. When the session ends (normally, on Ctrl-C, or after an error) records the workspace as a change with the model's final message as its reason. `--zit` cannot be combined with `--worktree` or `--tmux`. It finds `zit` on `PATH` or through `ZIT_BIN`.
 
 Run end to end with a compiled build: a real model turn recorded a change with its reason, and the original checkout was untouched. With two sessions started on the same file, the second was refused at its write tool, wrote nothing and stopped. It is on Autohand Code's `zit-sessions` branch and not in a released version yet.
 
