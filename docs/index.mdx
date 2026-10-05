@@ -21,11 +21,13 @@ Most developers are not there yet: most who use agents run one at a time. But th
 
 ## Install and run
 
-The repository is private for now ([autohandai/getzit](https://github.com/autohandai/getzit)); both routes need access to it.
+Prebuilt binaries for macOS (arm64, x86_64) and Linux (x86_64, arm64) are on the [releases page](https://github.com/autohandai/getzit/releases), each with a SHA-256 checksum. The repository is private for now, so downloading them needs access to it.
 
 ```sh
-# The binary CI built from the last commit on main (macOS arm64):
-gh run download -R autohandai/getzit -n zit-macos-arm64 && tar xzf zit-macos-arm64.tar.gz && mv zit git-zit ~/.local/bin/
+# macOS on Apple silicon; use x86_64-apple-darwin, x86_64-unknown-linux-gnu or aarch64-unknown-linux-gnu elsewhere
+gh release download v0.1.0 -R autohandai/getzit -p 'zit-v0.1.0-aarch64-apple-darwin.tar.gz*'
+shasum -a 256 -c zit-v0.1.0-aarch64-apple-darwin.tar.gz.sha256
+tar xzf zit-v0.1.0-aarch64-apple-darwin.tar.gz && mv zit-v0.1.0-aarch64-apple-darwin/{zit,git-zit} ~/.local/bin/
 
 # Or build it (Rust 1.88+). The setting lets cargo use your git credentials for the private repository:
 CARGO_NET_GIT_FETCH_WITH_CLI=true cargo install --git https://github.com/autohandai/getzit --locked
@@ -55,10 +57,11 @@ Each `run` starts the agent's headless mode (`autohand -p`, `claude -p`, `codex 
 
 | | |
 |---|---|
-| Commit | [`4225a09`](https://github.com/autohandai/getzit/commit/4225a09fe3ce2968636aa28da08f35d9324e5a84) zit run: no second wait after the agent's group was killed |
+| Commit | [`f9924bf`](https://github.com/autohandai/getzit/commit/f9924bf81ff77339d20d56d5247549bf4769ffc8) Changelog for 0.1.0 |
 | macOS (arm64): fmt, clippy, tests, binary | **success** |
-| Linux (x86_64): build and tests, plain checkouts (no copy-on-write) | **success** |
-| Finished | 2026-10-05T01:05:44Z ([run](https://github.com/autohandai/getzit/actions/runs/37249740988)) |
+| Linux (x86_64): build and tests, plain checkouts (no copy-on-write) | **success
+success** |
+| Finished | 2026-10-05T07:44:21Z ([run](https://github.com/autohandai/getzit/actions/runs/37278858420)) |
 
 From [autohandai/getzit](https://github.com/autohandai/getzit) CI, written into this page by `scripts/last-build.sh`.
 {/* last-build:end */}
