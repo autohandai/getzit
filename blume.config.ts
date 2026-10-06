@@ -17,6 +17,7 @@ export default defineConfig({
       { label: "How it works", items: ["concepts", "science", "research"] },
       { label: "Evidence", items: ["benchmarks", "lessons", "limits"] },
       { label: "Reference", items: ["cli", "checks", "spec"] },
+      { label: "Roadmap", items: ["roadmap"] },
     ],
   },
 });

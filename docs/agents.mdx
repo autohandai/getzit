@@ -29,7 +29,7 @@ With no command after `--`, these presets are used, with `--intent` as the promp
 |---|---|
 | `autohand` | `autohand -p <intent> --yes --output-format stream-json` |
 | `claude` | `claude -p <intent> --permission-mode acceptEdits --output-format json` |
-| `codex` | `codex exec --json --sandbox workspace-write --output-last-message $ZIT_SUMMARY_FILE --add-dir ~/.zit/<repo> <intent>` |
+| `codex` | `codex exec --json --sandbox workspace-write --output-last-message $ZIT_SUMMARY_FILE --add-dir ~/.zit/<repo>-<hash> <intent>` |
 | `pi` | `pi -p <intent>` |
 
 The first three run in the agent's JSON mode. `zit run` reads the agent's final message and what the turn cost from that output and prints the final message when the agent is done, instead of the raw events. The same happens when you give such a command yourself (`-- claude -p … --output-format json`).
@@ -43,7 +43,7 @@ zit run --agent my-bot --intent "Fix the flaky test" -- my-bot --task fix-flaky
 | Flag | Effect |
 |---|---|
 | `--from CHANGE` | start from a change other than current |
-| `--accept` | try to accept the recorded change |
+| `--accept` | accept the recorded change, unless the agent was interrupted or timed out |
 | `--timeout SECONDS` | stop the agent after this long; its partial work is still recorded; exit code 124 |
 | `--keep` | leave the workspace in place |
 | `--json` | print a report; the agent's stdout goes to stderr |
@@ -66,13 +66,13 @@ The numbers are the agent's own; Zit adds nothing. They are stored as `Zit-Token
 
 ### What the agent says is kept
 
-Agents end a session by saying what they did and why. `zit run` keeps that with the change: it passes the agent's output through to you as usual and stores the end of it, at most 8,000 characters, with colour codes removed. An agent can instead write its account to `$ZIT_SUMMARY_FILE`, which takes precedence; the `codex` preset does this with `--output-last-message`. The account is the body of the change's commit message, so `zit show`, the [web view](/web) and `git log` all show it.
+Agents end a session by saying what they did and why. `zit run` keeps that with the change: it passes the agent's output through to you as usual and stores the end of it, the last 8,000 bytes, with colour codes removed. An agent can instead write its account to `$ZIT_SUMMARY_FILE`, which takes precedence; the `codex` preset does this with `--output-last-message`. The account is the body of the change's commit message, so `zit show`, the [web view](/web) and `git log` all show it.
 
 The agent's environment:
 
 | Variable | Value |
 |---|---|
-| `ZIT_WORKSPACE` | its workspace id, so `zit claim`, `zit read` and `zit record` need no arguments |
+| `ZIT_WORKSPACE` | its workspace id, so `zit claim`, `zit read` and `zit record` need no `--workspace` |
 | `TMPDIR` | a temp directory of its own, deleted with the workspace |
 | `ZIT_SUMMARY_FILE` | where it may write its account of the work |
 | `ZIT_CACHE_DIR` | a directory shared by every agent and check of this repository, for build caches |
@@ -94,7 +94,7 @@ Measured with 20 git developers and 30 agents on one repository: with these rule
 
 The agent needs permission to run `zit claim` and `zit status`. With Claude Code: `--allowedTools "Bash(zit claim:*)" "Bash(zit status:*)"`.
 
-A claim is refused when the resource is claimed by another open workspace, is being written by one, or was written by a change that is not accepted yet. What open workspaces are writing is recomputed at most every 2 seconds, so a claim may be decided on a picture up to 2 seconds old. Generated files declared in `zit.toml` cannot be claimed; they are rebuilt on compose. Claims prevent wasted work; they guarantee nothing. What lands is still decided at `accept` (ADR 11).
+A claim is refused when the resource is claimed by another open workspace, is being written by one, or was written by a change that is not accepted yet. What open workspaces are writing is recomputed at most every 2 seconds, so a claim may be decided on a picture up to 2 seconds old. Generated files declared in `zit.toml` are never held: claiming one blocks no one, because they are rebuilt on compose; they are rebuilt on compose. Claims prevent wasted work; they guarantee nothing. What lands is still decided at `accept` (ADR 11).
 
 ### Stopping an agent
 
@@ -201,6 +201,6 @@ The agent name recorded on a change defaults to the MCP client's own name.
 
 ## Things to know
 
-- **Agent state files are recorded.** Autohand wrote `.autohand/memory/index.json` into its workspace and it became part of the change. Add such paths to `.gitignore`.
+- **Agent state files.** Autohand's and Claude Code's session state (`.autohand/memory/`, `.autohand/*.local.json`, `.autohand/session-permissions.json`, `.claude/settings.local.json`) is never recorded. Other agents' state files are; add them to `ignore` in `zit.toml`.
 - **MCP workspaces are outside the project directory** (under `~/.zit`). Whether the agent may write there is up to the agent's permission settings.
 - **Reads are not tracked automatically.** Zit infers them from the code a change wrote. An agent that relied on something it did not reference in code should declare it with `zit_read` or `zit read`.

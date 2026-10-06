@@ -157,7 +157,7 @@ def conclusions(life, wf, big):
         biggest = max(r["files"] for r in rows)
         pick = {r["arm"]: r for r in rows if r["files"] == biggest and r["concurrent"] == max(x["concurrent"] for x in rows)}
         out += [
-            f"**Creating workspaces is {lo:.1f}x to {hi:.1f}x faster with copy-on-write clones**, and uses far less disk "
+            f"**On APFS, creating workspaces is {lo:.1f}x to {hi:.1f}x faster with copy-on-write clones**, and uses far less disk "
             f"({pick['zit-clone']['disk_mb']:,.0f} MB against {pick['worktree']['disk_mb']:,.0f} MB for {pick['worktree']['concurrent']} workspaces of {biggest:,} files). "
             "Without cloning, zit creates workspaces at the same speed as `git worktree`. Deleting workspaces takes about as long either way.", ""]
     for report in (wf, big):

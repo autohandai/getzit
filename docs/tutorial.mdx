@@ -31,6 +31,7 @@ Usage: git zit [OPTIONS] <COMMAND>
 Commands:
   init         Start the graph in this git repository; REV becomes the current state
   materialise  Create a disposable workspace holding a state; prints its path
+  …
   claim        Claim resources you intend to write; refused if other unaccepted work holds them
   record       Snapshot a workspace into a change
   status       Everything that exists: current, speculative changes, workspaces
@@ -59,14 +60,16 @@ current is e6d498aea2
 A `zit.toml` at the root of the repository lists the checks a state must pass before it can become current. It is a normal committed file, so commit it with git and bring that commit in:
 
 ```toml zit.toml
+# Files tools leave behind that should never be part of a change.
+ignore = [".coverage"]
+
 [[check]]
 name = "tests"
 run = "python3 -m pytest -q"
 inputs = ["shop", "tests"]
-
-# Files tools leave behind that should never be part of a change.
-ignore = [".coverage"]
 ```
+
+Top-level keys such as `ignore` go before the first `[[check]]`; anything after it belongs to that check. Zit rejects keys it does not know.
 
 ```console
 $ git add zit.toml && git commit -m "Add zit checks"
@@ -101,7 +104,7 @@ $ git zit materialise --agent ana --intent "Tax is 20%"
 ~/.zit/shop-8bdbd4d96eb6bdd8/ws/cfeffbdb/tree
 ```
 
-That directory is a disposable copy of the current state. On macOS it is a copy-on-write clone: it took no extra disk for files you do not edit. It is a working git directory, but not a worktree and not a branch. Edit there with anything, then record from inside it:
+That directory is a disposable copy of the current state. On APFS (macOS), and on btrfs or XFS with reflink (Linux), it is a copy-on-write clone: it took no extra disk for files you do not edit. It is a working git directory, but not a worktree and not a branch. Edit there with anything, then record from inside it:
 
 ```console
 $ git zit record --dispose
@@ -159,6 +162,7 @@ $ git zit accept origin/readme-currency
 current is 55fdcf6902 (fast-forward; checks: 0 run, 1 reused)
 
 $ git zit export --branch main
+main is 55fdcf6902
 $ git push -q origin main
 ```
 
@@ -180,7 +184,7 @@ $ git zit show 6212a64f71
 status   speculative
 agent    claude
 wrote    shop/pricing.py#discount
-wrote    tests/test_pricing.py#
+wrote    tests/test_pricing.py#             (today: tests/test_pricing.py#(imports); recorded before imports became their own unit)
 wrote    tests/test_pricing.py#test_discount
 check    tests: no evidence
 
@@ -188,7 +192,7 @@ $ git zit accept 6212a64f71
 current is 6212a64f71 (fast-forward; checks: 1 run, 0 reused)
 ```
 
-`zit show` also prints what the agent reported at the end of its session (`reported …`): Zit keeps the agent's final account with the change, and it becomes the body of the commit when you export.
+`zit show` also prints what the agent reported at the end of its session (`reported …`): Zit keeps the agent's final account as the body of the change's commit, so it is in the history you export.
 
 With `--agent autohand`, `claude`, `codex` or `pi` and no command, Zit uses that agent's headless mode with `--intent` as the prompt. The session above used Claude Code with an explicit command; with a preset it is just `git zit run --agent autohand --intent "…"`. For agents that should coordinate with each other, give them the MCP server or the claim rules in [Agents](/agents).
 
@@ -217,7 +221,7 @@ git zit clean                                                          # every l
 git for-each-ref refs/zit --format='delete %(refname)' | git update-ref --stdin   # the graph
 ```
 
-Your branches, history and working tree were never touched, so this leaves the repository exactly as plain git had it.
+Your branches, history and working tree were never touched. What remains is the evidence ledger in the git directory (`rm -rf "$(git rev-parse --git-dir)/zit"`) and the objects Zit wrote, which `git gc` removes once nothing refers to them.
 
 ## Next
 

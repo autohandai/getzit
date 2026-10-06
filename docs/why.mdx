@@ -5,7 +5,7 @@ description: The problem Zit solves, the problems it does not, and how much disk
 
 ## The problem
 
-Coding agents mean more contributors on one repository at the same time: more sessions, more changes, overlapping more often ([the measurements](/)). Give one repository to many contributors at once and four things go wrong, whatever tool you use:
+Coding agents mean more contributors on one repository at the same time: more sessions, more changes, overlapping more often ([the measurements](/research)). Give one repository to many contributors at once and four things go wrong, whatever tool you use:
 
 1. **Every contributor needs a copy.** A `git worktree` or a clone per contributor rewrites every file, and then each one installs its own dependencies.
 2. **Work collides late.** You find out two people did the same thing, or changed things that cannot coexist, when you merge. By then both have finished.
@@ -17,8 +17,8 @@ Coding agents mean more contributors on one repository at the same time: more se
 | Problem | What Zit does | Measured |
 |---|---|---|
 | A copy per contributor | Workspaces are copy-on-write clones of one cached checkout. Dependencies are installed once (`[prepare]`) and cloned too. | 5 contributors with 206 MB of dependencies: **327 MB instead of 1,619 MB**, set up in **1.5 s instead of 10.2 s** |
-| Collisions found late | Contributors can claim what they will change and see what everyone else is changing right now. | 5 agents, same task and prompt, with and without claims: **10 of 10 landed instead of 4 of 10**, **$1.01 instead of $2.54** per landed change, same judged quality ([Lesson 04](/lessons)) |
-| Merges that only see lines | Each change records what it wrote, function by function, and what it read. A change that relied on something that has since changed is refused, with the reason. The combined result must pass your checks before it becomes current. | In 1,000 scripted changes, **every merge that would have broken a check (119 of 119) was refused before it merged** |
+| Collisions found late | Contributors on one machine can claim what they will change and see what the others are changing right now. | 5 agents, same task and prompt, with and without claims: **10 of 10 landed instead of 4 of 10**, **$1.01 instead of $2.54** per landed change, same judged quality ([Lesson 04](/lessons)) |
+| Merges that only see lines | Each change records what it wrote, function by function, and what it read. A change that relied on something that has since changed is refused, with the reason. The combined result must pass your checks before it becomes current. | In 1,000 scripted changes, **every merge that would have broken a check (119 of 119) was refused before it merged** (measured before ADR 16's interface-only rule) |
 | Generated files and docs | A generated file is rebuilt on the combined state instead of conflicting. Two edits to one Markdown section merge if their text does. | 20 developers on a catalogue repo: **20 of 20 landed**, against **12 of 20** before this rule |
 | Lost reasons | A change keeps its author's account when there is one: an agent's final message, captured by `zit run`, a `--summary`, or a git commit's body. It travels with the change into the exported history. | All 20 agents' accounts captured in the router run; the 20 developers there were scripts with pre-written messages ([Lessons](/lessons)) |
 | Integrating agents and people | One integration path for both: a developer's pushed branch and an agent's recorded change are accepted the same way. | **20 scripted git clients + 30 real agents** (Claude Code and Codex), one run, on one repository: **46 of 50 landed, 3 correctly did nothing** because their task was already done, final state valid |

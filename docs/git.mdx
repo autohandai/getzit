@@ -9,7 +9,7 @@ description: Zit lives inside a git repository, reads any commit as a change, an
 
 ## What Zit adds to a repository
 
-Refs under `refs/zit/`, and the objects they point to. Nothing else.
+Refs under `refs/zit/`, the objects they point to, and a local ledger in `.git/zit/` that is never pushed.
 
 | Ref | Points to |
 |---|---|
@@ -17,7 +17,7 @@ Refs under `refs/zit/`, and the objects they point to. Nothing else.
 | `refs/zit/changes/<id>` | a speculative change (a commit) |
 | `refs/zit/evidence/<key>` | an evidence record (a blob) |
 
-It does not create branches, register worktrees, or touch your checkout — except `export`/`sync` to a branch you have checked out, which fast-forwards its files.
+It creates or moves a branch only when you `export` or `sync` to it, register worktrees, or touch your checkout — except `export`/`sync` to a branch you have checked out, which fast-forwards its files.
 
 ## In: any commit is a change
 
@@ -97,7 +97,7 @@ A change accepted onto a moved current then becomes one commit on top of it, not
 
 ### Who committed, and signatures
 
-The author of a change is its agent; the committer is you, from git's `user.name` and `user.email`. With `commit.gpgsign` set, every commit Zit writes is signed with your key (GPG or SSH, as git is configured). Tested in `tests/teams.rs`.
+The author of a change is its agent; the committer is you, from git's `user.name` and `user.email`. With `commit.gpgsign` set (any spelling git accepts as true), every commit Zit writes is signed with your key, as git is configured to sign. Tested with an SSH key in `tests/teams.rs`.
 
 ### CI
 

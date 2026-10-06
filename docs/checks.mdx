@@ -35,7 +35,7 @@ Exit code 0 is a pass. The command's environment:
 | Variable | Value |
 |---|---|
 | `ZIT_CHANGE`, `ZIT_STATE` | what is being checked |
-| `TMPDIR` | an empty temp directory of its own |
+| `TMPDIR` | a temp directory of its own, emptied before each verification (not between the checks of one verification) |
 | `ZIT_CACHE_DIR` | a directory that outlives workspaces, shared with agents |
 
 ## Where checks run
@@ -70,7 +70,7 @@ Failures are stored too: a known-failing state is rejected without re-running. F
 ## Limits
 
 - **A change cannot weaken its own gate.** `accept` runs the checks declared by current *and* those declared by the change. A change that rewrites `run = "cargo test"` as `run = "true"` still has to pass `cargo test`. It can add checks, not remove them.
-- **`zit.toml` is still code.** Every `run`, `derive` and `prepare` command executes with your privileges. A change's own new checks and `[[derive]]` commands run when you check or accept it, and its `[prepare]` runs when anyone materialises it (`--from`, `zit retry`). A change that edits `zit.toml` shows it in its write set; read it before accepting or building on it.
+- **`zit.toml` is still code.** Every `run`, `derive` and `prepare` command executes with your privileges. A change's own new checks and `[[derive]]` commands run when you check or accept it, and its `[prepare]` runs when anyone materialises it (`--from`) and when it is checked or accepted (in a verification view). A change that edits `zit.toml` shows it in its write set; read it before accepting or building on it.
 - **A check that times out or is killed is not remembered.** Its result is reported but not stored as evidence, so the next accept runs it again instead of trusting a failure the code did not cause.
 
 - `inputs` is trusted. If a check reads files it did not declare, it can be reused when it should not be.
@@ -87,7 +87,7 @@ path = "registry.json"
 run = "python3 scripts/generate_registry.py"
 ```
 
-Writes to `path` never make a change stale, conflicts inside it do not count, and nobody can claim it. When a change is composed onto current, `run` is executed on the composed state and its output for `path` is what lands. A failing `run` rejects the change as `failed: derive registry.json`. (ADR 12)
+Writes to `path` never make a change stale, conflicts inside it do not count, and claims on it never block anyone. When a change is composed onto current, `run` is executed on the composed state and its output for `path` is what lands. A failing `run` rejects the change: `rejected: failed checks: derive registry.json`. (ADR 12)
 
 ## Dependencies
 
@@ -114,7 +114,7 @@ Read from current, so it applies to everyone who accepts. Same as `zit accept --
 ignore = ["agent-notes/", "*.log"]
 ```
 
-Files agents and tools leave behind that should never be part of a change, in gitignore syntax. Added to your own global excludes and to built-in patterns for files that are never source: `.DS_Store`, `__pycache__/`, `*.py[cod]`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `*.swp`. Tracked files are never hidden. (ADR 13)
+Files agents and tools leave behind that should never be part of a change, in gitignore syntax. Added to your own global excludes and to built-in patterns for files that are never source: `.DS_Store`, `__pycache__/`, `*.py[cod]`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `*.swp`, and coding agents' session state (`.autohand/memory/`, `.autohand/*.local.json`, `.autohand/session-permissions.json`, `.claude/settings.local.json`). Tracked files are never hidden. (ADR 13)
 
 ## A complete example
 

@@ -1,0 +1,48 @@
+---
+title: Roadmap
+description: What is planned for Zit, why, and what each item depends on. Plans, not promises; no dates.
+---
+
+Each item below is a known gap: it is listed on [Limits](/limits) or came out of the review in `feedback/review-01.md`. Status is as of 0.1.0. Nothing here is built until it says so, and the order is the current priority, not a schedule.
+
+## Distribution
+
+| Item | Why | Status |
+|---|---|---|
+| Publish the crate, so `cargo install zit` works | The repository is private; today Zit installs from a release binary or from git with access | Ready (`cargo publish --dry-run` passes); needs a crates.io token |
+| Release Autohand Code with `autohand --zit` | Built and run end to end on Autohand Code's `zit-sessions` branch | Waiting on Autohand Code's release |
+| Publish the Pi extension (`pi install npm:pi-zit`) | Installs from a local path today | Package ready; needs npm publishing, and a live model turn to verify the tools |
+| Windows | Claude Code and Cursor run there; Zit is Unix-only (signals, `libc`) | Not started |
+
+## Correctness
+
+| Item | Why | Status |
+|---|---|---|
+| Resolve references by path and import, not only by name | A mention of `Config` depends on every `Config` in the repository ([Limits](/limits#semantics)) | Not started |
+| More languages with symbol granularity (Java, C#, C++, Kotlin, Ruby, PHP, Swift) | Files in those languages are one resource with no inferred reads | Not started |
+| Re-measure false refusals | The 21–23% figure predates the interface-only staleness rule (ADR 16) | Not started |
+| Signed evidence | Fetched check results are untrusted by default; trusting them (`zit.trustFetchedEvidence`) trusts whoever can push refs | Not started |
+| Run `[[derive]]` and `[prepare]` only from trusted states | A change's own `zit.toml` commands run when you accept or materialise it | Not started |
+| Keep agents' branches, tags and stashes out of the real repository | A workspace shares the repository's refs | Not started |
+| Stop children of interactive agents | Headless runs stop the agent's process group; interactive runs stop only the agent | Not started |
+
+## Scale and teams
+
+| Item | Why | Status |
+|---|---|---|
+| Claims across machines | Claims and live write sets are local to one machine | Not started |
+| Verify non-conflicting changes as one batch | Changes are verified one at a time; merge queues batch ([Compared](/compare)) | Not started |
+| An integrator for CI (for example a GitHub Action) | Today you run `zit accept` in a job yourself | Not started |
+| Stable-path workspaces for compiled projects | Each workspace is at a new path, so Cargo and similar tools rebuild per workspace (about 1.9 GB after ten Rust agents, Lesson 01) | Not started |
+| Usage from Autohand Code and Pi | Only Claude Code (tokens and dollars) and Codex (tokens) report it to `zit run` | Not started |
+
+## Evidence
+
+| Item | Why | Status |
+|---|---|---|
+| Repeat the experiments on other repositories, languages and machines | Every real-agent result so far is from one or two runs on one Mac ([Lessons](/lessons)) | Not started |
+| Human review of what landed | Quality has been scored only by a blind model judge (Lesson 04) | Not started |
+| A pnpm baseline for the dependency benchmark | The 327 MB against 1,619 MB comparison is against `npm ci` per worktree | Not started |
+| Linux disk benchmark with real dependencies | The Linux runs use a synthetic repository of small files | Not started |
+
+To propose or take on an item, open an issue ([CONTRIBUTING.md](https://github.com/autohandai/getzit/blob/main/CONTRIBUTING.md)).

@@ -104,6 +104,6 @@ Tokens and cost were not captured, and the two results were not compared for qua
 ### What is still open
 
 - Each agent on a compiled project rebuilds the project at its own path. A pool of agent workspaces at stable paths is designed but not built.
-- One duplicate still got through in round 2. The fix (what a workspace is writing counts as held, claimed or not) has tests but has not been re-run with agents.
+- One duplicate still got through in round 2. The fix (what a workspace is writing counts as held, claimed or not) has tests (`unclaimed_in_flight_writes_are_held_too`); later runs (Lessons 02 to 04) used it, but none provoked an agent writing without a claim.
 - Ports and global caches are still shared between agents on one machine.
 - Zit has nowhere to put a question every agent on a task should see answered once. All ten agents separately reported that "our SDK" does not exist in the repository.

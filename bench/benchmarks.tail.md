@@ -4,7 +4,7 @@
 
 ## Not measured
 
-- Language-model agents at scale. Section 4 is three agents, one task each.
-- Any platform other than macOS on APFS. On a filesystem without clones, expect the `zit-checkout` rows of section 1.
+- Language-model agents beyond 30 at once on one machine. Section 4 is three agents, one task each; section 6 has 30.
+- Real-agent and workflow runs on Linux; XFS (tested in CI, not benchmarked); Linux with real dependencies.
 - Repositories above 30,000 files, and more than 100 concurrent agents or 1,000 speculative changes.
 - Checks that take minutes. Here a check takes tens of milliseconds, which makes Zit's fixed per-accept cost as visible as it can be.

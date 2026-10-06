@@ -4,11 +4,16 @@ All notable changes to Zit. Versions follow [Semantic Versioning](https://semver
 
 ## Unreleased
 
+- CI runs every test on XFS with reflinks as well as btrfs.
+- Unknown keys in `zit.toml` are an error instead of being ignored.
+- `commit.gpgsign` is read as git reads booleans (`yes`, `on`, `1` sign too).
+- The `Zit-Change` trailer of a linear compose no longer shows up in the change's account.
+
 ## 0.1.0 - 2026-10-05
 
 First release.
 
-- Copy-on-write workspaces from one cached checkout: APFS on macOS; btrfs and XFS with reflink on Linux (reflinks, tested in CI); a plain checkout elsewhere. Dependencies installed once with `[prepare]`.
+- Copy-on-write workspaces from one cached checkout: APFS on macOS; reflinks on Linux (btrfs tested in CI); a plain checkout elsewhere. Dependencies installed once with `[prepare]`.
 - Changes recorded as git commits in `refs/zit/*`, with symbol-level footprints for Rust, Python, JavaScript, TypeScript, Go and Markdown sections: methods as `Type::method`, imports as their own unit, member calls on values not counted as references, and readers made stale only by an interface change.
 - Coding agents' session state (`.autohand/memory/`, `.claude/settings.local.json`, …) is never part of a change; `zit record` names source files it cannot parse.
 - `zit accept`: compose onto current, refuse changes that relied on an interface that changed (signatures, not bodies), regenerate `[[derive]]` files, run current's checks and the change's own, move current atomically. `--linear` and `[accept] linear = true` for linear history.

@@ -64,7 +64,7 @@ A and B were made concurrently and touch different symbols, so accepting B after
 
 ## Staleness
 
-A speculative change is **stale** when, since the point where it and current diverged, current wrote something the change read or wrote, or the change wrote something current read.
+A speculative change is **stale** when, since the point where it and current diverged, current wrote something the change read or wrote, or the change wrote something current read. A read inferred from a name counts only when the symbol's interface changed; a declared read counts for any change. Concurrent writes to Markdown sections and to imports are left to the text merge, and generated files never count.
 
 ```mermaid
 sequenceDiagram

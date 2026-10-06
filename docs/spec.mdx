@@ -3,7 +3,7 @@ title: Specification
 description: Formats, algorithms and invariants of Zit 0.1.
 ---
 
-Normative for version 0.1. The reasons behind each part are recorded as architecture decision records (ADR 1 to ADR 14) in the `adr/` folder of the repository. Each rule names the test that enforces it where one exists.
+Normative for version 0.1. The reasons behind each part are recorded as architecture decision records (ADR 1 to ADR 17) in the `adr/` folder of the repository. Each rule names the test that enforces it where one exists.
 
 ## 1. Objects
 
@@ -120,18 +120,20 @@ flowchart TD
     H -- won --> OK[accepted]
 ```
 
-`footprints conflict` compares `footprint(merge-base, change)` with `footprint(merge-base, current)`, then drops conflicts on paths declared as `[[derive]]` and write-write conflicts on Markdown files. `git merge-tree clean?` ignores conflicts inside `[[derive]]` paths. (ADR 12)
+`footprints conflict` compares `footprint(merge-base, change)` with `footprint(merge-base, current)`, then drops conflicts on paths declared as `[[derive]]` and write-write conflicts on Markdown files and on `(imports)`. `git merge-tree clean?` ignores conflicts inside `[[derive]]` paths. (ADR 12)
 
 ### 4.1 zit.toml
 
 | Key | Meaning |
 |---|---|
 | `[[check]]` `name`, `run`, `inputs` | a check; see [zit.toml](/checks) |
+| `[[check]]` `timeout` | seconds before the check is stopped and failed; default 1800 |
 | `[[derive]]` `path`, `run` | a generated file, rebuilt on compose |
 | `[prepare]` `run`, `inputs` | dependency install, run in the cached checkout, keyed by `inputs` |
 | `ignore` | extra gitignore patterns for every workspace |
+| `[accept]` `linear` | compose without merge commits |
 
-The config is read from the state being acted on: the composed state for `derive` and checks, the materialised state for `prepare` and `ignore`.
+Unknown keys are an error. The config is read from the state being acted on: at accept, checks come from current and from the composed state, `derive` from the composed state, and `[accept]` from current; `prepare` and `ignore` from the materialised state.
 
 ## 5. Workspace
 
@@ -157,7 +159,7 @@ In-flight writes are `footprint(base state, snapshot)`, where the snapshot is ta
 
 ### 5.2 Verification views
 
-`$ZIT_HOME/<repo>/verify/<n>/`, `n` in `0..8`, each guarded by an exclusive lock on `<n>.lock`. Moving a view to a change: `git reset --hard <change>`, `git clean -fd`, empty its `tmp/`. (ADR 10)
+`$ZIT_HOME/<repo>-<hash>/verify/<n>/`, `n` in `0..8`, each guarded by an exclusive lock on `<n>.lock`. Moving a view to a change: `git reset --hard <change>`, `git clean -fd`, empty its `tmp/`. (ADR 10)
 
 ## 6. Interfaces
 
@@ -170,7 +172,7 @@ The command is `zit`; `git-zit` is the same program for `git zit …`. Refs are 
 | Code | Meaning |
 |---|---|
 | 0 | done |
-| 1 | a negative answer: accept rejected, a check failed |
+| 1 | a negative answer: accept rejected, a check failed, a claim refused |
 | 2 | an error: not a repository, not initialised, unknown id, bad usage |
 | 124 | `zit run --timeout` expired |
 | other | `zit run`: the agent's exit code, or `128 + signal` |
@@ -188,7 +190,8 @@ Every command accepts `--json`.
 | `ZIT_WORKSPACE` | set by `zit run` for the agent; default workspace for `record`, `read` and `claim` |
 | `TMPDIR` | set for agents and checks: a private directory inside the workspace's directory |
 | `ZIT_SUMMARY_FILE` | set by `zit run`: where the agent may write its account; otherwise the end of its output is used |
-| `ZIT_CACHE_DIR` | set for agents and checks: `$ZIT_HOME/<repo>/shared` |
+| `ZIT_GH` | the GitHub CLI used by `export --pr`; default `gh` |
+| `ZIT_CACHE_DIR` | set for agents and checks: `$ZIT_HOME/<repo>-<hash>/shared` |
 | `ZIT_TRACE` | print each git call and its duration to stderr (batch read sessions excluded), and workspaces whose edits cannot be seen |
 | `ZIT_CHANGE`, `ZIT_STATE` | set for check commands |
 
@@ -205,9 +208,10 @@ Every command accepts `--json`.
 | `/` | the page |
 | `/api/graph` | `{repo, current, mainline: [change…], changes: [change + status + fork + wrote…], workspaces: [workspace + dirty + writes + claims + overlaps + fork…]}` |
 | `/api/change/<id>` | the `show --json` shape plus `diff` |
+| `/fonts/autohand-sans.woff2`, `/fonts/autohand-mono.woff2` | the page's fonts |
 
 (`tests/web.rs`)
 
 ### 6.5 Rust library
 
-`cargo doc --open`. The modules are the primitives: `git` (store), `change`, `footprint`, `workspace`, `evidence`, `accept`, plus `api` (the shapes every interface returns), `run`, `mcp`, `tui`.
+`cargo doc --open`. The modules are the primitives: `git` (store), `change`, `footprint`, `resource`, `symbols`, `workspace`, `claim`, `evidence`, `accept`, `clean`, plus `api` (the shapes every interface returns), `view`, `run`, `mcp`, `tui` and `web`.

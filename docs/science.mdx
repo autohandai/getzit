@@ -62,7 +62,7 @@ sequenceDiagram
 
 **Why git alone is not enough.** A text merge detects one kind of conflict: both sides wrote the same lines (write-write). It cannot see that one side *read* what the other wrote. Databases call the resulting anomaly **write skew** (Berenson et al., 1995): each transaction is consistent alone, they touch different rows, and together they break an invariant. A "semantic merge conflict" — one agent changes a function's signature while another adds a call to it in a different file — is write skew. Detecting it requires read sets. That is the reason Zit tracks them.
 
-**What is guaranteed.** If read sets were complete, the accepted history would be equivalent to running the changes one at a time in acceptance order. They are not complete (next section), so Zit runs the checks on the composed state before current moves. Validation catches what it can name; checks catch the rest.
+**What is guaranteed.** If declared read sets were complete, the accepted history would be equivalent to running the changes one at a time in acceptance order. Inferred reads deliberately ignore body-only changes (ADR 16), which is why the checks run on the composed state before current moves. They are not complete (next section), so Zit runs the checks on the composed state before current moves. Validation catches what it can name; checks catch the rest.
 
 ## 3. Granularity: symbols, found by parsing
 
@@ -71,7 +71,7 @@ sequenceDiagram
 **In zit.** Each changed file is parsed (tree-sitter) into top-level symbols. A symbol is written if the hash of its text changed. A symbol is read if a written symbol mentions its name. This is a deliberate over-approximation:
 
 - It needs no type checker or build, so it works on code that does not compile yet.
-- It matches by name, so it sometimes refuses changes that were fine. Measured: 21–23% of changes in the scripted benchmark; see [Benchmarks](/benchmarks).
+- It matches by name, so it sometimes refuses changes that were fine. Measured: 21–23% of changes in the scripted benchmark (before the interface-only rule of ADR 16; not re-measured); see [Benchmarks](/benchmarks).
 - It cannot see dynamic dispatch or names built at runtime. The checks are the backstop.
 
 ## 4. Memoised evidence: never compute the same answer twice
@@ -80,7 +80,7 @@ sequenceDiagram
 
 **In zit.** A check result is stored under `hash(check, hashes of its input paths)`. Because a path's hash is a Merkle hash (idea 1), "are the inputs unchanged?" is exact and costs one lookup. A change that touches only `docs/` reuses every result whose inputs do not include `docs/`.
 
-**Generated files are outputs, not inputs.** A build system never asks two developers to reconcile a compiled binary; it rebuilds it. A file a script derives from other files is the same. Zit regenerates declared generated files on the composed state instead of treating concurrent writes to them as conflicts (ADR 12). On a catalogue repository, this alone took 20 concurrent developers from 12 landed to 20.
+**Generated files are outputs, not inputs.** A build system never asks two developers to reconcile a compiled binary; it rebuilds it. A file a script derives from other files is the same. Zit regenerates declared generated files on the composed state instead of treating concurrent writes to them as conflicts (ADR 12). On a catalogue repository, this, together with merging Markdown sections as text, took 20 concurrent developers from 12 landed to 20.
 
 ## 5. Copy-on-write snapshots: isolation without copying
 
@@ -150,7 +150,7 @@ To remove the graph refs, delete them all at once: `git for-each-ref refs/zit --
 | **CRDTs** (Shapiro et al., 2011) | Replicas that apply the same edits converge to the same text, with no coordination | Convergence is about the text. It says nothing about whether the converged program is correct. Zit wants a *validated* state, and accepts coordination at one point (acceptance) to get it. |
 | **Patch theories** (Darcs, Pijul; Mimram and Di Giusto, 2013) | Independent patches commute, so order does not matter | Independence is defined on text. Zit defines it on what was read and written. The idea that a change records its dependencies comes from here. |
 | **Merge queues** (for example Uber's SubmitQueue, 2019) | The main branch stays green by testing each candidate before it lands | Zit's `accept` is a merge queue. What it adds is validation before testing, and evidence reuse. |
-| **Locking** (file locks, exclusive checkouts) | Nobody else can touch what you hold | Zit's claims are advisory and lapse on their own. Nothing is ever blocked from being recorded; a claim only tells the next agent to choose other work. |
+| **Locking** (file locks, exclusive checkouts) | Nobody else can touch what you hold | Zit's claims are advisory and lapse when their workspace is disposed. Nothing is ever blocked from being recorded; a claim only tells the next agent to choose other work. |
 
 ## The cost model
 

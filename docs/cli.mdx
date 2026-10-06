@@ -28,7 +28,7 @@ All commands take `--json`. Changes can be named by any unique id prefix, any gi
 | `zit read [--workspace ID] RESOURCE…` | Declare observed resources: `path`, `path#Symbol`, `path#`. |
 | `zit record [--workspace ID] [--intent TEXT] [--summary TEXT] [--read RESOURCE]… [--dispose]` | Snapshot into a change; prints its id. `--summary` is what was done and why. |
 | `zit dispose ID… \| --all` | Delete workspaces. Recorded changes are unaffected. |
-| `zit clean [--force]` | Delete every local copy Zit made for the repository: workspaces, cached checkouts, verification views, caches. Refuses while a workspace has unrecorded edits or a running agent, unless `--force`. The graph is untouched. |
+| `zit clean [--force]` | Delete every local copy Zit made for the repository: workspaces, cached checkouts, verification views, caches. Refuses while a workspace has unrecorded edits or a running agent, or while a clone or verification is in progress, unless `--force`. The graph is untouched. |
 
 Inside a workspace, `record`, `read` and `claim` need no `--workspace`. `status` lists, for each workspace, what it has claimed, what it is writing right now, and overlaps with other unaccepted work.
 
@@ -36,18 +36,18 @@ Inside a workspace, `record`, `read` and `claim` need no `--workspace`. `status`
 
 | Command | Does |
 |---|---|
-| `zit run [--agent NAME] [--intent TEXT] [--from CHANGE] [--keep] [--accept] [--timeout SECONDS] [-- COMMAND…]` | Run a command in a fresh workspace and record its work, its final message and its cost, however it ends. With `--agent autohand\|claude\|codex\|pi` and no command, a preset. |
+| `zit run [--agent NAME] [--intent TEXT] [--session ID] [--from CHANGE] [--keep] [--accept] [--timeout SECONDS] [-- COMMAND…]` | Run a command in a fresh workspace and record its work, its final message and its cost, however it ends. With `--agent autohand\|claude\|codex\|pi` and no command, a preset. |
 | `zit mcp [--integrator]` | Serve the graph over the Model Context Protocol on stdio. `--integrator` adds `zit_accept` and `zit_discard`. |
 | `zit ui` | Interactive list of changes and workspaces, in the terminal. |
 | `zit web [--port 4747] [--no-open]` | [Live graph in the browser](/web). Read-only. |
 
-With `--agent claude`, `codex` or `autohand` and no command, `run` uses that agent's headless invocation with `--intent` as the prompt.
+With `--agent autohand`, `claude`, `codex` or `pi` and no command, `run` uses that agent's headless invocation with `--intent` as the prompt.
 
 ## Git
 
 | Command | Does |
 |---|---|
-| `zit export [--branch main] [--pr [--base main] [--remote origin]]` | Fast-forward the branch to current. `--pr` pushes it and opens a pull request into `--base` with every change's reason (needs `gh`). |
+| `zit export [--branch main] [--pr [--base main] [--remote origin]]` | Fast-forward the branch to current. `--pr` pushes it and opens a pull request into `--base` with every change's reason (needs `gh`); with `--pr`, `--branch` must name a branch other than `--base`, e.g. `zit/ready`. |
 | `zit sync [--branch main]` | Accept the branch into current, then export. |
 
 ## The UI
