@@ -59,8 +59,17 @@ enum Cmd {
     Claim {
         #[arg(long)]
         workspace: Option<String>,
-        #[arg(required = true)]
+        #[arg(required_unless_present = "edit")]
         resources: Vec<String>,
+        /// Claim what an edit to this path would change (by Zit's own index), instead of naming resources.
+        #[arg(long, requires = "content", conflicts_with = "resources")]
+        edit: Option<String>,
+        /// The file's new content, for --edit.
+        #[arg(long, requires = "edit")]
+        content: Option<std::path::PathBuf>,
+        /// With --edit: report the resources the edit would change, claim nothing.
+        #[arg(long, requires = "edit")]
+        dry_run: bool,
     },
     /// Snapshot a workspace into a change.
     Record {
@@ -286,11 +295,32 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
             workspace::declare_reads(&repo, &id, &reads)?;
             emit(json, &serde_json::json!({"declared": reads}), || {})?;
         }
-        Cmd::Claim { workspace, resources } => {
+        Cmd::Claim { workspace, resources, edit, content, dry_run } => {
             let id = workspace_id(&repo, workspace)?;
-            let wanted: Vec<Resource> = resources.iter().map(|r| Resource::parse(r)).collect();
-            let outcome = claim::claim(&repo, &id, &wanted)?;
-            emit(json, &outcome, || match &outcome {
+            let wanted: Vec<Resource> = match (&edit, &content) {
+                (Some(path), Some(content)) => {
+                    if std::path::Path::new(path).components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+                        anyhow::bail!("--edit takes a path inside the workspace, relative to its root: {path}");
+                    }
+                    let ws = workspace::get(&repo, &id)?;
+                    let old = std::fs::read(ws.path().join(path)).ok();
+                    let new = std::fs::read(content)?;
+                    zit::footprint::edit_writes(path, old.as_deref(), &new)
+                }
+                _ => resources.iter().map(|r| Resource::parse(r)).collect(),
+            };
+            if dry_run {
+                emit(json, &serde_json::json!({ "resources": wanted }), || {
+                    wanted.iter().for_each(|r| println!("{r}"))
+                })?;
+                return Ok(OK);
+            }
+            let outcome = if wanted.is_empty() { Claimed::Granted } else { claim::claim(&repo, &id, &wanted)? };
+            let mut shown = serde_json::to_value(&outcome)?;
+            if edit.is_some() {
+                shown["resources"] = serde_json::json!(wanted);
+            }
+            emit(json, &shown, || match &outcome {
                 Claimed::Granted => println!("claimed"),
                 Claimed::Refused(held) => {
                     println!("refused: nothing was claimed");

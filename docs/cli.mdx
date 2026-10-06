@@ -25,6 +25,7 @@ All commands take `--json`. Changes can be named by any unique id prefix, any gi
 |---|---|
 | `zit materialise [--from CHANGE] [--intent TEXT] [--agent NAME] [--session ID]` | Create a workspace; prints its path. |
 | `zit claim [--workspace ID] RESOURCE…` | Claim what you intend to write. Exit 1, naming the holder, if other unaccepted work already holds it. |
+| `zit claim [--workspace ID] --edit PATH --content FILE [--dry-run]` | Claim exactly what writing `FILE` over `PATH` in the workspace would change, as Zit indexes it: the functions, types, methods, imports or Markdown sections that differ, or the whole file if it is new or unparsed. `--dry-run` only lists them. For agent tools that guard their own writes. |
 | `zit read [--workspace ID] RESOURCE…` | Declare observed resources: `path`, `path#Symbol`, `path#`. |
 | `zit record [--workspace ID] [--intent TEXT] [--summary TEXT] [--read RESOURCE]… [--dispose]` | Snapshot into a change; prints its id. `--summary` is what was done and why. |
 | `zit dispose ID… \| --all` | Delete workspaces. Recorded changes are unaffected. |

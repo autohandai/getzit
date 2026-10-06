@@ -75,6 +75,29 @@ impl Footprint {
     }
 }
 
+/// What writing `new` over `old` (absent: a new file) at `path` would change,
+/// by the same index footprints use: symbols, methods, imports and
+/// module-level code; the whole file when it is new or cannot be parsed.
+pub fn edit_writes(path: &str, old: Option<&[u8]>, new: &[u8]) -> Vec<Resource> {
+    let whole = || vec![Resource::File(path.to_string())];
+    let Some(old) = old else { return whole() };
+    if old == new {
+        return vec![];
+    }
+    let index = |body: &[u8]| if body.len() > MAX_PARSE_BYTES { None } else { symbols::index(path, body) };
+    let (Some(before), Some(after)) = (index(old), index(new)) else { return whole() };
+    let mut writes = BTreeSet::new();
+    for name in before.symbols.keys().chain(after.symbols.keys()) {
+        if before.symbols.get(name).map(|u| &u.hash) != after.symbols.get(name).map(|u| &u.hash) {
+            writes.insert(Resource::Symbol(path.to_string(), name.clone()));
+        }
+    }
+    if before.top.hash != after.top.hash {
+        writes.insert(Resource::Top(path.to_string()));
+    }
+    writes.into_iter().collect()
+}
+
 /// Files larger than this are treated as one indivisible resource.
 const MAX_PARSE_BYTES: usize = 1 << 20;
 

@@ -198,3 +198,87 @@ fn a_claim_on_a_type_covers_its_methods() {
     assert!(matches!(claim::claim(&fx.repo, &a.id, &res("src/shape.rs#Shape")).unwrap(), Claimed::Granted));
     assert!(matches!(claim::claim(&fx.repo, &b.id, &res("src/shape.rs#Shape::area")).unwrap(), Claimed::Refused(_)));
 }
+
+/// `zit claim --edit` claims exactly what an edit would change, by zit's own index.
+#[test]
+fn claim_for_an_edit_takes_only_the_symbols_it_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = common::Cli::new(dir.path(), &[("src/lib.rs", LIB)]);
+    cli.run(&["init"]).ok();
+    let theirs = cli.run(&["materialise", "--agent", "them", "--intent", "x"]).ok().stdout.trim().to_string();
+    let theirs_id = std::path::Path::new(&theirs).parent().unwrap().file_name().unwrap().to_str().unwrap().to_string();
+    cli.run(&["claim", "--workspace", &theirs_id, "src/lib.rs#price"]).ok();
+    let ours = cli.run(&["materialise", "--agent", "us", "--intent", "y"]).ok().stdout.trim().to_string();
+    let ours_id = std::path::Path::new(&ours).parent().unwrap().file_name().unwrap().to_str().unwrap().to_string();
+    let content = dir.path().join("new.rs");
+
+    // Only `tax` changes: granted, and that is all that is claimed.
+    std::fs::write(&content, LIB.replace("x / 10", "x / 5")).unwrap();
+    let dry = cli
+        .run(&[
+            "claim",
+            "--json",
+            "--workspace",
+            &ours_id,
+            "--edit",
+            "src/lib.rs",
+            "--content",
+            content.to_str().unwrap(),
+            "--dry-run",
+        ])
+        .ok()
+        .json();
+    assert_eq!(dry["resources"], serde_json::json!(["src/lib.rs#tax"]));
+    let status = cli.run(&["status", "--json"]).ok().json();
+    let mine = status["workspaces"].as_array().unwrap().iter().find(|w| w["id"] == ours_id.as_str()).unwrap().clone();
+    assert_eq!(mine["claims"], serde_json::json!([]), "a dry run claims nothing");
+    let granted = cli
+        .run(&[
+            "claim",
+            "--json",
+            "--workspace",
+            &ours_id,
+            "--edit",
+            "src/lib.rs",
+            "--content",
+            content.to_str().unwrap(),
+        ])
+        .ok()
+        .json();
+    assert_eq!(granted["claim"], "granted");
+    assert_eq!(granted["resources"], serde_json::json!(["src/lib.rs#tax"]));
+
+    // Changing `price`, which the other workspace holds: refused, naming it.
+    std::fs::write(&content, LIB.replace("    x\n}", "    x + 1\n}")).unwrap();
+    let refused = cli.run(&[
+        "claim",
+        "--json",
+        "--workspace",
+        &ours_id,
+        "--edit",
+        "src/lib.rs",
+        "--content",
+        content.to_str().unwrap(),
+    ]);
+    assert_eq!(refused.code, 1);
+    let refused = refused.json();
+    assert_eq!(refused["claim"], "refused");
+    assert_eq!(refused["held"][0]["by"]["agent"], "them");
+
+    // A new file is claimed whole.
+    let new_file = cli
+        .run(&[
+            "claim",
+            "--json",
+            "--workspace",
+            &ours_id,
+            "--edit",
+            "src/new.rs",
+            "--content",
+            content.to_str().unwrap(),
+            "--dry-run",
+        ])
+        .ok()
+        .json();
+    assert_eq!(new_file["resources"], serde_json::json!(["src/new.rs"]));
+}
