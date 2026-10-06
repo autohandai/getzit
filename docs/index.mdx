@@ -86,7 +86,18 @@ pi install /path/to/getzit/integrations/pi
 
 ## See it run
 
-{/* real-recording */}
+Three agents, Autohand Code, Claude Code and Codex, change a copy of a real repository (Autohand's router) at the same time, each in its own Zit workspace, while the fourth pane shows `zit status`. Each was given one documentation task; the prompts are on screen. Autohand Code and Codex both edited `docs/self-hosting.md`.
+
+What happened, in this run:
+
+- Claude Code added a Troubleshooting section to `docs/deployment/container.md`. Recorded with its account and cost: 432,767 tokens in, 4,281 out, $0.46.
+- Codex added four FAQs to the end of `docs/self-hosting.md` (260,036 tokens in, 2,435 out).
+- Autohand Code's file tools tried to claim all of `docs/self-hosting.md` and were refused, because Codex's unaccepted change had written other sections of it. Autohand claimed its own section instead and made a one-sentence edit there, through the shell, because its file tool still claimed the whole file and was refused again (a fix to claim by section is in progress). It was recorded after 8 minutes 14 seconds.
+- `zit accept` then landed all three. The two changes to `docs/self-hosting.md` were composed one onto the other, and the link check passed on each combined state.
+
+![Three coding agents change one repository at once through Zit: Autohand Code with --zit, Claude Code and Codex with zit run, a live zit status pane, then each change accepted with its reason and cost](./images/real-run.webp)
+
+The run took 8 minutes 48 seconds; it is shown at 6× speed, otherwise unedited.
 
 ### The web view
 
