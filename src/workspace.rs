@@ -418,7 +418,10 @@ fn reflink_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
     if unsafe { libc::ioctl(to.as_raw_fd(), libc::FICLONE, from.as_raw_fd()) } != 0 {
         return Err(std::io::Error::last_os_error());
     }
-    to.set_permissions(fs::Permissions::from_mode(meta.permissions().mode()))
+    to.set_permissions(fs::Permissions::from_mode(meta.permissions().mode()))?;
+    // Keep the modification time, as clonefile does: git compares it to decide
+    // whether a file changed, so a fresh time makes every file look modified.
+    to.set_modified(meta.modified()?)
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -741,6 +744,23 @@ mod liveness {
         let pid = child.id();
         child.wait().unwrap();
         assert!(!process_alive(pid));
+    }
+
+    /// git compares files by modification time; a clone must keep it, as APFS
+    /// clonefile does, or every cloned file looks modified (seen on XFS).
+    #[test]
+    fn a_clone_keeps_modification_times() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        let file = fs::File::create(src.join("f")).unwrap();
+        let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+        file.set_modified(old).unwrap();
+        drop(file);
+        let dst = dir.path().join("dst");
+        if clonefile(&src, &dst).is_ok() {
+            assert_eq!(fs::metadata(dst.join("f")).unwrap().modified().unwrap(), old);
+        }
     }
 
     #[test]
