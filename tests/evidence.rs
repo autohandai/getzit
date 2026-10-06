@@ -202,3 +202,13 @@ fn a_check_that_hangs_fails_at_its_timeout() {
     let again = evidence::verify(&fx.repo, &current, false).unwrap();
     assert!(!again[0].cached, "a timed-out result was remembered as the state's verdict");
 }
+
+/// A misplaced or misspelt key in zit.toml is an error, not silently ignored.
+#[test]
+fn an_unknown_key_in_zit_toml_is_an_error() {
+    let config = "[[check]]\nname = \"t\"\nrun = \"true\"\nignore = [\".coverage\"]\n";
+    let fx = Fixture::new(&[("zit.toml", config), ("a.txt", "a\n")]);
+    let current = fx.repo.current().unwrap();
+    let err = evidence::verify(&fx.repo, &current, false).unwrap_err().to_string();
+    assert!(err.contains("unknown field") && err.contains("ignore"), "{err}");
+}

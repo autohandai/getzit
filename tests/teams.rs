@@ -38,7 +38,8 @@ fn commits_are_signed_when_git_is_configured_to_sign() {
     assert!(made.success());
     git(&fx.root(), &["config", "gpg.format", "ssh"]);
     git(&fx.root(), &["config", "user.signingkey", &format!("{}.pub", key.display())]);
-    git(&fx.root(), &["config", "commit.gpgsign", "true"]);
+    // git accepts any boolean spelling; "yes" must sign as "true" does.
+    git(&fx.root(), &["config", "commit.gpgsign", "yes"]);
     let (a, b) = two_concurrent(&fx);
     accept::accept(&fx.repo, &a.id).unwrap();
     accept::accept(&fx.repo, &b.id).unwrap();
@@ -64,6 +65,12 @@ fn linear_history_composes_without_merge_commits_and_accepts_once() {
     let merges = git(&fx.root(), &["rev-list", "--merges", "--count", current.as_str()]);
     assert_eq!(merges, "0");
     assert!(git(&fx.root(), &["log", "-1", "--format=%B", current.as_str()]).contains(&format!("Zit-Change: {}", b.id)));
+    let landed = zit::change::load(&fx.repo, &current).unwrap();
+    assert!(
+        landed.summary.as_deref().is_none_or(|s| !s.contains("Zit-Change")),
+        "a trailer leaked into the account: {:?}",
+        landed.summary
+    );
     // The same change again is recognised as landed, not applied twice.
     assert!(matches!(accept::accept_with(&fx.repo, &b.id, &linear).unwrap(), Outcome::AlreadyAccepted));
 }

@@ -71,6 +71,8 @@ fn parse(record: &str) -> Option<Change> {
             (u.input_tokens, u.output_tokens) = (n.next().unwrap_or(0), n.next().unwrap_or(0));
         } else if let Some(v) = line.strip_prefix("Zit-Cost-USD: ") {
             usage.get_or_insert_with(Usage::default).cost_usd = v.trim().parse().ok();
+        } else if line.starts_with("Zit-Change: ") {
+            // The change a linear compose landed; a trailer, not part of the account.
         } else if let Some(v) = line.strip_prefix("Zit-Agent: ") {
             agent = v.to_string();
         } else if let Some(v) = line.strip_prefix("Zit-Session: ") {
@@ -188,7 +190,9 @@ pub(crate) fn commit(repo: &Repo, state: &Oid, parents: &[&Oid], agent: &str, me
     let setting = |key: &str| repo.git(&["config", key]).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
     let committer = setting("user.name").unwrap_or_else(|| "zit".into());
     let committer_email = setting("user.email").unwrap_or_else(|| "zit@localhost".into());
-    if setting("commit.gpgsign").is_some_and(|v| v == "true") {
+    // As git reads it: any boolean spelling (true, yes, on, 1).
+    let sign = repo.git(&["config", "--type=bool", "commit.gpgsign"]).is_ok_and(|v| v.trim() == "true");
+    if sign {
         args.push("-S".to_string());
     }
     let env = [

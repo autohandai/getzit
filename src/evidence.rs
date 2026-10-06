@@ -11,6 +11,7 @@ use std::time::Instant;
 
 /// Declared in `zit.toml` at the root of the state being checked.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Check {
     pub name: String,
     /// Shell command, run at the root of a materialised view of the state.
@@ -48,6 +49,7 @@ pub struct Verdict {
 }
 
 #[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Config {
     #[serde(default)]
     check: Vec<Check>,
@@ -64,6 +66,7 @@ pub(crate) struct Config {
 
 /// `[accept]` in zit.toml: rules for how changes land.
 #[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct AcceptRules {
     /// Compose onto current as one commit, never a merge commit.
     #[serde(default)]
@@ -79,6 +82,7 @@ pub fn linear(repo: &Repo, rev: &Oid) -> Result<bool> {
 /// `cargo fetch`, …). Run once per distinct `inputs`, in the cached
 /// checkout every workspace is cloned from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Prepare {
     pub run: String,
     /// Paths the installed result depends on, usually the manifest and lockfile.
@@ -90,6 +94,7 @@ pub struct Prepare {
 /// it. Its content is a function of other files, so concurrent writes to it
 /// are not conflicts: it is regenerated on the composed state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Derive {
     pub path: String,
     pub run: String,
