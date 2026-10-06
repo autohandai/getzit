@@ -514,9 +514,17 @@ mod cache {
         if clonefile(&root(repo).join(tree.as_str()), dir).is_ok() {
             return Ok(Source::Exact);
         }
-        for seed in entries(repo) {
+        let trace = std::env::var_os("ZIT_TRACE").is_some();
+        let seeds = entries(repo);
+        if trace {
+            eprintln!("zit: no cached checkout of {}; {} seed(s) to clone from", tree.short(), seeds.len());
+        }
+        for seed in seeds {
             let seed_tree = seed.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
-            if clonefile(&seed, dir).is_err() {
+            if let Err(e) = clonefile(&seed, dir) {
+                if trace {
+                    eprintln!("zit: cloning cached checkout {} failed: {e}", seed.display());
+                }
                 continue;
             }
             // Ignored files (installed dependencies, build output) come along.
@@ -527,8 +535,10 @@ mod cache {
                 .env("GIT_INDEX_FILE", dir.join("index"))
                 .args(["-c", "core.checkStat=minimal", "-c", "core.trustctime=false"])
                 .args(["read-tree", "-m", "-u", &seed_tree, tree.as_str()]));
-            if moved.is_ok() {
-                return Ok(Source::Delta);
+            match moved {
+                Ok(_) => return Ok(Source::Delta),
+                Err(e) if trace => eprintln!("zit: moving a clone of {seed_tree} to {} failed: {e}", tree.short()),
+                Err(_) => {}
             }
             let _ = fs::remove_dir_all(dir);
         }

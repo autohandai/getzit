@@ -1,0 +1,32 @@
+name: xfs-repeat
+
+# Repeat the dependency-install test on XFS with tracing, to catch an
+# intermittent re-install (seen once in three runs).
+on:
+  workflow_dispatch:
+
+jobs:
+  repeat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88
+      - uses: Swatinem/rust-cache@v2
+      - run: |
+          sudo apt-get install -y -qq xfsprogs
+          truncate -s 6G "$RUNNER_TEMP/fs.img"
+          mkfs.xfs -q -m reflink=1 "$RUNNER_TEMP/fs.img"
+          sudo mkdir -p /mnt/cow && sudo mount -o loop "$RUNNER_TEMP/fs.img" /mnt/cow && sudo chown "$USER" /mnt/cow
+      - env:
+          TMPDIR: /mnt/cow
+          ZIT_TRACE: "1"
+        run: |
+          git config --global user.name ci && git config --global user.email ci@example.com
+          cargo build --release --locked --tests
+          fails=0
+          for i in $(seq 1 40); do
+            if ! cargo test --release --locked --test prepare -- --nocapture > "run-$i.log" 2>&1; then
+              fails=$((fails + 1)); echo "=== run $i failed"; grep -E "zit:|panicked|left|right" "run-$i.log" | head -30
+            fi
+          done
+          echo "failed $fails of 40"
