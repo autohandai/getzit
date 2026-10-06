@@ -362,8 +362,8 @@ fn clonefile(src: &Path, dst: &Path) -> std::io::Result<()> {
 }
 
 /// Linux: a directory tree whose files are reflinks (`FICLONE`) of the
-/// source's, so they share blocks until written. Works on btrfs, XFS
-/// (reflink=1) and bcachefs. Anywhere else the first file fails, the partial
+/// source's, so they share blocks until written. Tested on btrfs and XFS
+/// (reflink=1); other `FICLONE` file systems are untested. Anywhere else the first file fails, the partial
 /// copy is removed and the error returned, so callers fall back as they would
 /// without copy-on-write.
 #[cfg(target_os = "linux")]
@@ -409,7 +409,7 @@ fn clonefile(_src: &Path, _dst: &Path) -> std::io::Result<()> {
 }
 
 /// Whether the file system holding `dir` supports the copy-on-write clones
-/// workspaces are made of (APFS; btrfs, XFS or bcachefs on Linux).
+/// workspaces are made of (APFS on macOS; a `FICLONE` file system such as btrfs on Linux).
 pub fn copy_on_write(dir: &Path) -> bool {
     let probe = dir.join(format!(".zit-cow-probe-{}", fresh_id()));
     let (src, dst) = (probe.join("a"), probe.join("b"));

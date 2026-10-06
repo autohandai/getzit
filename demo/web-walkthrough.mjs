@@ -56,20 +56,20 @@ const card = async (html, holdMs) => {
 
 await card(`<h1>zit<span class="dot"></span></h1>
   <h2>Many sessions on one repository, at the same time. No worktrees.</h2>
-  <p class="lead">People and coding agents each work in their own copy of the code, see what the others are changing,
-  and land their work one change at a time, every change with its reason.</p>`, 4500);
+  <p class="lead">People and coding agents each work in their own copy of the code, can see what the others on the machine are changing,
+  and land their work one change at a time. A change can carry its author's reason.</p>`, 4500);
 await card(`<div class="grid">
-  <div class="f"><b>A copy for every session</b><span>A copy-on-write clone of one checkout: a copy of a copy, sharing every file and installed dependency until it is edited. No worktree, no new files.</span></div>
-  <div class="f"><b>Sessions see each other</b><span>What each session is writing, and the parts it has claimed, are visible to the others while they work, so they split the work instead of repeating it.</span></div>
-  <div class="f"><b>Changes land one at a time</b><span>Each is checked against what landed meanwhile and against your tests. A collision is refused with the reason, and nothing is lost.</span></div>
-  <div class="f"><b>Every change explains itself</b><span>Its author's own account of what it did and why, and what the agent's turn cost. All of it is plain git underneath.</span></div>
+  <div class="f"><b>A copy for every session</b><span>A copy-on-write clone of a cached checkout (APFS, btrfs). Your files stay shared on disk until a session edits one; the workspace adds only its own git metadata. No worktree.</span></div>
+  <div class="f"><b>Sessions can see each other</b><span>On one machine, <code>zit status</code> and <code>zit web</code> show what each open workspace is writing and what it has claimed. A claim on something already held is refused, naming who holds it.</span></div>
+  <div class="f"><b>Changes land one at a time</b><span>Each is compared with what landed since it started; the combined result must pass the checks declared in <code>zit.toml</code>. A collision is refused with the reason, and the change is kept.</span></div>
+  <div class="f"><b>A change can carry its reason</b><span>Its author's account of what it did and why (<code>zit run</code> keeps an agent's final message), and the tokens and cost the agent reported. All of it is plain git.</span></div>
 </div>`, 7000);
-await card(`<h2>Ten sessions changed one <code>README.md</code> at the same time.</h2>
-  <p class="lead">Three more are still working. This is <code>zit web</code>, watching that repository.</p>`, 3500);
+await card(`<h2>Ten scripted sessions changed one <code>README.md</code> at the same time.</h2>
+  <p class="lead">Three more workspaces are open with unrecorded edits. This is <code>zit web</code>, watching that repository.</p>`, 3500);
 
 await page.goto("http://127.0.0.1:4799/", { waitUntil: "networkidle0" });
 await sleep(1500);
-await caption("Five changes have landed on the line, four wait their turn above it, one collided (red), and three sessions are still working below. None of them is a git worktree.");
+await caption("Five changes have landed on the line, four wait their turn above it, one collided (red), and three workspaces with unrecorded edits sit below. None of them is a git worktree.");
 await shot(4500);
 if (!await pick("hana")) throw new Error("no hana row");
 await caption("A waiting change: what it wrote, down to the section, its author's reason, and the command that lands it.");
@@ -78,7 +78,7 @@ if (!await pick("jun")) throw new Error("no jun row");
 await caption("jun and chen both rewrote the Prices section. chen landed first, so jun's change is refused with the reason, the diff, and the command that redoes it on top. Nothing is lost.");
 await shot(5000);
 if (!await pick("kai")) throw new Error("no kai row");
-await caption("kai is still working, in a copy of their own. What kai has claimed and is writing right now is visible to every other session before anything is recorded.");
+await caption("kai's workspace has unrecorded edits. What it has claimed and is writing now shows here and in zit status, before anything is recorded.");
 await shot(5000);
 await page.keyboard.press("Escape");
 await page.focus("#search"); await page.keyboard.type("Prices", { delay: 60 });

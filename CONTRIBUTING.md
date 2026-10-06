@@ -11,7 +11,7 @@ cargo test                       # unit and integration tests, against real git 
 npm install && npm run dev       # the manual, at http://localhost:4321
 ```
 
-On Linux, the copy-on-write tests run only on a reflink file system (btrfs, XFS with reflink, bcachefs); elsewhere they report that they were skipped. CI runs them on btrfs.
+On Linux, the copy-on-write tests run only on a reflink file system (btrfs, XFS with reflink); elsewhere they report that they were skipped. CI runs them on btrfs and XFS.
 
 ## Make a change
 
@@ -39,7 +39,7 @@ A check on every pull request refuses commits without it. To fix a branch: `git 
 ## Pull requests
 
 - One topic per pull request; explain what changed and why, and how you tested it.
-- CI must pass on macOS, Linux and Linux with btrfs.
+- CI must pass on macOS, Linux, and Linux on btrfs and XFS.
 - A maintainer reviews within a few working days. Two kinds of change need extra care and an ADR: anything that changes what `accept` lets through, and anything that changes what is stored in `refs/zit/*`.
 
 ## Collaborate

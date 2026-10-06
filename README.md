@@ -2,7 +2,7 @@
 
 **A git extension for repositories that many developers and coding agents change at the same time.**
 
-You start an agent on a bug, another on a feature, a third on the docs, and your teammates do the same in the same repository. Zit gives each of them a disposable copy of the code that adds no new files to disk, lets them see what the others are changing, lands their work one change at a time after checking it against what landed meanwhile and against your tests, and keeps every author's own account of what they did and why.
+You start an agent on a bug, another on a feature, a third on the docs, and your teammates do the same in the same repository. Zit gives each of them a disposable copy of the code that does not copy your files on disk, shows them what the others are changing, lands their work one change at a time after checking it against what landed meanwhile (and against your checks, if you declare any), and keeps each author's account of what they did and why when one is given.
 
 Your branches, history and remotes stay plain git. Teammates who never install Zit keep working as before.
 
@@ -27,10 +27,10 @@ git zit export --branch main   # publish to git (or --pr to open a pull request)
 
 | | |
 |---|---|
-| **Workspaces without copies** | Each contributor works in a copy-on-write clone of one cached checkout, dependencies included, so a new workspace writes no new files until something is edited. APFS (macOS) and btrfs, XFS or bcachefs (Linux). Elsewhere it falls back to a plain checkout. |
+| **Workspaces that share files** | Each contributor works in a copy-on-write clone of a cached checkout, so the files are shared on disk until one is edited; a workspace writes only its own git metadata (about 10 MB for a 30,000-file repository, against 139 MB for a worktree, on APFS). With `[prepare]`, installed dependencies are shared the same way. Works on APFS (macOS), and btrfs or XFS with reflink (Linux), all tested in CI; elsewhere a workspace is a plain checkout. |
 | **Awareness** | Agents on one machine see what the others are writing right now, and claim work (`zit claim src/lib.rs#price`) before starting it. |
 | **Integration** | Changes land one at a time. Each is compared, function by function, with what landed since it started: a change that calls a function whose signature changed underneath it is refused even though git would merge it. The combined result must pass current's checks and the change's own. |
-| **Reasons and cost** | Every change keeps its author's final account (an agent's last message, a commit body) and, when the agent reports it, the tokens and money it cost. |
+| **Reasons and cost** | A change keeps its author's account when there is one (an agent's last message through `zit run`, `--summary`, a commit body) and, when the agent reports it, the tokens and money it cost. |
 | **Team rules** | Linear history, signed commits, your identity as committer, and `zit export --pr` for protected branches. |
 
 What it is not: a version control system, a code-review tool, a CRDT or a sandbox. See [What Zit is, and is not](docs/why.mdx).
@@ -39,7 +39,7 @@ What it is not: a version control system, a code-review tool, a CRDT or a sandbo
 
 - **git 2.38 or newer.** Zit uses `git merge-tree --write-tree`; it checks the version and names the one it needs.
 - macOS or Linux. Windows is not supported.
-- A copy-on-write file system for the disk savings: APFS, btrfs, XFS (with reflink) or bcachefs.
+- A copy-on-write file system for the disk savings: APFS on macOS; btrfs or XFS with reflink on Linux (all tested in CI). On other file systems a workspace is a plain checkout.
 - To build from source: Rust 1.88 or newer.
 
 ## Install

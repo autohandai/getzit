@@ -20,7 +20,7 @@ Coding agents mean more contributors on one repository at the same time: more se
 | Collisions found late | Contributors can claim what they will change and see what everyone else is changing right now. | 5 agents, same task and prompt, with and without claims: **10 of 10 landed instead of 4 of 10**, **$1.01 instead of $2.54** per landed change, same judged quality ([Lesson 04](/lessons)) |
 | Merges that only see lines | Each change records what it wrote, function by function, and what it read. A change that relied on something that has since changed is refused, with the reason. The combined result must pass your checks before it becomes current. | In 1,000 scripted changes, **every merge that would have broken a check (119 of 119) was refused before it merged** |
 | Generated files and docs | A generated file is rebuilt on the combined state instead of conflicting. Two edits to one Markdown section merge if their text does. | 20 developers on a catalogue repo: **20 of 20 landed**, against **12 of 20** before this rule |
-| Lost reasons | Every change keeps its author's own account: an agent's final message, captured by `zit run`, or a git commit's body. It travels with the change into the exported history. | All 20 agents' accounts captured in the router run; the 20 developers there were scripts with pre-written messages ([Lessons](/lessons)) |
+| Lost reasons | A change keeps its author's account when there is one: an agent's final message, captured by `zit run`, a `--summary`, or a git commit's body. It travels with the change into the exported history. | All 20 agents' accounts captured in the router run; the 20 developers there were scripts with pre-written messages ([Lessons](/lessons)) |
 | Integrating agents and people | One integration path for both: a developer's pushed branch and an agent's recorded change are accepted the same way. | **20 scripted git clients + 30 real agents** (Claude Code and Codex), one run, on one repository: **46 of 50 landed, 3 correctly did nothing** because their task was already done, final state valid |
 
 Sources: [Benchmarks](/benchmarks), [Lessons](/lessons), `bench/results/space-status-page.json`.
@@ -73,7 +73,7 @@ One worktree with its install took about 324 MB on disk (1,619 MB for five). The
 
 ### The fine print
 
-- **The savings need a copy-on-write file system.** APFS on macOS; btrfs, XFS (with reflink) or bcachefs on Linux. Both are tested in CI; the numbers on this page were measured on APFS. On Linux, btrfs reflinks added no measurable disk for ten workspaces, and ext4, which has no copy-on-write, cost the same as worktrees ([Benchmarks](/benchmarks)). On ext4 and other file systems Zit falls back to a plain checkout and saves nothing.
+- **The savings need a copy-on-write file system.** APFS on macOS; btrfs or XFS with reflink on Linux. All are tested in CI; the numbers on this page were measured on APFS. On Linux, btrfs reflinks added no measurable disk for ten workspaces, and ext4, which has no copy-on-write, cost the same as worktrees ([Benchmarks](/benchmarks)). On ext4 and other file systems Zit falls back to a plain checkout and saves nothing.
 - **Clones share until written.** A workspace that rewrites `node_modules` pays for what it rewrites.
 - **Compiled projects may rebuild per workspace path.** Build tools that key their caches on absolute paths (Cargo, for example) are expected to rebuild the project's own code in each new workspace even when the build directory was cloned. This has not been measured with `[prepare]`.
 

@@ -14,10 +14,10 @@ Most developers are not there yet: most who use agents run one at a time. But th
 
 **Zit** is a git extension for teams already running several agents on one repository. It does four things:
 
-1. **Copies without new files.** Each contributor, person or agent, gets a disposable copy of the code, dependencies included, that writes no new files: it shares every file with the other copies until one is edited, so ten agents do not mean ten checkouts and ten `node_modules`. This needs a copy-on-write file system: APFS on macOS; btrfs, XFS or bcachefs on Linux. Elsewhere it is a plain checkout.
+1. **Copies that share files.** Each contributor, person or agent, gets a disposable copy of the code: a copy-on-write clone of a cached checkout, so its files are shared on disk with every other copy until one is edited. A workspace writes only its own git metadata: about 10 MB for a 30,000-file repository, against 139 MB for a worktree (APFS). With `[prepare]`, installed dependencies are shared too. This works on APFS (macOS) and on btrfs or XFS with reflink (Linux), all tested in CI; elsewhere a workspace is a plain checkout.
 2. **Awareness.** Agents on the same machine can see what the others are changing right now and claim work before starting it.
 3. **Integration.** Changes land one at a time. Each is compared with what landed since it started, by the functions it changed and the names it uses, and the combined result must pass your checks (current's and the change's own) before it becomes the current state.
-4. **Reasons.** Every change keeps its author's own account of what it did and why, as the body of its commit.
+4. **Reasons.** A change keeps its author's account of what it did and why as the body of its commit: `zit run` stores an agent's final message, `zit record --summary` takes one, and a git commit's body counts. A change recorded without one has none.
 
 ## Install and run
 
@@ -68,7 +68,7 @@ From [autohandai/getzit](https://github.com/autohandai/getzit) CI, written into 
 
 ## Zit in action
 
-**Many sessions on one repository, at the same time, without worktrees.** Each session works in its own copy-on-write copy of one checkout, a copy of a copy: it shares every file with the others until it edits one, so starting ten sessions writes no new files. The sessions see what the others are changing, and their changes land one at a time.
+**Many sessions on one repository, at the same time, without worktrees.** Each session works in its own copy-on-write clone of the cached checkout of its state; if there is none for that state, Zit clones an older cached checkout and rewrites only the files that differ. The files stay shared on disk until a session edits one. Sessions on the same machine can see what the others are changing, through `zit status`, `zit web` and refused claims, and their changes land one at a time.
 
 In the recording below, ten sessions change the same `README.md` at the same moment. Edits to different sections compose. Two sessions rewrote the same lines of the Prices section: the second is refused with the reason, redone on top of the first, and recorded with why. Then all ten changes are published as one plain git branch, and `zit clean` deletes every copy Zit made.
 
@@ -78,9 +78,9 @@ The ten sessions are scripted (`demo/ten-users.sh`), so the run is repeatable; e
 
 ### The web view
 
-`zit web` watches a repository live. Here, after ten sessions changed one `README.md`, five changes have landed, four wait their turn, one collided, and three more sessions are still working, each in its own copy and each holding a claim. For any of them it shows what it wrote, its author's reason, why it stands where it does, and the command to run next. `git worktree list` in that repository shows only the main checkout.
+`zit web` watches a repository live. Here, after ten scripted sessions changed one `README.md`, five changes have landed, four wait their turn, one collided, and three more workspaces are open with unrecorded edits, each holding a claim. For any of them it shows what it wrote, its author's reason, why it stands where it does, and the command to run next. `git worktree list` in that repository shows only the main checkout.
 
-![A walkthrough of zit web: what Zit does, then a live repository with landed, waiting and colliding changes, three sessions still working with their claims, filtering, and light mode](./images/web-walkthrough.webp)
+![A walkthrough of zit web: what Zit does, then a live repository with landed, waiting and colliding changes, three open workspaces with their claims, filtering, and light mode](./images/web-walkthrough.webp)
 
 The scene is built by `demo/web-scene.sh` and recorded by `demo/web-walkthrough.mjs`.
 

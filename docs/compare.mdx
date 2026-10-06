@@ -7,9 +7,9 @@ Every cell below comes from the tool's own documentation, read on 5 and 6 Octobe
 
 | | Isolation, disk | Sees others' work in progress | Catches a semantic conflict before checks | Tests the combined result before main moves | Batching | Keeps the agent's reason | Runs without a server |
 |---|---|---|---|---|---|---|---|
-| **Zit** | Copy-on-write clone of one cached checkout, dependencies included (APFS, btrfs, XFS, bcachefs); a checkout elsewhere | Yes, agents on one machine: claims and live write sets | Yes, by symbol and name, five languages | Yes: current's checks and the change's own | No: one at a time | Yes: the agent's final message is the commit body | Yes |
+| **Zit** | Copy-on-write clone of a cached checkout (APFS, btrfs, XFS); with `[prepare]`, dependencies shared too; a checkout elsewhere | Yes, agents on one machine: claims and live write sets | Yes, by symbol and name, five languages | Yes: current's checks and the change's own | No: one at a time | Yes: the agent's final message is the commit body | Yes |
 | **Zed Delta (DeltaDB)** [8] | Each participant gets a local copy of a thread's worktree, kept in sync in real time; each review gets an isolated copy; cloud runners. Disk sharing between copies not documented | Yes, live, across machines: the worktree and the conversation are replicated | Not documented; concurrent edits to the same files are merged by CRDTs | Not built in: an agent "can trigger a run with an existing CI provider" | Not documented | Yes: the conversation is kept next to the edits | Not documented; public beta, free for now |
-| **Entire (Checkpoints CLI)** [9] | None of its own; works alongside git worktrees, tracking each session | Not documented | Not documented | Not documented | Not documented | Yes, in full: transcript, prompts, tool calls, files touched, token use, in git refs linked by a commit trailer | Yes, for capture; `entire login` for its hosted services |
+| **Entire (Checkpoints CLI)** [9] | None of its own; works alongside git worktrees, tracking each session | Not documented | Not documented | Not documented | Not documented | Yes: transcript, prompts, files touched, token usage, tool calls, in git refs linked by a commit trailer | Not documented |
 | **GitHub merge queue** [1] | n/a, works on pull requests | No: only pull requests already queued | No: what your CI catches on the merge group | Yes: base plus the pull requests ahead | Yes: 1–100 pull requests per merge, up to 100 concurrent builds | Not documented | No: hosted |
 | **GitLab merge trains** [2] | n/a | No | No: CI only | Yes: cumulative pipelines | Up to 20 parallel pipelines | Not documented | Self-managed possible |
 | **Graphite** [3] | n/a, branches per stack | Stacked branches build on their parent | No static analysis documented; rebases and re-runs CI | Yes: rebase and CI | Batching in private beta | Not documented | No: the queue is hosted |
@@ -26,16 +26,16 @@ Every cell below comes from the tool's own documentation, read on 5 and 6 Octobe
 
 How they differ from Zit:
 
-- **Delta merges as people type; Zit merges when a change is accepted.** Delta's CRDTs let several people and agents edit the same files at once and keep everyone in sync. Zit gives each session its own copy and decides at accept whether a change can land: it refuses one that relied on an interface that changed, and runs current's checks and the change's own on the combined result. Neither Delta nor Entire documents such a gate.
+- **Delta replicates edits in real time; Zit integrates when a change is accepted.** Delta's conflict-free replicated worktrees let several people and agents edit the same files at once, on different machines. Zit gives each session its own copy and decides at accept whether a change can land: it refuses one that relied on an interface that changed, and runs current's checks and the change's own on the combined result. Neither Delta nor Entire documents such a gate.
 - **Entire keeps the whole session; Zit keeps the author's final account.** Entire records the transcript, prompts and tool calls; Zit records the intent, the agent's last message and its token cost. The two fit together: both store in the repository's own git refs and commit trailers.
 - **Copies.** Delta keeps a synced copy per participant and Entire uses your worktrees; neither documents sharing disk between copies. Zit's copies are copy-on-write clones that share files and installed dependencies until edited.
-- **Where they are ahead:** Delta works across machines in real time, on Windows and the web, with cloud runners and review threads that carry the agents' conversations. Entire supports about eight agents, runs on Windows, and stores far more of each session.
+- **Where they are ahead:** Delta works across machines in real time, on Windows and the web, with cloud runners and review threads that carry the agents' conversations. Entire runs on Windows and stores far more of each session.
 
 ## Where Zit is different
 
 - **It refuses a change that relied on an interface that changed, before any check runs**, even when git would merge it. Queues and trains catch such a change only if your CI fails on the combined branch. The cost: some good changes are refused, and only five languages are understood ([Limits](/limits#semantics)).
 - **Agents see what others are writing before anyone merges**, and claim work so they split it. Claude Code's closest feature is text messages between sessions.
-- **Workspaces share disk, dependencies included.** Claude Code, Cursor and Conductor document a fresh checkout and an install per workspace. Measured: 327 MB instead of 1,619 MB for five contributors on an npm project ([Benchmarks](/benchmarks)).
+- **Workspaces share disk.** With `[prepare]`, so do installed dependencies. Claude Code, Cursor and Conductor document a fresh checkout and an install per workspace. Measured: 327 MB instead of 1,619 MB for five contributors on an npm project ([Benchmarks](/benchmarks)).
 - **The change carries its author's own reason**, and its cost when the agent reports it.
 - **One local path for people's branches and agents' changes**, with no server.
 

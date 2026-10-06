@@ -86,7 +86,7 @@ sequenceDiagram
 
 **The idea.** Give each writer what looks like a private copy, but share the underlying blocks until someone writes. Filesystems expose this as clones (APFS) or reflinks (btrfs, XFS).
 
-**In Zit.** A workspace is a clone of a cached checkout of its state: APFS clones on macOS, `FICLONE` reflinks on btrfs, XFS and bcachefs. Creating one writes metadata only, no file contents and no second install of dependencies. Measured on APFS: about 14x less disk for ten workspaces of a 30,000-file tree.
+**In Zit.** A workspace is a clone of a cached checkout of its state: APFS clones on macOS, `FICLONE` reflinks on btrfs and XFS on Linux. Creating one writes metadata only, no file contents and no second install of dependencies. Measured on APFS: about 14x less disk for ten workspaces of a 30,000-file tree.
 
 ## 6. Derived status: no invalidation protocol
 
