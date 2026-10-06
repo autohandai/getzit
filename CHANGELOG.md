@@ -5,6 +5,7 @@ All notable changes to Zit. Versions follow [Semantic Versioning](https://semver
 ## Unreleased
 
 - CI runs every test on XFS with reflinks as well as btrfs.
+- Linux reflink clones keep each file's modification time, as macOS clones do. Before, a cloned checkout could look modified to git, so Zit fell back to a fresh checkout and reinstalled dependencies (4 of 40 runs on XFS; 0 of 40 after).
 - Unknown keys in `zit.toml` are an error instead of being ignored.
 - `commit.gpgsign` is read as git reads booleans (`yes`, `on`, `1` sign too).
 - The `Zit-Change` trailer of a linear compose no longer shows up in the change's account.

@@ -5,7 +5,7 @@ description: What version 0.1 does not do, and where its guarantees stop.
 
 ## Platform
 
-- macOS and Linux. CI runs every test on macOS (arm64), Linux (x86_64, plain checkouts; failures there do not fail the build), and Linux on btrfs and on XFS with copy-on-write required. On XFS one intermittent failure (a dependency install repeated instead of cloned) was seen in three runs and is being investigated. The code is Unix-only (signals, `libc`); there is no Windows support.
+- macOS and Linux. CI runs every test on macOS (arm64), Linux (x86_64, plain checkouts; failures there do not fail the build), and Linux on btrfs and on XFS with copy-on-write required. The code is Unix-only (signals, `libc`); there is no Windows support.
 - **Copy-on-write needs a file system that supports it:** APFS on macOS; btrfs or XFS with reflink on Linux (`FICLONE` reflinks), each tested in CI with copy-on-write required. Other file systems with `FICLONE`, such as bcachefs, are not tested. On ext4 and others, a workspace is a plain checkout: its files are new copies, and `[prepare]` installs dependencies again in each one. On a CI runner, ten reflink workspaces of a 30,000-file repository added no measurable disk on btrfs, against 24 MB for worktrees; on ext4 both used 1.27 GB ([Benchmarks](/benchmarks)).
 - Requires git 2.38 or newer (`merge-tree --write-tree`); Zit checks and names the version it needs.
 
