@@ -45,4 +45,22 @@ Each item below is a known gap: it is listed on [Limits](/limits) or came out of
 | A pnpm baseline for the dependency benchmark | The 327 MB against 1,619 MB comparison is against `npm ci` per worktree | Not started |
 | Linux disk benchmark with real dependencies | The Linux runs use a synthetic repository of small files | Not started |
 
+## From the research
+
+Candidates from [Prior art and objections](/prior-art), each answering a weakness found there. Sizes are estimates.
+
+| Item | Why | Size |
+|---|---|---|
+| Parse-check the composed state before running checks | Text from `git merge-tree` can be syntactically wrong (Mori and Hashimoto, 2026) | Small |
+| Report false refusals and false accepts against test oracles | Merge-tool evaluations that ignore incorrect clean merges overstate quality (Schesch et al., 2024) | Medium |
+| Replay public agent-conflict data: AgenticFlict, CooperBench, STALE | Measured accuracy on other people's data instead of our own runs | Medium |
+| A conflict graph from footprints, to verify independent changes together | Uber's SubmitQueue commits independent changes in parallel; Zit verifies one at a time | Large |
+| A structure-aware merge for adjacent insertions | Zit's most common remaining rejection; semistructured merge removes it (Apel et al. 2011; Cavalcanti et al. 2017) | Large |
+| Detect renames before deciding staleness | A rename is a delete plus an add, which stales every reader (RefFilter, 2025) | Medium |
+| Compose open workspaces against each other in the background | Crystal's speculative merging warns before anyone records | Medium |
+| Measure how much parallelism refused claims give up | Pre-write admission serialised 93.3% of clean cases in Claim Plane (2026) | Small |
+| A port and namespace per workspace | Agents share ports and machine-wide state today | Small to medium |
+| An optional log of the commands an agent ran | Zit keeps the final message and cost, not what was run | Small |
+| Select checks from footprints instead of declared `inputs` | Check inputs are trusted, not verified | Medium |
+
 To propose or take on an item, open an issue ([CONTRIBUTING.md](https://github.com/autohandai/getzit/blob/main/CONTRIBUTING.md)).

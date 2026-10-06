@@ -1,0 +1,206 @@
+---
+title: Prior art and objections
+description: Research and tools that tackle concurrent changes to one codebase, the strongest objections to Zit's approach with the evidence on each side, and where Zit is weak.
+---
+
+This page answers two questions a skeptical engineer should ask: who has tried this before, and why might Zit be the wrong approach? It was compiled on 7 October 2026 by four independent research passes (merge research, multi-agent coding studies, tools, and the case against), each followed by a verifier that re-opened every source and checked its quote word for word: 59 of 62 sources passed, and the 3 that did not are left out. Numbers in brackets refer to [Sources](#sources). Statements marked **Inference** are reasoning, not something a source says. Where an objection is right, this page says so.
+
+## Prior art
+
+| Name | Who | Year | What it does or found | How Zit relates |
+|---|---|---|---|---|
+| Crystal [1] | Brun, Holmes, Ernst, Notkin | 2011 | Across 5,355 merges in Git, Perl5 and Voldemort: 76% clean, 16% textual conflict, 1% build failure, 6% test failure. It reports that 33% of the 399 merges the version control system called clean were build or test conflicts, and that conflicts persist 10 days on average (median 1.6). It runs speculative background merges. | Builds on. [How it works](/science) cites Crystal only for "warn early". These figures support running checks on the combined state. Zit does not run speculative merges between open workspaces. |
+| FSTMerge [2] | Apel, Liebig, Brandl, Lengauer, Kästner | 2011 | Semistructured merge, with structure given by annotated grammars, cut conflicts in 60% of 180 scenarios by 34% on average. Renames can increase conflicts. Combining it with unstructured merge is the pragmatic choice. | Differs. Zit merges text with `git merge-tree`, so adjacent insertions still conflict. |
+| Evaluating and Improving Semistructured Merge [50] | Cavalcanti, Borba, Accioly | 2017 | Per-declaration merge removes false positives such as independent methods added at the same place, but adds false positives around renames. The improved hybrid halves reported conflicts with no additional false positives. | Differs. Points directly at Zit's most common remaining rejection (adjacent insertions) and at its rename weakness. |
+| JDime study [3] | Seibt, Heck, Cavalcanti, Borba, Apel | 2021 (year taken from the URL) | 7,727 merge commits, with test suites as the oracle. Combined strategies resolve as many conflicts as structured merge, at lower runtime. Test failures: unstructured 0.47%, semistructured 0.5%, structured 0.53%, combined up to 0.71%. | Sizes a roadmap item: fewer text conflicts at a small cost in correctness, which Zit's checks at accept would catch. |
+| Spork [4] | Larsén, Falleri, Baudry, Monperrus | 2022 | Java AST merge that keeps formatting and cuts worst-case runtime. Replayed on 1,740 file merges from 119 projects. | Shows the cost of a roadmap item: any AST merge must keep formatting and bound its runtime. It is Java only, and Java is not one of Zit's languages. |
+| RefMerge vs IntelliMerge [5] | Ellis, Nadi, Dig | 2021 | On 2,001 refactoring-conflict scenarios, RefMerge helped in 25% of scenarios and made things worse in 11%. IntelliMerge helped in 24% and made things worse in 30%. | Sizes a fix for "renames are a delete plus an add". Gains are modest and these tools can make things worse. |
+| SafeMerge [6] | Sousa, Dillig, Lahiri | 2018 | Proves semantic conflict-freedom compositionally (4-way AST diff plus relational verification). Java, 52 scenarios. | Upper bound for Zit's "body-only changes are left to the checks". Long horizon. |
+| SAM [7] | Da Silva, Borba, et al. | 2023 | Generated unit tests used as partial specifications. Best configuration found 9 of 28 conflicts. | Differs. Zit runs only the checks that already exist and generates none aimed at how two changes interact. |
+| Pointer analysis and semantic conflicts [8] | Barbosa, Borba, Bonifácio, Lira, Santos | 2025 | Pointer analysis cut false positives and timeouts but raised false negatives sharply. The authors recommend hybrid techniques. | Argues for keeping checks as the backstop behind Zit's name matching. |
+| RefFilter [9] | Lira, Borba, Bonifácio, Santos, Barbosa | 2025 | Lightweight static detectors have high false-positive rates. Filtering behaviour-preserving refactorings cut false positives by about 32% on 99 labelled scenarios, with a non-significant rise in false negatives. | A measured way to cut Zit's false refusals. |
+| Evaluation of merge tools [10] | Schesch, Featherman, Yang, Roberts, Ernst | 2024 | Re-evaluated merge tools with test suites and counted the cost of incorrect clean merges. Results "differ significantly from previous claims". | Builds on (Zit judges a merge by checks on the result). Gap: Zit has not measured its false accepts or false refusals against an oracle since ADR 16. |
+| d3j [11] | Mori, Hashimoto | 2026 (preprint) | A merge result must be parsable and "universal". On 43,774 Java file merges, existing tools including git's produced incorrect results and d3j none. | Gap. Zit trusts `merge-tree` text. A cheap parse check is possible. |
+| ConE [12] | Maddila, Nagappan, Bird, Gousios, van Deursen | 2021 | Flags concurrent edits across open pull requests on 234 Microsoft repositories. 775 recommendations, over 70% rated useful. | Builds on the same idea (awareness of in-flight work). Competes on reach: works across machines. Zit's claims are local. |
+| Merge-conflict prediction [13] | Owhadi-Kareshk, Nadi, Rubin | 2019 | Lightweight git features predict safe merges with F1 0.95–0.97 (conflicting: 0.57–0.68). Proposed as a pre-filter for speculative merging. | Possible pre-filter for `zit status` cost and for pairwise compose. |
+| MergeBERT [14] | Svyatkovskiy et al. | 2021 | 63–68% accuracy at synthesising merge resolutions. Java, JS, TS, C#. | Differs: Zit refuses and hands resolution back to the author. |
+| AgenticFlict [15] | Ogenrwot, Businge | 2026 | 27.67% of 107K+ merge-simulated agent PRs have textual conflicts. Public dataset. | Supports Zit's premise. Candidate replay corpus. |
+| STALE [16] | Xia, Wu, Park | 2026 | Patches that pass alone but fail together. 97% interference on constructed Django tasks, 1 of 834 runs on mined merged PR pairs. A message describing the concurrent change recovered 82%. | Supports the interface-staleness refusal and checks on the combined state. Also cuts against overclaiming how often this happens. |
+| Claim Plane [17] | Nikolaev | 2026 | Pre-write admission on 30 CooperBench pairs: pair pass 23.3%→50.0%, integration 65.6%→96.7%. But 96.7% of executions were serialised, including 93.3% of clean cases. | Competes, and warns: hard admission collapses into serial execution. |
+| CAID [18] | Geng, Neubig | 2026 | Manager, isolated worktrees, merge plus tests. +25.6 on PaperBench and +14.7 on Commit0 over a single agent. | Same model as Zit, with git worktrees. A baseline. |
+| STORM [19] | Liu, Chen, Xu, Jiang, Dong | 2026 | Detects conflicting edits at write time in a shared workspace. +18.7 on Commit0-Lite and +1.4 on PaperBench over a worktree baseline. | Competes. Supports early detection over merge-time-only detection. |
+| grite [20] | Sarkar | 2026 | Coordination log inside git, no server. Work that re-does a teammate's task fell from 78% to 0%; useful throughput more than tripled. | Competes directly with claims and git-native records. |
+| CooperBench [21] | Khatua, Zhu, …, Yang | 2026 | 600+ two-agent tasks. Agents succeed 30% less often together than doing both tasks individually. | Gap Zit targets. Candidate benchmark. |
+| AgentRoom [22] | Cho, Lee | 2026 | File-level claim, status and broadcast over MCP on a CRDT filesystem. "Coordination, not parallelism or CRDT-merge, bears the load." | Competes: file-level claims like Zit's, but on a shared filesystem instead of separate workspaces. |
+| CodeCRDT [23] | Pugachev | 2025 | CRDT coordination: zero merge failures, 5–10% semantic conflicts, up to 39.4% slower. | Supports "textually clean is not correct". |
+| MPAC [24] | Qian, Fang, Li | 2026 | Multi-principal protocol: intents, first-class conflict objects, Lamport clocks, optimistic concurrency. | Competes, or something to interoperate with. Its optimistic concurrency resembles Zit's CAS on current. |
+| ATM [25] | Huang | 2026 | Content-ID broker maps write intents to semantic atoms before writes. Claims feasibility, not superiority. | Competes with symbol footprints, but enforced before writing. |
+| Failed agent PRs [26] | Ehsani et al. | 2026 | 33k agent PRs. Not-merged ones are larger and often fail CI. Duplicate PRs are among the rejection reasons. | Supports claims (no duplicate rate given). |
+| Rejected agent fixes [27] | Abujadallah, Arabat, Sayagh | 2026 | 46.41% of agent fixes rejected. Wasted review, CI and tokens. | Supports per-change cost accounting. |
+| Token consumption [28] | Bai et al. | 2026 | Runs on the same task differ by up to 30x in tokens. Models underestimate their own use. | Supports recording cost per change. |
+| ClashBench [29] | Xie et al. | 2026 | Destructive preemption of a co-located task in 44.5% of trajectories. 31.9% of those cases go unmentioned. | Gap: shared runtime resources. |
+| SubmitQueue [30] | Ananthanarayanan et al. (Uber) | 2019 | Speculative builds plus a conflict graph so independent changes commit in parallel. | Zit's accept is this queue without speculation or parallel commit. |
+| TAP [31] | Memon et al. (Google) | 2017 | Post-submit milestones about every 45 minutes, tests selected by reverse dependencies, delays up to 9 hours. | Supports testing before the ref moves. Reverse-dependency test selection is a gap. |
+| Chromium CQ [32] | The Chromium Project | n/a | Curated tryjobs per CL, with a dry-run mode. | Same gate. Tests each CL alone, with no semantic pre-check. |
+| GitButler [33] | GitButler | n/a | Several branches applied to one working directory as lanes. | Competes: isolates by hunk, not by copy. |
+| jj conflicts [34] | Jujutsu | n/a | Conflicts recorded in commits, so rebases never block. | Alternative: defer conflicts rather than refuse them. |
+| jj workspaces [35] | Jujutsu | n/a | Several workspaces per repo, with stale detection per working-copy commit. | Parallel idea. Zit's staleness is per symbol. |
+| Pijul [36] | Pijul | n/a | Independently produced patches commute. | Order independence, but only on text. |
+| Sapling [37] | Meta | n/a | Scales to tens of millions of files (with its server and VFS). | Scale reference only. |
+| Sculptor [38] | Imbue | 2025 | A container per agent, flags potential merge conflicts, hands conflicts back to the agent. | Competes. Agrees that reinstalling per worktree is a cost. |
+| container-use [39] | Dagger | n/a | Container plus branch per agent, full command logs. | Competes on isolation. Keeps a fuller record than Zit does. |
+| Claude Squad [40] | smtg-ai | n/a | A worktree and a tmux session per agent. | The baseline Zit replaces. |
+| uzi [41] | devflowinc | n/a | Worktree, tmux and a dev-server port per agent; integrates by rebase. | Competes. Manages ports, which Zit does not. |
+| Vibe Kanban [42] | BloopAI | n/a | Kanban assignment, a workspace per agent, PRs from the UI. | Human-run claims. Integrates through PRs, like `zit export --pr`. |
+| Devin managed sessions [43] | Cognition | n/a | A VM per agent; a coordinator agent resolves conflicts. | Competes. The coordinator's merge criteria are not documented. |
+| Codex cloud [44] | OpenAI | n/a | A hosted workspace per task; integration through the user's PR. | Competes on isolation only. |
+| Never break the build [45] | Minsky (Jane Street) | 2014 | A serial queue costs m×n. Fixed with speculation, batching and faster builds. | Exposes Zit's lack of batching. |
+| SemanticConflict [46] | Fowler | 2011 | Remedy is self-testing code plus frequent integration. | Partly supports, partly challenges the name-based refusal. |
+| Upwelling [47] | McKelvey, Jenson, Wagner, Cook, Kleppmann | 2023 | Writers want private drafts: the "fishbowl effect" of real-time collaboration. | Supports private workspaces that merge later. Indirect: writers, not code. |
+| Subversion book [48] | Collins-Sussman, Fitzpatrick, Pilato | n/a | Locks: forgotten locks, needless serialisation, false security for dependent files. | The case Zit's advisory claims and read sets answer. |
+| Git LFS locking [49] | git-lfs | 2025 | Locking reintroduced for files that cannot be merged. | Supports claims where merging fails. |
+| Don't Build Multi-Agents [51] | Yan (Cognition) | 2025 | Parallel agents act on conflicting implicit assumptions. Recommends a single thread. | Skeptic. Names the failure Zit targets. |
+| Google enterprise RCT [52] | Paradis et al. | 2024 | About 21% less time on task with AI features (wide CI), 96 engineers. | Counter to "AI does not speed people up". Assist features, not agents. |
+| GenAI programming meta-analysis [53] | Maier et al. | 2026 | g = 0.33. Smaller effects in open-source and enterprise settings. | Moderate gain, smallest where Zit is aimed. |
+| AI Productivity Paradox [54] | Faros AI | 2025 | Teams merge 98% more PRs, but review time rises 91%. No company-level gain. | Skeptic. Vendor data. |
+| pnpm motivation [55] | pnpm | n/a | Content-addressed store with hard links instead of 100 copies. | Competes with `[prepare]` on npm projects, including on ext4. |
+| Scaling Git [56] | Harry (Microsoft) | 2017 | GVFS for a 300 GB repo: download only what is needed. | Checkout cost matters at scale. A competing approach (virtualised checkouts). |
+
+### Clusters
+
+**Merge-time measurement and structured merge [1–5, 10, 11, 14, 50].** Two consistent findings. First, text-clean is not correct: Crystal reports a third of git-clean merges were build or test conflicts [1], and Schesch et al. show that earlier evaluations that ignored incorrect clean merges overstated tool quality [10]. Second, structure-aware merge removes ordering conflicts but struggles with renames, can cost runtime and formatting, and adds a small test-failure cost [2–4, 50]. Zit's `git merge-tree` composition plus checks is the conservative end of this range. Its adjacent-insertion and rename limits are exactly what this literature targets.
+
+**Static and test-based semantic conflict detection [6–9, 46].** Static detection is noisy [9]. Making it deeper swaps false positives for misses [8]. Generated tests catch a minority of conflicts [7]. Proof works but only for Java [6]. Fowler's position is tests plus frequent integration [46]. **Inference:** no single technique dominates, which supports Zit's layering of a cheap name-based filter in front of checks on the combined state. It also means Zit's filter needs a measured false-refusal rate to justify itself.
+
+**Awareness and prediction [1, 12, 13].** ConE shows that cross-PR overlap warnings are useful at Microsoft scale [12]. Crystal shows speculative merging of unmerged work [1]. Owhadi-Kareshk et al. show that safe merges are cheap to predict [13]. Zit's live write sets are the same idea, confined to one machine.
+
+**Merge queues at scale [30–32, 45].** All of them gate before landing, as Zit does. SubmitQueue and Jane Street add speculation, batching and parallel commit of independent changes [30, 45], and TAP adds test selection [31]. Zit has none of these.
+
+**Multi-agent coding research, 2025–2026 [15–25, 29, 51].** Agent PRs conflict often [15]. Working together lowers agent success [21]. Interface-level interference is real when constructed but rare in mined pairs [16]. Coordination layers help [19, 20, 22]. Hard admission serialises almost everything [17]. CRDT approaches remove text conflicts but not semantic ones [23]. Several systems (grite, AgentRoom, MPAC, ATM) are direct competitors to Zit's claims and footprints [20, 22, 24, 25].
+
+**Agent PR outcomes and cost [26–28, 52–54].** Many agent PRs are rejected, wasting tokens and review [26, 27]. Token cost per run is unpredictable [28]. Productivity evidence is moderate and smallest in real teams [52–54], and review time grows [54].
+
+**VCS and agent tools [33–44].** Isolation options range across hunks in one directory [33], workspaces [35], containers [38, 39], worktrees [40–42] and VMs or hosted workspaces [43, 44]. None of them documents a semantic pre-check or a combined-state gate. jj [34] and Pijul [36] offer different conflict models: deferred conflicts and commuting patches.
+
+**Locking and disk [47–49, 55, 56].** Locks fail as serialisation [48] but come back where merging fails [49]. Private drafts beat a shared real-time document even for CRDT proponents [47]. Disk duplication is a real problem that others solve without copy-on-write [55, 56].
+
+---
+
+## Objections, and the evidence on each side
+
+### O1. "A merge queue plus tests is enough; a static semantic pre-check is redundant."
+- **For:** Fowler's remedy for semantic conflicts is self-testing code and frequent integration, not static detection ([SemanticConflict](https://martinfowler.com/bliki/SemanticConflict.html)). Jane Street treats the test-before-merge build-bot as the core idea ([Making "never break the build" scale](https://blog.janestreet.com/making-never-break-the-build-scale/)). Chromium's CQ gates on curated tests with no semantic pre-check ([Chromium Commit Queue](https://chromium.googlesource.com/chromium/src/+/HEAD/docs/infra/cq.md)).
+- **Against:** Generated unit tests aimed at semantic conflicts still found only 9 of 28 ([SAM](https://arxiv.org/abs/2310.02395)). With existing test suites, coverage of interactions is unlikely to be better. **Inference.** STALE shows that interface reliance is the failure mechanism, and that a description of the concurrent change recovered 82% of runs ([STALE](https://arxiv.org/abs/2609.25396)).
+- **Zit's answer:** The objection is mostly right about the core. Zit's `accept` is a merge queue ([How it works](/science)), and the checks on the combined state are the guarantee. The name-based refusal is a cheap early filter, not a substitute for the checks. Where the objection lands: Zit has not re-measured the filter's false-refusal rate since ADR 16 ([Limits](/limits)), so its value over plain queue checks is unproven at present.
+
+### O2. "Name-based detection is too noisy to be useful."
+- **For:** Lightweight static semantic-conflict detectors "suffer from a high rate of false positives" ([RefFilter](https://arxiv.org/abs/2510.01960)). Making the analysis deeper with pointer analysis caused "prohibitive drops in recall" ([Pointer analysis](https://arxiv.org/abs/2507.20081)). Zit's own benchmark refused 21–23% of good changes ([Getting started](/)).
+- **Against:** Matching by declaration removes the false conflicts of text merge, such as independent methods added at the same place ([Evaluating and Improving Semistructured Merge](https://pauloborba.cin.ufpe.br/publication/2017evaluating_and_improving_semistructured_merge/2017OOPSLASemiVsUnstructuredMerge.pdf)). Filtering refactorings cut false positives by about 32% without a significant rise in misses ([RefFilter](https://arxiv.org/abs/2510.01960)).
+- **Zit's answer:** The objection is right on the measured number. The interface-only rule should lower it, but that has not been shown. Renames, which Zit treats as a delete plus an add, are a named source of false positives in this literature [9, 50]. Zit's mitigation is that refusals happen before checks and cost no review. **Inference:** a high false-refusal rate still costs agent tokens and retries [27, 28].
+
+### O3. "Claims are locks, and locks are an anti-pattern."
+- **For:** The Subversion book documents forgotten locks, needless serialisation and false security ([Version Control the Subversion Way](https://svnbook.red-bean.com/en/1.7/svn.basic.version-control-basics.html)). Static pre-write admission "serialized 96.7% of executions, including 93.3% of clean cases" ([Claim Plane](https://arxiv.org/abs/2608.00947)).
+- **Against:** git users reintroduced locking for files that cannot be merged ([Git LFS File Locking](https://github.com/git-lfs/git-lfs/wiki/File-Locking)). With a coordination log, work that re-did a teammate's task fell from 78% to 0% ([grite](https://arxiv.org/abs/2606.19616)). In AgentRoom, "coordination ... bears the load" ([AgentRoom](https://arxiv.org/abs/2608.23740)). In Zit's Lesson 04, 10 of 10 changes landed with claims against 4 of 10 without (single runs, [Getting started](/)).
+- **Zit's answer:** Zit's claims are advisory, and nothing is blocked from being recorded ([How it works](/science)), which avoids the problems of forgotten locks and enforced serialisation. The Subversion book's "false sense of security" case, where two locked files depend on each other, is what read sets address. Where the objection is right: a refused claim does make the next agent choose other work, so with one shared task Zit also moves toward serial execution. Zit has not measured how much parallelism it gives up in clean cases. Claim Plane's 93.3% figure shows why that measurement is needed.
+
+### O4. "A real-time shared workspace (CRDT, write-time mediation) beats isolated workspaces plus merge."
+- **For:** STORM beats a git-worktree baseline (+18.7 on Commit0-Lite) by catching conflicting edits at write time, and calls post-hoc merge "expensive" ([STORM](https://arxiv.org/abs/2605.20563)). CodeCRDT reached "zero merge failures" ([CodeCRDT](https://arxiv.org/abs/2510.18893)).
+- **Against:** CodeCRDT still had 5–10% semantic conflicts and was up to 39.4% slower ([CodeCRDT](https://arxiv.org/abs/2510.18893)). A CRDT team found that writers want private drafts ([Upwelling](https://www.inkandswitch.com/upwelling/)), though that study was about writers, not code.
+- **Zit's answer:** STORM's point about timing is right. Zit's live write sets and claims are its early signal, but they work only on one machine, and an agent that has not claimed or written anything is invisible ([Limits](/limits)). Zit keeps isolation so that builds and tests do not see half-done edits. Zit has not compared itself against a shared-workspace system.
+
+### O5. "Don't run agents in parallel at all."
+- **For:** Parallel subagents act on "conflicting assumptions not prescribed upfront" ([Don't Build Multi-Agents](https://cognition.ai/blog/dont-build-multi-agents)). Agents succeed 30% less often when working together ([CooperBench](https://arxiv.org/abs/2601.13295)).
+- **Against:** Isolated branches with merge and test verification gained +25.6 on PaperBench and +14.7 on Commit0 over a single agent ([CAID](https://arxiv.org/abs/2603.21489)). Coordination tripled useful throughput in grite ([grite](https://arxiv.org/abs/2606.19616)).
+- **Zit's answer:** The objection holds for agents that split one task without sharing context. Zit does not share context between agents. It shares only claims, write sets and refusals. Zit's own runs are single runs ([Getting started](/)). **Inference:** Zit fits parallel work on separable tasks better than one task split among agents.
+
+### O6. "Review is the bottleneck, so more parallel changes are useless."
+- **For:** High AI adoption brought 98% more merged PRs but 91% longer review times, and no gain at the company level ([AI Productivity Paradox](https://www.faros.ai/blog/ai-software-engineering)). This is vendor data. Gains are smaller in open-source and enterprise settings ([Maier et al.](https://arxiv.org/abs/2605.04779)).
+- **Against:** An RCT found about 21% less time on task, with a wide interval ([Paradis et al.](https://arxiv.org/abs/2410.12944)). That covers assist features on one task.
+- **Zit's answer:** The objection is largely right. Zit does not increase review capacity, and it "does not review code" ([Getting started](/)). It filters colliding and failing changes before review and attaches the author's account. Whether that shortens review is not measured.
+
+### O7. "Copy-on-write savings don't matter."
+- **For:** pnpm's hard-linked store removes duplicated dependencies without a copy-on-write file system ([pnpm Motivation](https://pnpm.io/motivation)). On ext4, Zit's workspaces are plain copies ([Limits](/limits)).
+- **Against:** pnpm's existence shows that duplication was costly enough to build a package manager around ([pnpm Motivation](https://pnpm.io/motivation)). Microsoft built GVFS because checkout cost blocked git at scale ([Scaling Git](https://devblogs.microsoft.com/bharry/scaling-git-and-some-back-story/)).
+- **Zit's answer:** The objection is right that pnpm is an untested competitor for npm projects: there is no pnpm baseline in [Roadmap](/roadmap). Zit's 327 MB against 1,619 MB is measured only against `npm ci`. Copy-on-write also covers the source tree and non-npm dependencies, but only on APFS, btrfs and XFS.
+
+### O8. "Semantic conflicts are rare in real merges."
+- **For:** Only 1 of 834 runs on mined, merged Django PR pairs showed interference, and the authors say their constructed rates do not estimate real-world frequency ([STALE](https://arxiv.org/abs/2609.25396)).
+- **Against:** Crystal reports a third of git-clean merges were build or test conflicts ([Crystal](https://homes.cs.washington.edu/~mernst/pubs/vc-conflicts-fse2011.pdf)). Its own percentages do not obviously give that figure, so the "third" rests on the paper's stated claim. Even with CRDTs, 5–10% of cases had semantic conflicts ([CodeCRDT](https://arxiv.org/abs/2510.18893)).
+- **Zit's answer:** Both can be true. **Inference:** mined pairs are survivors of review, while Zit sees unreviewed agent work. The defensible claim is that the checks on the combined state catch these conflicts. The name-based refusal's share of the catches is unmeasured.
+
+---
+
+## Where Zit is weak
+
+1. **Serial verification.** Verification runs one change at a time and is 2.2× slower than a plain merge loop. SubmitQueue commits independent changes in parallel using a conflict graph [30], and Jane Street describes the m×n cost of a serial queue [45]. *Closes it:* build a conflict graph from symbol footprints, batch-verify the independent changes, and bisect when a batch fails. "Batch" is already on [Roadmap](/roadmap); the footprint-based independence test is new.
+2. **No oracle-based accuracy numbers.** The false-refusal rate of 21–23% predates ADR 16, and false accepts are not reported [10]. *Closes it:* replay AgenticFlict [15], CooperBench [21] and STALE [16] with test oracles, and report false refusals and false accepts separately.
+3. **Adjacent insertions conflict.** This is the most common remaining rejection ([Limits](/limits)). *Closes it:* a semistructured or combined merge driver for Zit's languages [2, 3, 50], within Spork's formatting and runtime constraints [4].
+4. **Renames make every reader stale.** *Closes it:* refactoring detection before the staleness decision [9]. Expect modest gains, and possible regressions [5].
+5. **Body-only behavioural breaks rely on existing checks.** *Closes it:* generated tests aimed at how two changes interact, stored as evidence [7], with low recall expected. Proof-based checks [6] are long horizon.
+6. **Composed text is not parse-checked.** *Closes it:* parse the composed files with tree-sitter before running checks [11]. Zit already parses changed files. **Inference:** the cost is small.
+7. **Awareness is local and reactive.** *Closes it:* replicate claims and write sets across machines [12, 20, 24], and add speculative background compose of open workspaces against each other [1], with a safe-merge pre-filter to bound cost [13].
+8. **Refusal is the only outcome.** *Closes it:* record the refused change's conflict state for later resolution [34], and optionally offer an agent-proposed resolution that must pass the checks [14, 38]. MergeBERT is about 63–68% accurate.
+9. **Runtime resources are shared.** Ports and machine-wide state are shared ([Limits](/limits)), and agents preempt each other's tasks [29]. *Closes it:* allocate a port and namespace per workspace, as uzi does for ports [41].
+10. **The record is thin.** Zit keeps the final message and the reported cost, not what the agent ran [39]. *Closes it:* an optional command log per change.
+11. **Test selection is declared, not derived.** Check `inputs` are trusted, not verified. *Closes it:* reverse-dependency selection from footprints [31].
+12. **`zit status` cost grows with the number of changes.** *Closes it:* the same pre-filter as item 7 [13].
+13. **Duplicate work beyond claims is unmeasured.** *Closes it:* measure duplicate and redundant work with and without claims on CooperBench [21], against grite's 78% baseline [20].
+
+## Sources
+
+1. Y. Brun, R. Holmes, M. D. Ernst, D. Notkin. "Proactive Detection of Collaboration Conflicts" (Crystal). 2011. https://homes.cs.washington.edu/~mernst/pubs/vc-conflicts-fse2011.pdf
+2. S. Apel, J. Liebig, B. Brandl, C. Lengauer, C. Kästner. "Semistructured Merge: Rethinking Merge in Revision Control Systems". 2011. https://www.se.cs.uni-saarland.de/publications/docs/FSE2011.pdf
+3. G. Seibt, F. Heck, G. Cavalcanti, P. Borba, S. Apel. "Leveraging Structure in Software Merge: An Empirical Study". 2021 (year taken from the URL). https://pauloborba.cin.ufpe.br/publication/2021leveraging_structure_in_software_merge__an_empirical_study/2021-Seibt-Leveraging%20Structure%20in%20Software%20Merge-%20An%20Empirical%20Study.pdf
+4. S. Larsén, J.-R. Falleri, B. Baudry, M. Monperrus. "Spork: Structured Merge for Java with Formatting Preservation". 2022. https://arxiv.org/abs/2202.05329
+5. M. Ellis, S. Nadi, D. Dig. "Operation-based Refactoring-aware Merging: An Empirical Evaluation". 2021. https://arxiv.org/abs/2112.10370
+6. M. Sousa, I. Dillig, S. K. Lahiri. "Verified Three-Way Program Merge" (SafeMerge). 2018. https://www.cs.utexas.edu/~isil/verified-merge.pdf
+7. L. Da Silva, P. Borba, T. Maciel, W. Mahmood, T. Berger, J. Moisakis, A. Gomes, V. Leite. "Detecting Semantic Conflicts with Unit Tests" (SAM). 2023. https://arxiv.org/abs/2310.02395
+8. M. Barbosa, P. Borba, R. Bonifácio, V. Lira, G. Santos. "The Effect of Pointer Analysis on Semantic Conflict Detection". 2025. https://arxiv.org/abs/2507.20081
+9. V. Lira, P. Borba, R. Bonifácio, G. Santos, M. Barbosa. "RefFilter: Improving Semantic Conflict Detection via Refactoring-Aware Static Analysis". 2025. https://arxiv.org/abs/2510.01960
+10. B. Schesch, R. Featherman, K. J. Yang, B. R. Roberts, M. D. Ernst. "Evaluation of Version Control Merge Tools". 2024. https://arxiv.org/abs/2410.09934
+11. A. Mori, M. Hashimoto. "On the Correctness of Software Merge" (preprint). 2026. https://arxiv.org/abs/2607.07987
+12. C. Maddila, N. Nagappan, C. Bird, G. Gousios, A. van Deursen. "ConE: A Concurrent Edit Detection Tool for Large Scale Software Development". 2021. https://arxiv.org/abs/2101.06542
+13. M. Owhadi-Kareshk, S. Nadi, J. Rubin. "Predicting Merge Conflicts in Collaborative Software Development". 2019. https://arxiv.org/abs/1907.06274
+14. A. Svyatkovskiy et al. "Program Merge Conflict Resolution via Neural Transformers" (MergeBERT). 2021. https://arxiv.org/abs/2109.00084
+15. D. Ogenrwot, J. Businge. "AgenticFlict: A Large-Scale Dataset of Merge Conflicts in AI Coding Agent Pull Requests on GitHub". 2026. https://arxiv.org/abs/2604.03551
+16. H. Xia, E. Wu, Y. Park. "Passes Alone, Fails Together: Benchmarking Semantic Coordination in Parallel LLM-Agent Development" (STALE). 2026. https://arxiv.org/abs/2609.25396
+17. M. Nikolaev. "Claim Plane: Reliability Gains and the Limits of Selective Concurrency for Parallel Coding Agents". 2026. https://arxiv.org/abs/2608.00947
+18. J. Geng, G. Neubig. "Effective Strategies for Asynchronous Software Engineering Agents" (CAID). 2026. https://arxiv.org/abs/2603.21489
+19. M. Liu, T. Chen, Z. Xu, X. Jiang, Y. Dong. "Multi-agent Collaboration with State Management" (STORM). 2026. https://arxiv.org/abs/2605.20563
+20. D. Sarkar. "Before the Pull Request: Mining Multi-Agent Coordination" (grite). 2026. https://arxiv.org/abs/2606.19616
+21. A. Khatua, H. Zhu, …, D. Yang. "CooperBench: Why Coding Agents Cannot be Your Teammates Yet". 2026. https://arxiv.org/abs/2601.13295
+22. S. Cho, D. Lee. "AgentRoom: Concurrent Multi-Agent Coding in a CRDT-Backed Shared Workspace". 2026. https://arxiv.org/abs/2608.23740
+23. S. Pugachev. "CodeCRDT: Observation-Driven Coordination for Multi-Agent LLM Code Generation". 2025. https://arxiv.org/abs/2510.18893
+24. K. Qian, X. Fang, Z. Li. "MPAC: A Multi-Principal Agent Coordination Protocol for Interoperable Multi-Agent Collaboration". 2026. https://arxiv.org/abs/2604.09744
+25. E. Huang. "ATM: CID-Brokered Pre-Write Admission for Multi-Agent Code Co-Synthesis". 2026. https://arxiv.org/abs/2607.00041
+26. R. Ehsani, S. Pathak, S. Rawal, A. Al Mujahid, M. M. Imran, P. Chatterjee. "Where Do AI Coding Agents Fail? An Empirical Study of Failed Agentic Pull Requests in GitHub". 2026. https://arxiv.org/abs/2601.15195
+27. M. Abujadallah, A. Arabat, M. Sayagh. "Understanding the Rejection of Fixes Generated by Agentic Pull Requests: Insights from the AIDev Dataset". 2026. https://arxiv.org/abs/2606.13468
+28. L. Bai et al. "How Do AI Agents Spend Your Money? Analyzing and Predicting Token Consumption in Agentic Coding Tasks". 2026. https://arxiv.org/abs/2604.22750
+29. Y. Xie et al. "ClashBench: Conflicts Leading Agents to Seize and Harm". 2026. https://arxiv.org/abs/2609.19892
+30. S. Ananthanarayanan et al. (Uber). "Keeping Master Green at Scale" (SubmitQueue). 2019. https://www.masoud.io/docs/eurosys19.pdf
+31. A. Memon, Z. Gao, B. Nguyen, S. Dhanda, E. Nickell, R. Siemborski, J. Micco. "Taming Google-Scale Continuous Testing". 2017. https://huang.isis.vanderbilt.edu/cs8395/paper/google-testing-icse-seip-17.pdf
+32. The Chromium Project. "Chromium Commit Queue". n.d. https://chromium.googlesource.com/chromium/src/+/HEAD/docs/infra/cq.md
+33. GitButler. "Parallel branches". n.d. https://docs.gitbutler.com/features/branch-management/virtual-branches
+34. Jujutsu project. "First-class conflicts". n.d. https://docs.jj-vcs.dev/latest/conflicts/
+35. Jujutsu project. "Working copy" (workspaces and stale working copies). n.d. https://docs.jj-vcs.dev/latest/working-copy/
+36. Pijul project. "Theory". n.d. https://pijul.org/manual/theory.html
+37. Meta. "Sapling SCM: Introduction". n.d. https://sapling-scm.com/docs/introduction/
+38. Imbue. "Sculptor: the missing UI for parallel coding agents". 2025. https://imbue.com/sculptor/
+39. Dagger. "container-use" README. n.d. https://github.com/dagger/container-use
+40. smtg-ai. "Claude Squad" README. n.d. https://github.com/smtg-ai/claude-squad
+41. devflowinc. "uzi" README. n.d. https://github.com/devflowinc/uzi
+42. BloopAI. "Vibe Kanban" README. n.d. https://github.com/BloopAI/vibe-kanban
+43. Cognition. "Devin Docs: Advanced capabilities" (managed Devins). n.d. https://docs.devin.ai/work-with-devin/advanced-capabilities
+44. OpenAI. "Codex cloud". n.d. https://learn.chatgpt.com/docs/cloud
+45. Y. Minsky (Jane Street). "Making 'never break the build' scale". 2014. https://blog.janestreet.com/making-never-break-the-build-scale/
+46. M. Fowler. "SemanticConflict". 2011. https://martinfowler.com/bliki/SemanticConflict.html
+47. K. R. McKelvey, S. Jenson, E. Wagner, B. Cook, M. Kleppmann (Ink & Switch). "Upwelling: Combining real-time collaboration with version control for writers". 2023. https://www.inkandswitch.com/upwelling/
+48. B. Collins-Sussman, B. W. Fitzpatrick, C. M. Pilato. "Version Control the Subversion Way", Version Control with Subversion 1.7. n.d. https://svnbook.red-bean.com/en/1.7/svn.basic.version-control-basics.html
+49. git-lfs project. "File Locking" (wiki). 2025. https://github.com/git-lfs/git-lfs/wiki/File-Locking
+50. G. Cavalcanti, P. Borba, P. Accioly. "Evaluating and Improving Semistructured Merge". 2017. https://pauloborba.cin.ufpe.br/publication/2017evaluating_and_improving_semistructured_merge/2017OOPSLASemiVsUnstructuredMerge.pdf
+51. W. Yan (Cognition). "Don't Build Multi-Agents". 2025. https://cognition.ai/blog/dont-build-multi-agents
+52. E. Paradis et al. "How much does AI impact development speed? An enterprise-based randomized controlled trial". 2024. https://arxiv.org/abs/2410.12944
+53. S. Maier, M. Gunzenhäuser, J. Schweisthal, M. Schneider, S. Feuerriegel. "A meta-analysis of the effect of generative AI on productivity and learning in programming". 2026. https://arxiv.org/abs/2605.04779
+54. Faros AI. "The AI Productivity Paradox Report 2025". 2025. https://www.faros.ai/blog/ai-software-engineering
+55. pnpm project. "Motivation". n.d. https://pnpm.io/motivation
+56. B. Harry (Microsoft). "Scaling Git (and some back story)". 2017. https://devblogs.microsoft.com/bharry/scaling-git-and-some-back-story/

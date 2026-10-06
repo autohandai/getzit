@@ -14,7 +14,7 @@ export default defineConfig({
     sidebar: [
       { label: "Get started", items: ["index", "tutorial", "quickstart", "why", "compare"] },
       { label: "Use it", items: ["agents", "web", "git"] },
-      { label: "How it works", items: ["concepts", "science", "research"] },
+      { label: "How it works", items: ["concepts", "science", "research", "prior-art"] },
       { label: "Evidence", items: ["benchmarks", "lessons", "limits"] },
       { label: "Reference", items: ["cli", "checks", "spec"] },
       { label: "Roadmap", items: ["roadmap"] },
