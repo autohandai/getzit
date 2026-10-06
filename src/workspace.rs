@@ -256,8 +256,22 @@ fn excludes(repo: &Repo, base: &Oid) -> Result<String> {
 
 /// Fill `dir` with `tree/` (the files) and `index` (git's view of them).
 fn populate(repo: &Repo, tree: &Oid, dir: &Path, cache_it: bool) -> Result<()> {
+    let trace = std::env::var_os("ZIT_TRACE").is_some();
     let cloned = match repo.strategy {
-        Strategy::Clone => cache::clone_into(repo, tree, dir).ok(),
+        Strategy::Clone => match cache::clone_into(repo, tree, dir) {
+            Ok(source) => {
+                if trace {
+                    eprintln!("zit: workspace of {} from the cache: {source:?}", tree.short());
+                }
+                Some(source)
+            }
+            Err(e) => {
+                if trace {
+                    eprintln!("zit: cache clone of {} failed, checking out instead: {e}", tree.short());
+                }
+                None
+            }
+        },
         Strategy::Checkout => None,
     };
     if cloned.is_none() {
@@ -287,8 +301,12 @@ fn prepare(repo: &Repo, tree: &Oid, dir: &Path) -> Result<bool> {
     };
     let key = crate::evidence::prepare_key(repo, tree, &step)?;
     let marker = dir.join(".zit-prepared");
-    if fs::read_to_string(&marker).ok().as_deref() == Some(key.as_str()) {
+    let found = fs::read_to_string(&marker).ok();
+    if found.as_deref() == Some(key.as_str()) {
         return Ok(false);
+    }
+    if std::env::var_os("ZIT_TRACE").is_some() {
+        eprintln!("zit: installing dependencies for {} (marker {:?}, key {key})", tree.short(), found);
     }
     let tmp = dir.join("tmp");
     fs::create_dir_all(&tmp)?;

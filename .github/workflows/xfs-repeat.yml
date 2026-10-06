@@ -26,7 +26,7 @@ jobs:
           fails=0
           for i in $(seq 1 40); do
             if ! cargo test --release --locked --test prepare -- --nocapture > "run-$i.log" 2>&1; then
-              fails=$((fails + 1)); echo "=== run $i failed"; grep -E "zit:|panicked|left|right" "run-$i.log" | head -30
+              fails=$((fails + 1)); echo "=== run $i failed"; grep -E "zit:|panicked|left|right" "run-$i.log" | head -60
             fi
           done
           echo "failed $fails of 40"
