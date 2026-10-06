@@ -68,17 +68,21 @@ From [autohandai/getzit](https://github.com/autohandai/getzit) CI, written into 
 
 ## Zit in action
 
-Ten people edit the same `README.md` at the same moment, each in their own workspace. Nine edits land in different sections and compose. Two people wrote the Prices section; the second is refused with the reason, retried on top of the first, resolved, and recorded with why. Then everything is published as one plain git branch, and `zit clean` removes every copy Zit made.
+**Many sessions on one repository, at the same time, without worktrees.** Each session works in its own copy-on-write copy of one checkout, a copy of a copy: it shares every file with the others until it edits one, so starting ten sessions writes no new files. The sessions see what the others are changing, and their changes land one at a time.
 
-![Ten users change one README.md at once with Zit: status, accept, a conflict, retry, export and clean](./images/zit-in-action.webp)
+In the recording below, ten sessions change the same `README.md` at the same moment. Edits to different sections compose. Two sessions rewrote the same lines of the Prices section: the second is refused with the reason, redone on top of the first, and recorded with why. Then all ten changes are published as one plain git branch, and `zit clean` deletes every copy Zit made.
 
-The ten users are scripted (`demo/ten-users.sh`); every line of output is Zit's own. Recorded with [`vhs`](https://github.com/charmbracelet/vhs) from `demo/zit-in-action.tape`.
+![Ten sessions change one README.md at once with Zit: status, accept, a collision refused with its reason, retry, export and clean](./images/zit-in-action.webp)
+
+The ten sessions are scripted (`demo/ten-users.sh`), so the run is repeatable; every line of output is Zit's own. Recorded with [`vhs`](https://github.com/charmbracelet/vhs) from `demo/zit-in-action.tape`, on APFS.
 
 ### The web view
 
-`zit web` shows the same repository live: the accepted line, the changes waiting above it, the people still at work below, and for any of them, what it wrote, why it stands where it does, its author's reason and the next command.
+`zit web` watches a repository live. Here, after ten sessions changed one `README.md`, five changes have landed, four wait their turn, one collided, and three more sessions are still working, each in its own copy and each holding a claim. For any of them it shows what it wrote, its author's reason, why it stands where it does, and the command to run next. `git worktree list` in that repository shows only the main checkout.
 
-![A walkthrough of zit web: a waiting change with its reason, a rejected change, a workspace in progress, filtering, and light mode](./images/web-walkthrough.webp)
+![A walkthrough of zit web: what Zit does, then a live repository with landed, waiting and colliding changes, three sessions still working with their claims, filtering, and light mode](./images/web-walkthrough.webp)
+
+The scene is built by `demo/web-scene.sh` and recorded by `demo/web-walkthrough.mjs`.
 
 Zit does not review code. It hands the reviewer changes that are already checked, already combined, and explained by their authors; whether a person reads them before they reach `main` is your process (see [Teams and review](/git#teams-and-review)).
 

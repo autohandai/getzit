@@ -1,13 +1,15 @@
 ---
 title: Compared
-description: Zit next to GitHub merge queue, GitLab merge trains, Graphite, Conductor, Claude Code worktrees, Cursor worktrees and plain git worktrees, from each tool's own documentation.
+description: Zit next to Zed's Delta (DeltaDB), Entire, GitHub merge queue, GitLab merge trains, Graphite, Conductor, Claude Code worktrees, Cursor worktrees and plain git worktrees, from each tool's own documentation.
 ---
 
-Every cell below comes from the tool's own documentation, read on 5 October 2026, or from Zit's docs and tests. "Not documented" means the docs are silent, not that the feature is missing.
+Every cell below comes from the tool's own documentation, read on 5 and 6 October 2026, or from Zit's docs and tests. "Not documented" means the docs are silent, not that the feature is missing.
 
 | | Isolation, disk | Sees others' work in progress | Catches a semantic conflict before checks | Tests the combined result before main moves | Batching | Keeps the agent's reason | Runs without a server |
 |---|---|---|---|---|---|---|---|
 | **Zit** | Copy-on-write clone of one cached checkout, dependencies included (APFS, btrfs, XFS, bcachefs); a checkout elsewhere | Yes, agents on one machine: claims and live write sets | Yes, by symbol and name, five languages | Yes: current's checks and the change's own | No: one at a time | Yes: the agent's final message is the commit body | Yes |
+| **Zed Delta (DeltaDB)** [8] | Each participant gets a local copy of a thread's worktree, kept in sync in real time; each review gets an isolated copy; cloud runners. Disk sharing between copies not documented | Yes, live, across machines: the worktree and the conversation are replicated | Not documented; concurrent edits to the same files are merged by CRDTs | Not built in: an agent "can trigger a run with an existing CI provider" | Not documented | Yes: the conversation is kept next to the edits | Not documented; public beta, free for now |
+| **Entire (Checkpoints CLI)** [9] | None of its own; works alongside git worktrees, tracking each session | Not documented | Not documented | Not documented | Not documented | Yes, in full: transcript, prompts, tool calls, files touched, token use, in git refs linked by a commit trailer | Yes, for capture; `entire login` for its hosted services |
 | **GitHub merge queue** [1] | n/a, works on pull requests | No: only pull requests already queued | No: what your CI catches on the merge group | Yes: base plus the pull requests ahead | Yes: 1–100 pull requests per merge, up to 100 concurrent builds | Not documented | No: hosted |
 | **GitLab merge trains** [2] | n/a | No | No: CI only | Yes: cumulative pipelines | Up to 20 parallel pipelines | Not documented | Self-managed possible |
 | **Graphite** [3] | n/a, branches per stack | Stacked branches build on their parent | No static analysis documented; rebases and re-runs CI | Yes: rebase and CI | Batching in private beta | Not documented | No: the queue is hosted |
@@ -15,6 +17,19 @@ Every cell below comes from the tool's own documentation, read on 5 October 2026
 | **Claude Code worktrees** [5] | A git worktree per session: a fresh checkout, dependencies installed per worktree | Text messages between sessions | No | No | No | A one-line summary from a separate model | Yes |
 | **Cursor worktrees** [6] | A separate checkout per agent, setup such as `npm ci`; 25 per machine by default | Not documented | Not documented | No: changes are applied back into the main checkout | No | Not documented | Worktrees local; cloud agents in VMs |
 | **`git worktree` + CI** [7] | A full working tree per worktree, shared object store | No | No | Only if CI runs on the merge result | No | The commit message | Yes |
+
+## Two other takes on agents and version control
+
+**Delta, from Zed Industries**, is built on DeltaDB, "a new kind of version control that tracks every operation, not just commits" [8]. It replicates a thread's worktree and the conversation with its agents "together, in real time, for everyone in a thread", and "many people and agents can edit the same files at once across different machines" because the worktrees are conflict-free replicated data types. It "works with the git repository you already have". Delta is in public beta for macOS, Linux, Windows and the web. Zed said in 2025 that it plans to open-source DeltaDB.
+
+**Entire**, from former GitHub CEO Thomas Dohmke's company, starts with Checkpoints, an open-source (MIT) CLI that "automatically captures AI agent context— reasoning, prompts, and decisions —on every Git commit" [9]. Checkpoints "live in your repository's own git object store, never in your branch's history", each as a ref under `refs/entire/checkpoints/`, and the commit carries an `Entire-Checkpoint:` trailer. It runs beside your worktrees: "Each worktree has independent session tracking, so you can run multiple AI sessions in different worktrees without conflicts." Entire has announced a git-compatible database, a reasoning layer for multi-agent coordination, and a hosted git network.
+
+How they differ from Zit:
+
+- **Delta merges as people type; Zit merges when a change is accepted.** Delta's CRDTs let several people and agents edit the same files at once and keep everyone in sync. Zit gives each session its own copy and decides at accept whether a change can land: it refuses one that relied on an interface that changed, and runs current's checks and the change's own on the combined result. Neither Delta nor Entire documents such a gate.
+- **Entire keeps the whole session; Zit keeps the author's final account.** Entire records the transcript, prompts and tool calls; Zit records the intent, the agent's last message and its token cost. The two fit together: both store in the repository's own git refs and commit trailers.
+- **Copies.** Delta keeps a synced copy per participant and Entire uses your worktrees; neither documents sharing disk between copies. Zit's copies are copy-on-write clones that share files and installed dependencies until edited.
+- **Where they are ahead:** Delta works across machines in real time, on Windows and the web, with cloud runners and review threads that carry the agents' conversations. Entire supports about eight agents, runs on Windows, and stores far more of each session.
 
 ## Where Zit is different
 
@@ -45,3 +60,5 @@ Zit sits before the queue, not instead of it: agents work in Zit workspaces, Zit
 5. Claude Code Docs, "Worktrees", "Agent view" and "Cross-session messaging". https://code.claude.com/docs/en/worktrees
 6. Cursor Docs, "Worktrees" and "Cloud agents". https://cursor.com/docs/configuration/worktrees
 7. Git documentation, `git worktree`. https://git-scm.com/docs/git-worktree
+8. Zed blog: "Sequoia Backs Zed's Vision" (20 August 2025), "Software Is Made Between Commits" (11 June 2026), "Introducing Delta" (12 August 2026), "Replace PRs with Delta" (16 September 2026). https://zed.dev/blog/introducing-deltadb, https://zed.dev/blog/introducing-delta, https://zed.dev/blog/delta-public-beta
+9. Entire: "Former GitHub CEO Thomas Dohmke raises $60 million seed round" (10 February 2026); Entire CLI README; docs, "Checkpoint Storage". https://entire.io/news/former-github-ceo-thomas-dohmke-raises-60-million-seed-round/, https://github.com/entireio/cli, https://docs.entire.io/guides/configuration/checkpoint-storage
