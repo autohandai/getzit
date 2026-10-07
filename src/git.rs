@@ -56,7 +56,13 @@ pub const MIN_GIT: (u32, u32) = (2, 38);
 
 /// Fail early, naming the version needed, when git is older than [`MIN_GIT`].
 pub fn require_git() -> Result<()> {
-    let out = git_command().arg("--version").output().map_err(|e| Error::msg(format!("cannot run git: {e}")))?;
+    let out = git_command().arg("--version").output().map_err(|e| {
+        let program = match std::env::var_os("ZIT_GIT") {
+            Some(given) => format!("{} ($ZIT_GIT)", Path::new(&given).display()),
+            None => "git (set $ZIT_GIT to a git 2.38+ binary that is not on PATH)".to_string(),
+        };
+        Error::msg(format!("cannot run {program}: {e}"))
+    })?;
     let text = String::from_utf8_lossy(&out.stdout);
     let version = text.split_whitespace().nth(2).unwrap_or_default();
     let mut parts = version.split('.').map(|p| p.parse::<u32>().unwrap_or(0));
