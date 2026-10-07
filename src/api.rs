@@ -99,10 +99,17 @@ fn memoised_status(repo: &Repo, change: &Change, current: &Oid, evidence: &str) 
 }
 
 pub fn overview(repo: &Repo) -> Result<Overview> {
-    let current = change::load(repo, &repo.current()?)?;
+    // One git call: the ref resolves and loads at once, or is not there.
+    let current = change::load_revs(repo, &[crate::git::CURRENT])
+        .ok()
+        .and_then(|mut found| found.pop())
+        .ok_or(crate::Error::NotInitialised)?;
     accept::prune_accepted(repo)?;
     let speculative = change::speculative(repo)?;
-    let evidence = evidence::fingerprint(repo)?;
+    let evidence = match speculative.is_empty() {
+        true => String::new(),
+        false => evidence::fingerprint(repo)?,
+    };
     let statuses = parallel(&speculative, |c| memoised_status(repo, c, &current.id, &evidence));
     let changes: Vec<ChangeRow> =
         speculative.into_iter().zip(statuses).map(|(change, status)| ChangeRow { change, status }).collect();
