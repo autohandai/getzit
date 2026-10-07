@@ -121,7 +121,7 @@ fn methods<'t>(lang: Lang, node: tree_sitter::Node<'t>, text: &str) -> Vec<(Stri
         |n: tree_sitter::Node| n.child_by_field_name("name").map(|c| (text[c.byte_range()].to_string(), c.id()));
     let (owner, body, kinds): (Option<String>, Option<tree_sitter::Node>, &[&str]) = match (lang, node.kind()) {
         (Lang::Rust, "impl_item") => (
-            node.child_by_field_name("type").map(|t| type_name(&text[t.byte_range()])),
+            node.child_by_field_name("type").map(|t| base_type(t, text)),
             node.child_by_field_name("body"),
             &["function_item"],
         ),
@@ -344,16 +344,21 @@ impl Def {
     }
 }
 
-/// Bare type name: `&mut a::Foo<T>` -> `Foo`, `Stack[T]` -> `Stack`.
-fn type_name(raw: &str) -> String {
-    let base = raw.split(['<', '[']).find(|s| !s.is_empty()).unwrap_or(raw);
-    let base = base.rsplit("::").next().unwrap_or(base);
-    base.trim_start_matches(['&', '*', ' ']).trim().to_string()
+/// The type an `impl` or a receiver names, through references, pointers,
+/// paths and generic arguments: `&'a mut a::Foo<T>` -> `Foo`, `*Stack[T, U]` -> `Stack`.
+fn base_type(node: tree_sitter::Node, text: &str) -> String {
+    let inner = match node.kind() {
+        "reference_type" | "pointer_type" | "generic_type" => {
+            node.child_by_field_name("type").or_else(|| node.named_child(0))
+        }
+        "scoped_type_identifier" => node.child_by_field_name("name"),
+        _ => None,
+    };
+    inner.map_or_else(|| text[node.byte_range()].to_string(), |n| base_type(n, text))
 }
 
 /// The top-level symbols `node` defines; empty for module-level code.
 fn definitions(lang: Lang, node: tree_sitter::Node, text: &str) -> Vec<Def> {
-    let field = |n: tree_sitter::Node, f: &str| n.child_by_field_name(f).map(|c| text[c.byte_range()].to_string());
     let named = |n: tree_sitter::Node| n.child_by_field_name("name").map(|c| Def::at(c, text)).into_iter().collect();
     let specs = |n: tree_sitter::Node, kinds: &[&str]| {
         let mut c = n.walk();
@@ -369,7 +374,9 @@ fn definitions(lang: Lang, node: tree_sitter::Node, text: &str) -> Vec<Def> {
             .collect::<Vec<_>>()
     };
     match (lang, node.kind()) {
-        (Lang::Rust, "impl_item") => field(node, "type").map(|t| Def::using(type_name(&t))).into_iter().collect(),
+        (Lang::Rust, "impl_item") => {
+            node.child_by_field_name("type").map(|t| Def::using(base_type(t, text))).into_iter().collect()
+        }
         (Lang::Rust, k) if k.ends_with("_item") || k == "macro_definition" => named(node),
         (Lang::Python, "function_definition" | "class_definition") => named(node),
         (Lang::Python, "decorated_definition") => node.child_by_field_name("definition").map(named).unwrap_or_default(),
@@ -385,11 +392,13 @@ fn definitions(lang: Lang, node: tree_sitter::Node, text: &str) -> Vec<Def> {
         }
         (Lang::Js, "lexical_declaration" | "variable_declaration") => specs(node, &["variable_declarator"]),
         (Lang::Js, k) if k.ends_with("_declaration") || k == "internal_module" => named(node),
-        (Lang::Go, "method_declaration") => field(node, "receiver")
+        (Lang::Go, "method_declaration") => node
+            .child_by_field_name("receiver")
+            .and_then(|r| r.named_child(0))
+            .and_then(|p| p.child_by_field_name("type"))
             .zip(node.child_by_field_name("name"))
             .map(|(r, name)| {
-                let inner = r.trim_matches(['(', ')']);
-                let owner = type_name(inner.rsplit([' ', '*']).next().unwrap_or(inner));
+                let owner = base_type(r, text);
                 Def { name: format!("{owner}::{}", &text[name.byte_range()]), declared_by: Some(name.id()) }
             })
             .into_iter()
@@ -626,5 +635,21 @@ mod tests {
         assert!(index("a.json", b"{}").is_none());
         assert!(index("Makefile", b"all:").is_none());
         assert!(index("a.rs", &[0xff, 0xfe, 0x00]).is_none());
+    }
+
+    #[test]
+    fn receiver_and_impl_types_are_named_through_pointers_lifetimes_and_generics() {
+        let ix = index(
+            "a.go",
+            b"package a\ntype Stack[T any, U any] struct{}\nfunc (s *Stack[T, U]) Push(v T) {}\nfunc (Stack[T, U]) Pop() {}\n",
+        )
+        .unwrap();
+        assert_eq!(names(&ix), ["Stack", "Stack::Pop", "Stack::Push"]);
+        let ix = index(
+            "a.rs",
+            b"struct Foo;\nimpl<'a> IntoIterator for &'a Foo { fn into_iter(self) {} }\nimpl Drop for &mut Foo { fn drop(&mut self) {} }\nimpl<T> Tr for *const a::Foo<T> { fn c() {} }\n",
+        )
+        .unwrap();
+        assert_eq!(names(&ix), ["Foo", "Foo::c", "Foo::drop", "Foo::into_iter"]);
     }
 }
