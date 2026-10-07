@@ -77,6 +77,11 @@ pub struct Report {
 /// change's account. Also exported to the agent as `$ZIT_SUMMARY_FILE`.
 pub const SUMMARY_FILE: &str = "{ZIT_SUMMARY_FILE}";
 
+/// As [`SUMMARY_FILE`], for the file whose content becomes the change's
+/// intent, overriding `--intent`. Exported as `$ZIT_INTENT_FILE`. Only
+/// `zit run` reads it; `zit record` and MCP take the intent as given.
+pub const INTENT_FILE: &str = "{ZIT_INTENT_FILE}";
+
 /// The longest account kept; agents put their conclusion last, so the end is kept.
 const MAX_SUMMARY: usize = 8_000;
 
@@ -156,13 +161,17 @@ pub fn run(repo: &Repo, opts: &Run) -> Result<Report> {
     ws.pid_started = workspace::process_start(std::process::id());
     ws.save()?;
 
-    let summary_file = ws.summary_file();
-    let args = opts.command[1..].iter().map(|a| a.replace(SUMMARY_FILE, &summary_file.display().to_string()));
+    let (summary_file, intent_file) = (ws.summary_file(), ws.intent_file());
+    let args = opts.command[1..].iter().map(|a| {
+        a.replace(SUMMARY_FILE, &summary_file.display().to_string())
+            .replace(INTENT_FILE, &intent_file.display().to_string())
+    });
     let mut cmd = Command::new(program);
     cmd.args(args)
         .current_dir(ws.path())
         .env("ZIT_WORKSPACE", &ws.id)
         .env("ZIT_SUMMARY_FILE", &summary_file)
+        .env("ZIT_INTENT_FILE", &intent_file)
         .env("ZIT_CACHE_DIR", repo.cache_dir()?)
         .env("TMPDIR", ws.temp_dir()?)
         .stdout(Stdio::piped());
@@ -308,7 +317,8 @@ pub fn run(repo: &Repo, opts: &Run) -> Result<Report> {
             }
         }
     }
-    let change = change::record(repo, &ws.id, &Record { summary, usage, ..Default::default() })?;
+    let intent = std::fs::read_to_string(&intent_file).ok().filter(|s| !s.trim().is_empty());
+    let change = change::record(repo, &ws.id, &Record { intent, summary, usage, ..Default::default() })?;
     if let (true, Some(change)) = (opts.log, &change) {
         let text = String::from_utf8_lossy(&log.lock().expect("log lock")).into_owned();
         store_log(repo, &change.id, &text)?;

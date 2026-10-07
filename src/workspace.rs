@@ -104,6 +104,12 @@ impl Workspace {
         self.dir().join("summary.txt")
     }
 
+    /// Where an agent run by `zit run` may write the intent of its change
+    /// (`$ZIT_INTENT_FILE`), overriding `--intent`.
+    pub fn intent_file(&self) -> PathBuf {
+        self.dir().join("intent.txt")
+    }
+
     pub(crate) fn claims_file(&self) -> PathBuf {
         self.dir().join("claims")
     }
@@ -366,7 +372,7 @@ fn reuse_slot(repo: &Repo, dir: &Path, base: &Oid, tree: &Oid, new: &NewWorkspac
 fn retire_slot(ws: &Workspace) -> Result<()> {
     let dir = ws.dir();
     fs::rename(dir.join("meta.json"), dir.join(RETIRED))?;
-    for leftover in ["reads", "claims", "inflight.json", "summary.txt", "git/index.lock"] {
+    for leftover in ["reads", "claims", "inflight.json", "summary.txt", "intent.txt", "git/index.lock"] {
         let _ = fs::remove_file(dir.join(leftover));
     }
     let _ = fs::remove_dir_all(dir.join("tmp"));

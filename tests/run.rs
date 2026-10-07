@@ -292,6 +292,24 @@ fn run_log_keeps_the_agents_output_with_the_change() {
     assert!(none.stderr.contains("no log"), "{}", none.stderr);
 }
 
+/// An agent may set the recorded change's intent by writing `$ZIT_INTENT_FILE`,
+/// as it may its account with `$ZIT_SUMMARY_FILE`.
+#[test]
+fn an_agent_can_write_the_intent_of_its_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = cli(dir.path());
+    let script = "printf 'Add b, as the task\\nreally meant\\n' > \"$ZIT_INTENT_FILE\"; echo b > b.txt";
+    let ran = cli.run(&["run", "--intent", "Given", "--json", "--", "sh", "-c", script]).ok().json();
+    assert_eq!(ran["change"]["intent"], "Add b, as the task\nreally meant");
+    let shown = cli.run(&["show", ran["change"]["id"].as_str().unwrap()]).ok().stdout;
+    assert!(shown.contains("intent   Add b, as the task"), "{shown}");
+
+    // An empty file changes nothing.
+    let script = "printf '  \\n' > \"$ZIT_INTENT_FILE\"; echo c > c.txt";
+    let ran = cli.run(&["run", "--intent", "Given", "--json", "--", "sh", "-c", script]).ok().json();
+    assert_eq!(ran["change"]["intent"], "Given");
+}
+
 /// Processes the agent left behind (a dev server, a watcher) must not keep writing while its work is recorded.
 #[test]
 fn processes_the_agent_started_are_stopped_with_it() {
