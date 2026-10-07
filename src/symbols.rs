@@ -34,6 +34,7 @@ enum Lang {
     Go,
     Java,
     Ruby,
+    CSharp,
 }
 
 fn language(path: &str) -> Option<(Lang, tree_sitter::Language)> {
@@ -47,6 +48,7 @@ fn language(path: &str) -> Option<(Lang, tree_sitter::Language)> {
         "go" => (Lang::Go, tree_sitter_go::LANGUAGE.into()),
         "java" => (Lang::Java, tree_sitter_java::LANGUAGE.into()),
         "rb" => (Lang::Ruby, tree_sitter_ruby::LANGUAGE.into()),
+        "cs" => (Lang::CSharp, tree_sitter_c_sharp::LANGUAGE.into()),
         _ => return None,
     })
 }
@@ -69,6 +71,7 @@ fn is_import(lang: Lang, node: tree_sitter::Node, text: &str) -> bool {
         Lang::Go => kind == "import_declaration",
         Lang::Java => kind == "import_declaration",
         // `require 'x'` is a call like any other to the grammar.
+        Lang::CSharp => kind == "using_directive",
         Lang::Ruby => {
             kind == "call"
                 && node.child_by_field_name("receiver").is_none()
@@ -79,10 +82,24 @@ fn is_import(lang: Lang, node: tree_sitter::Node, text: &str) -> bool {
     }
 }
 
-/// The nodes that make up the file's top level.
-fn top_level<'t>(_lang: Lang, parent: tree_sitter::Node<'t>) -> Vec<tree_sitter::Node<'t>> {
+/// The nodes that make up the file's top level. C# code lives inside
+/// namespace blocks, which are not units themselves: their declarations are
+/// the top level and the namespace's name is module-level code.
+fn top_level<'t>(lang: Lang, parent: tree_sitter::Node<'t>) -> Vec<tree_sitter::Node<'t>> {
+    let mut out = Vec::new();
     let mut cursor = parent.walk();
-    parent.children(&mut cursor).collect()
+    for node in parent.children(&mut cursor) {
+        match (lang, node.kind()) {
+            (Lang::CSharp, "namespace_declaration") => {
+                out.extend(node.child_by_field_name("name"));
+                if let Some(body) = node.child_by_field_name("body") {
+                    out.extend(top_level(lang, body).into_iter().filter(|n| n.is_named()));
+                }
+            }
+            _ => out.push(node),
+        }
+    }
+    out
 }
 
 /// Visit `node` and every node below it.
@@ -171,6 +188,13 @@ fn methods<'t>(lang: Lang, node: tree_sitter::Node<'t>, text: &str) -> Vec<(Stri
         (Lang::Ruby, "class" | "module") => {
             (name_of(node).map(|(n, _)| n), node.child_by_field_name("body"), &["method", "singleton_method"])
         }
+        (Lang::CSharp, "class_declaration" | "interface_declaration" | "struct_declaration" | "record_declaration") => {
+            (
+                name_of(node).map(|(n, _)| n),
+                node.child_by_field_name("body"),
+                &["method_declaration", "constructor_declaration"],
+            )
+        }
         _ => return vec![],
     };
     let (Some(owner), Some(body)) = (owner, body) else { return vec![] };
@@ -221,9 +245,8 @@ fn signature(node: tree_sitter::Node, text: &str, cut: &[std::ops::Range<usize>]
 /// and no reads are inferred from it, so semantic staleness is not detected.
 pub fn unparsed_code(path: &str) -> bool {
     const CODE: &[&str] = &[
-        "kt", "kts", "scala", "cs", "fs", "c", "h", "cc", "cpp", "cxx", "hpp", "hh", "m", "mm", "swift", "php", "pl",
-        "lua", "dart", "ex", "exs", "erl", "hs", "ml", "clj", "zig", "nim", "jl", "r", "sql", "sh", "bash", "vue",
-        "svelte",
+        "kt", "kts", "scala", "fs", "c", "h", "cc", "cpp", "cxx", "hpp", "hh", "m", "mm", "swift", "php", "pl", "lua",
+        "dart", "ex", "exs", "erl", "hs", "ml", "clj", "zig", "nim", "jl", "r", "sql", "sh", "bash", "vue", "svelte",
     ];
     let ext = path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
     language(path).is_none() && ext.is_some_and(|e| CODE.contains(&e.as_str()))
@@ -446,6 +469,8 @@ fn definitions(lang: Lang, node: tree_sitter::Node, text: &str) -> Vec<Def> {
             .filter(|n| n.kind() == "constant")
             .map(|n| vec![Def::at(n, text)])
             .unwrap_or_default(),
+        (Lang::CSharp, "file_scoped_namespace_declaration" | "using_directive") => vec![],
+        (Lang::CSharp, k) if k.ends_with("_declaration") => named(node),
         _ => vec![],
     }
 }
@@ -487,6 +512,9 @@ fn member_of_a_value(lang: Lang, n: tree_sitter::Node, text: &str, imports: &BTr
         (Lang::Java, "identifier", "field_access") if is_field("field") => parent.child_by_field_name("object"),
         (Lang::Java, "identifier", "method_invocation") if is_field("name") => parent.child_by_field_name("object"),
         (Lang::Ruby, "identifier", "call") if is_field("method") => parent.child_by_field_name("receiver"),
+        (Lang::CSharp, "identifier", "member_access_expression") if is_field("name") => {
+            parent.child_by_field_name("expression")
+        }
         _ => return false,
     };
     // An unqualified call (`price()`) names the top-level symbol.
@@ -563,6 +591,55 @@ mod tests {
         assert_eq!(a.symbols["Shop::price"].sig, docs.symbols["Shop::price"].sig);
         assert_ne!(a.symbols["Shop::price"].sig, param.symbols["Shop::price"].sig);
         assert_ne!(a.symbols["Shop"].sig, attr.symbols["Shop"].sig);
+    }
+
+    #[test]
+    fn csharp_types_methods_and_usings_are_units() {
+        let ix = index(
+            "Shop.cs",
+            b"using System;\nusing Shop.Util;\nnamespace Shop.Core\n{\n  /// <summary>Doc.</summary>\n  [Serializable]\n  public class Shop : Base, I\n  {\n    private int n = 1;\n    public int Count { get; set; }\n    public Shop() { n = 2; }\n    public int Price(Item it) => lib.Tax(it.Cost) + Util.Max(1, 2) + n;\n    public void Run() { Console.WriteLine(n); }\n  }\n  public interface I { int Price(Item it); }\n  public enum E { A, B }\n  public struct S { public int X; public int Y() => X; }\n  public record R(int A);\n  public delegate int D(int x);\n}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            names(&ix),
+            [IMPORTS, "D", "E", "I", "I::Price", "R", "S", "S::Y", "Shop", "Shop::Price", "Shop::Run", "Shop::Shop"]
+        );
+        let refs = &ix.symbols["Shop::Price"].refs;
+        assert!(refs.contains("Util") && refs.contains("Max"), "a member of a used namespace: {refs:?}");
+        assert!(refs.contains("Item") && !refs.contains("Cost") && !refs.contains("Tax"), "{refs:?}");
+        assert!(!ix.symbols["Shop::Run"].refs.contains("WriteLine"));
+        let refs = &ix.symbols["Shop"].refs;
+        assert!(refs.contains("Base") && refs.contains("Serializable") && !refs.contains("Shop"), "{refs:?}");
+        let file_scoped =
+            index("Shop.cs", b"namespace Shop.Core;\npublic class Shop { public int Price() => 1; }\n").unwrap();
+        assert_eq!(names(&file_scoped), ["Shop", "Shop::Price"]);
+        let renamed =
+            index("Shop.cs", b"namespace Shop.Next;\npublic class Shop { public int Price() => 1; }\n").unwrap();
+        assert_ne!(file_scoped.top.hash, renamed.top.hash, "the namespace is module-level code");
+        assert_eq!(file_scoped.symbols, renamed.symbols);
+    }
+
+    #[test]
+    fn csharp_interface_is_the_text_without_bodies_and_comments() {
+        let src = "namespace N {\n  /// Doc.\n  class Shop {\n    int n = 1;\n    Shop() { n = 2; }\n    /// Price.\n    int Price(Item it) { return n; }\n    int Twice(int x) => x * 2;\n  }\n}\n";
+        let a = index("Shop.cs", src.as_bytes()).unwrap();
+        let body = index("Shop.cs", src.replace("return n;", "return n + 1;").as_bytes()).unwrap();
+        let arrow = index("Shop.cs", src.replace("x * 2", "x + x").as_bytes()).unwrap();
+        let ctor = index("Shop.cs", src.replace("n = 2;", "n = 3;").as_bytes()).unwrap();
+        let docs = index("Shop.cs", src.replace("Doc.", "Docs.").replace("Price.", "The price.").as_bytes()).unwrap();
+        let param = index("Shop.cs", src.replace("Item it", "Item it, int q").as_bytes()).unwrap();
+        let field = index("Shop.cs", src.replace("int n = 1;", "long n = 1;").as_bytes()).unwrap();
+        assert_ne!(a.symbols["Shop::Price"].hash, body.symbols["Shop::Price"].hash);
+        assert_eq!(a.symbols["Shop::Price"].sig, body.symbols["Shop::Price"].sig);
+        assert_eq!(a.symbols["Shop"], body.symbols["Shop"]);
+        assert_ne!(a.symbols["Shop::Twice"].hash, arrow.symbols["Shop::Twice"].hash);
+        assert_eq!(a.symbols["Shop::Twice"].sig, arrow.symbols["Shop::Twice"].sig, "an expression body is a body");
+        assert_ne!(a.symbols["Shop::Shop"].hash, ctor.symbols["Shop::Shop"].hash);
+        assert_eq!(a.symbols["Shop::Shop"].sig, ctor.symbols["Shop::Shop"].sig);
+        assert_eq!(a.symbols["Shop"].sig, docs.symbols["Shop"].sig);
+        assert_eq!(a.symbols["Shop::Price"].sig, docs.symbols["Shop::Price"].sig);
+        assert_ne!(a.symbols["Shop::Price"].sig, param.symbols["Shop::Price"].sig);
+        assert_ne!(a.symbols["Shop"].sig, field.symbols["Shop"].sig);
     }
 
     #[test]
@@ -765,7 +842,7 @@ mod tests {
         assert!(index("a.json", b"{}").is_none());
         assert!(index("Makefile", b"all:").is_none());
         assert!(unparsed_code("Shop.kt") && !unparsed_code("Shop.java") && !unparsed_code("a.rs"));
-        assert!(!unparsed_code("shop.rb"));
+        assert!(!unparsed_code("shop.rb") && !unparsed_code("Shop.cs"));
         assert!(index("a.rs", &[0xff, 0xfe, 0x00]).is_none());
     }
 }
