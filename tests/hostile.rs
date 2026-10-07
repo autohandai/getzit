@@ -72,3 +72,13 @@ fn discard_is_all_or_nothing() {
     let status = cli.run(&["status", "--json"]).ok().json();
     assert_eq!(status["changes"][0]["id"], a.as_str(), "{status}");
 }
+
+/// `zit dispose` with nothing to dispose is a usage error, not a silent success.
+#[test]
+fn dispose_needs_ids_or_all() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = cli(dir.path());
+    let ran = cli.run(&["dispose"]);
+    assert_ne!(ran.code, 0);
+    assert!(ran.stderr.contains("<IDS>") && ran.stderr.contains("Usage"), "{}", ran.stderr);
+}

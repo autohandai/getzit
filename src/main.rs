@@ -121,8 +121,9 @@ enum Cmd {
     },
     /// Delete workspaces. Recorded changes are unaffected.
     Dispose {
+        #[arg(required_unless_present = "all")]
         ids: Vec<String>,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "ids")]
         all: bool,
     },
     /// Delete every local copy zit made for this repository: workspaces,
