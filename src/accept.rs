@@ -219,11 +219,22 @@ pub struct Policy {
     pub linear: bool,
 }
 
-/// The commit on current's first-parent line that landed `change` linearly, if any.
+/// Whether a commit on current's first-parent line landed `change` linearly:
+/// it, or a change built on it, is named by a `Zit-Change` trailer there.
 fn landed_linearly(repo: &Repo, change: &Oid, base: &Oid, current: &Oid) -> Result<bool> {
-    let grep = format!("--grep=^Zit-Change: {change}$");
-    let found = repo.git(&["log", "--first-parent", "-1", "--format=%H", &grep, &format!("{base}..{current}")])?;
-    Ok(!found.trim().is_empty())
+    let range = format!("{base}..{current}");
+    let log = repo.git(&["log", "--first-parent", "--format=%B", "--grep=^Zit-Change: ", &range])?;
+    let landed: Vec<&str> = log.lines().filter_map(|l| l.strip_prefix("Zit-Change: ")).collect();
+    if landed.contains(&change.as_str()) {
+        return Ok(true);
+    }
+    if landed.is_empty() {
+        return Ok(false);
+    }
+    // Nothing of `change` is outside what landed: it is an ancestor of one of them.
+    let mut args = vec!["rev-list".to_string(), "-n1".to_string(), change.to_string()];
+    args.extend(landed.iter().map(|l| format!("^{l}")));
+    Ok(repo.git(&args)?.trim().is_empty())
 }
 
 /// Failed ref updates with current unchanged before giving up.
@@ -291,9 +302,13 @@ pub fn accept_with(repo: &Repo, change: &Oid, policy: &Policy) -> Result<Outcome
             return Ok(Outcome::Rejected(Invalid::Failed(failed)));
         }
 
-        // Advance current and retire the speculative ref in one atomic step.
-        let landed = repo
-            .transaction(&[format!("update {CURRENT} {candidate} {current}"), format!("delete {CHANGES}/{change}")])?;
+        // Advance current and retire the speculative refs of the change and of
+        // what it was built on in one atomic step (a linear compose leaves them unmerged).
+        let retired =
+            repo.git(&["for-each-ref", "--merged", change.as_str(), "--format=delete %(refname)", CHANGES])?;
+        let mut updates = vec![format!("update {CURRENT} {candidate} {current}")];
+        updates.extend(retired.lines().map(str::to_string));
+        let landed = repo.transaction(&updates)?;
         if landed {
             return Ok(Outcome::Accepted { current: candidate, composed, verdicts });
         }

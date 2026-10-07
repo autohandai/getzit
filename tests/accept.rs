@@ -460,3 +460,21 @@ fn a_method_signature_change_stales_users_of_the_type() {
     };
     assert_eq!(why[0].resource.to_string(), "src/shape.rs#Shape::area");
 }
+
+/// Linear compose lands the chain's tip as one commit; the ancestors landed with it.
+#[test]
+fn a_linear_accept_of_a_chain_tip_accepts_the_chain() {
+    let fx = fixture();
+    let other = fx.change("b", &[("src/shop.rs", "pub fn buy() { 1; }\n")]);
+    let c1 = fx.change("a", &[("notes.txt", "1\n")]);
+    let c2 = fx.change_from(Some(&c1.id), "a", &[("notes.txt", "2\n")]);
+    accepted(accept::accept(&fx.repo, &other.id).unwrap());
+    let policy = accept::Policy { linear: true, ..Default::default() };
+    let (current, composed) = accepted(accept::accept_with(&fx.repo, &c2.id, &policy).unwrap());
+    assert!(composed);
+    assert_eq!(change::load(&fx.repo, &current).unwrap().parents, vec![other.id.clone()]);
+    assert_eq!(accept::status(&fx.repo, &c2.id).unwrap(), Status::Accepted);
+    assert_eq!(accept::status(&fx.repo, &c1.id).unwrap(), Status::Accepted);
+    assert!(matches!(accept::accept_with(&fx.repo, &c1.id, &policy).unwrap(), Outcome::AlreadyAccepted));
+    assert!(change::speculative(&fx.repo).unwrap().is_empty());
+}
