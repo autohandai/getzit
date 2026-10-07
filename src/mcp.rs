@@ -207,7 +207,7 @@ pub fn serve(cwd: &Path, integrator: bool, input: impl BufRead, mut output: impl
                 for msg in &batch {
                     replies.extend(handle(cwd, integrator, &mut client, msg)?);
                 }
-                (!replies.is_empty()).then(|| Value::Array(replies))
+                (!replies.is_empty()).then_some(Value::Array(replies))
             }
             Ok(msg) => handle(cwd, integrator, &mut client, &msg)?,
         };
