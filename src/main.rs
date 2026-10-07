@@ -98,6 +98,9 @@ enum Cmd {
         /// Ignore existing evidence.
         #[arg(long)]
         rerun: bool,
+        /// Run only this check (repeatable); a name no check has is an error.
+        #[arg(long = "only", value_name = "NAME")]
+        only: Vec<String>,
     },
     /// Make a change part of the current state. Several changes land as one batch.
     Accept {
@@ -367,8 +370,8 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
             let detail = api::detail(&repo, &repo.resolve(&change)?)?;
             emit(json, &detail, || print!("{}", view::detail_text(&detail)))?;
         }
-        Cmd::Check { change, rerun } => {
-            let verdicts = evidence::verify(&repo, &repo.resolve(&change)?, rerun)?;
+        Cmd::Check { change, rerun, only } => {
+            let verdicts = evidence::verify_only(&repo, &repo.resolve(&change)?, rerun, &only)?;
             emit(json, &verdicts, || {
                 for v in &verdicts {
                     let e = &v.evidence;

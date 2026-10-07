@@ -346,7 +346,7 @@ pub fn accept_with(repo: &Repo, change: &Oid, policy: &Policy) -> Result<Outcome
             (change.clone(), source.state.clone())
         };
 
-        let verdicts = evidence::verify_state(repo, &candidate, &state, Some(&current), policy.rerun)?;
+        let verdicts = evidence::verify_state(repo, &candidate, &state, Some(&current), policy.rerun, &[])?;
         let failed: Vec<String> =
             verdicts.iter().filter(|v| !v.evidence.passed).map(|v| v.evidence.check.clone()).collect();
         if !failed.is_empty() {
@@ -476,7 +476,7 @@ pub fn accept_batch(repo: &Repo, changes: &[Oid], policy: &Policy) -> Result<Bat
         if landed.is_empty() {
             return Ok(BatchOutcome::Accepted { current, landed, skipped, verdicts: vec![] });
         }
-        let verdicts = evidence::verify_state(repo, &candidate, &state, Some(&current), policy.rerun)?;
+        let verdicts = evidence::verify_state(repo, &candidate, &state, Some(&current), policy.rerun, &[])?;
         let failed: Vec<String> =
             verdicts.iter().filter(|v| !v.evidence.passed).map(|v| v.evidence.check.clone()).collect();
         if !failed.is_empty() {

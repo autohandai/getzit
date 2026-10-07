@@ -397,7 +397,13 @@ fn execute(repo: &Repo, check: &Check, key: String, state: &Oid, change: &Oid, v
 /// Produce evidence for every check of a change's state, running only
 /// those with no evidence yet (or all of them when `rerun`).
 pub fn verify(repo: &Repo, change: &Oid, rerun: bool) -> Result<Vec<Verdict>> {
-    verify_state(repo, change, &repo.tree_of(change)?, None, rerun)
+    verify_only(repo, change, rerun, &[])
+}
+
+/// As `verify`, for the checks named in `only` (all of them when empty).
+/// A name no check has is an error, and nothing runs.
+pub fn verify_only(repo: &Repo, change: &Oid, rerun: bool, only: &[String]) -> Result<Vec<Verdict>> {
+    verify_state(repo, change, &repo.tree_of(change)?, None, rerun, only)
 }
 
 pub(crate) fn verify_state(
@@ -406,8 +412,16 @@ pub(crate) fn verify_state(
     state: &Oid,
     governing: Option<&Oid>,
     rerun: bool,
+    only: &[String],
 ) -> Result<Vec<Verdict>> {
-    let keyed = lookup_keyed(repo, state, governing)?;
+    let mut keyed = lookup_keyed(repo, state, governing)?;
+    if !only.is_empty() {
+        let declared: Vec<&str> = keyed.iter().map(|(c, _, _)| c.name.as_str()).collect();
+        if let Some(unknown) = only.iter().find(|name| !declared.contains(&name.as_str())) {
+            return Err(Error::msg(format!("no check named `{unknown}`; declared: {}", declared.join(", "))));
+        }
+        keyed.retain(|(c, _, _)| only.contains(&c.name));
+    }
     let mut verdicts: Vec<Option<Verdict>> = vec![None; keyed.len()];
     let mut pending = Vec::new();
     for (i, (check, key, found)) in keyed.into_iter().enumerate() {

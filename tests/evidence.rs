@@ -286,6 +286,28 @@ fn materialising_is_refused_when_the_volume_is_nearly_full() {
     assert!(evidence::verify(&fx.repo, &current, false).unwrap()[0].evidence.passed);
 }
 
+/// `zit check --only NAME` runs the named checks and no others.
+#[test]
+fn only_the_named_checks_run() {
+    let (fx, log) = fixture();
+    let cur = fx.repo.current().unwrap();
+    let verdicts = evidence::verify_only(&fx.repo, &cur, false, &["api".into()]).unwrap();
+    assert_eq!(verdicts.len(), 1);
+    assert_eq!(verdicts[0].evidence.check, "api");
+    assert_eq!(runs(&log), ["api"]);
+    let err = evidence::verify_only(&fx.repo, &cur, false, &["nope".into()]).unwrap_err().to_string();
+    assert!(err.contains("nope") && err.contains("ui") && err.contains("api"), "{err}");
+    assert_eq!(runs(&log), ["api"], "an unknown name runs nothing");
+
+    let dir = tempfile::tempdir().unwrap();
+    let cli = common::Cli::new(dir.path(), &[("zit.toml", "[[check]]\nname = \"a\"\nrun = \"true\"\n\n[[check]]\nname = \"b\"\nrun = \"false\"\n\n[[check]]\nname = \"c\"\nrun = \"true\"\n"), ("x", "x\n")]);
+    cli.run(&["init"]).ok();
+    let out = cli.run(&["check", "current", "--only", "a", "--only", "c", "--json"]).ok().json();
+    let names: Vec<&str> = out.as_array().unwrap().iter().map(|v| v["evidence"]["check"].as_str().unwrap()).collect();
+    assert_eq!(names, ["a", "c"]);
+    assert_eq!(cli.run(&["check", "current", "--only", "b"]).code, 1);
+}
+
 /// A misplaced or misspelt key in zit.toml is an error, not silently ignored.
 #[test]
 fn an_unknown_key_in_zit_toml_is_an_error() {
