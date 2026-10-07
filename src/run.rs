@@ -31,7 +31,34 @@ pub struct Run {
     /// The agent prints JSON events (a preset in its JSON mode): read its final
     /// message and usage from them, and show the final message instead of the raw stream.
     pub structured: bool,
+    /// Keep the end of the agent's combined output with the recorded change
+    /// (`refs/zit/logs/<change>`), for `zit show --log`.
+    pub log: bool,
     pub command: Vec<String>,
+}
+
+/// Where `--log` keeps an agent's output: a blob per change.
+pub const LOGS: &str = "refs/zit/logs";
+
+/// How much of the agent's output `--log` keeps: the last 64 KB.
+pub const LOG_BYTES: usize = 64 * 1024;
+
+/// The output `zit run --log` kept for a change, if any.
+pub fn log_of(repo: &Repo, change: &Oid) -> Result<Option<String>> {
+    Ok(repo.objects()?.read(&format!("{LOGS}/{change}"))?.map(|b| String::from_utf8_lossy(&b).into_owned()))
+}
+
+fn store_log(repo: &Repo, change: &Oid, text: &str) -> Result<()> {
+    let blob = repo.git_stdin(&["hash-object", "-w", "--stdin"], &[], text)?;
+    repo.git(&["update-ref", &format!("{LOGS}/{change}"), &blob])?;
+    Ok(())
+}
+
+/// Append to a buffer that keeps only its last `keep` bytes.
+fn keep_tail(kept: &mut Vec<u8>, bytes: &[u8], keep: usize) {
+    kept.extend_from_slice(bytes);
+    let excess = kept.len().saturating_sub(keep);
+    kept.drain(..excess);
 }
 
 #[derive(Debug, Serialize)]
@@ -141,6 +168,9 @@ pub fn run(repo: &Repo, opts: &Run) -> Result<Report> {
     if let Some(port) = ws.port {
         cmd.env("ZIT_PORT", port.to_string());
     }
+    if opts.log {
+        cmd.stderr(Stdio::piped());
+    }
     // Headless, the agent leads its own process group, so whatever it starts is stopped with it.
     // Interactive, it must stay in the terminal's foreground group to read the terminal.
     let own_group = !interactive();
@@ -156,11 +186,28 @@ pub fn run(repo: &Repo, opts: &Run) -> Result<Report> {
         }
     };
 
-    // Pass the agent's output through, keeping the end of it.
+    // Pass the agent's output through, keeping the end of it: stdout for its
+    // account, and with `--log` both streams for the log.
     let tail = Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+    let log = Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
     let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    let mut readers = 0;
+    if let Some(mut err) = child.stderr.take() {
+        let (log, done_tx) = (log.clone(), done_tx.clone());
+        readers += 1;
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let mut buf = [0u8; 8192];
+            while let Ok(n @ 1..) = err.read(&mut buf) {
+                let _ = std::io::stderr().write_all(&buf[..n]);
+                keep_tail(&mut log.lock().expect("log lock"), &buf[..n], LOG_BYTES);
+            }
+            let _ = done_tx.send(());
+        });
+    }
     if let Some(mut out) = child.stdout.take() {
-        let tail = tail.clone();
+        let (tail, log) = (tail.clone(), log.clone());
+        readers += 1;
         let quiet = opts.quiet_stdout;
         let (echo, keep) = match opts.structured {
             true => (false, 64 * MAX_SUMMARY),
@@ -187,10 +234,8 @@ pub fn run(repo: &Repo, opts: &Run) -> Result<Report> {
                         std::io::stdout().write_all(&buf[..n])
                     };
                 }
-                let mut kept = tail.lock().expect("tail lock");
-                kept.extend_from_slice(&buf[..n]);
-                let excess = kept.len().saturating_sub(keep);
-                kept.drain(..excess);
+                keep_tail(&mut tail.lock().expect("tail lock"), &buf[..n], keep);
+                keep_tail(&mut log.lock().expect("log lock"), &buf[..n], LOG_BYTES);
             }
             let _ = done_tx.send(());
         });
@@ -245,8 +290,11 @@ pub fn run(repo: &Repo, opts: &Run) -> Result<Report> {
     }
     // The agent and everything it started are gone: a lock it left behind is stale.
     let _ = std::fs::remove_file(ws.dir().join("git/index.lock"));
-    // Children the agent left running may hold the pipe open; do not wait for them.
-    let _ = done_rx.recv_timeout(Duration::from_secs(2));
+    // Children the agent left running may hold the pipes open; do not wait for them.
+    let until = Instant::now() + Duration::from_secs(2);
+    for _ in 0..readers {
+        let _ = done_rx.recv_timeout(until.saturating_duration_since(Instant::now()));
+    }
     let output = String::from_utf8_lossy(&tail.lock().expect("tail lock")).into_owned();
     let (said, usage) = if opts.structured { read_events(&output) } else { (None, None) };
     let reported = std::fs::read_to_string(&summary_file).ok().filter(|s| !s.trim().is_empty());
@@ -260,6 +308,10 @@ pub fn run(repo: &Repo, opts: &Run) -> Result<Report> {
         }
     }
     let change = change::record(repo, &ws.id, &Record { summary, usage, ..Default::default() })?;
+    if let (true, Some(change)) = (opts.log, &change) {
+        let text = String::from_utf8_lossy(&log.lock().expect("log lock")).into_owned();
+        store_log(repo, &change.id, &text)?;
+    }
     if !opts.keep {
         workspace::dispose(repo, &ws.id)?;
     }

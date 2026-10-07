@@ -91,7 +91,12 @@ enum Cmd {
     /// Everything that exists: current, speculative changes, workspaces.
     Status,
     /// One change: what, why, dependencies, evidence.
-    Show { change: String },
+    Show {
+        change: String,
+        /// Print the agent output kept by `zit run --log` instead.
+        #[arg(long)]
+        log: bool,
+    },
     /// Produce evidence for a change by running its state's checks.
     Check {
         change: String,
@@ -164,6 +169,9 @@ enum Cmd {
         /// Stop the agent after this many seconds; its partial work is still recorded (exit 124).
         #[arg(long)]
         timeout: Option<u64>,
+        /// Keep the last 64 KB of the agent's output (stdout and stderr) with the change; `zit show --log` prints it.
+        #[arg(long)]
+        log: bool,
         /// Command to run [default: headless preset for --agent autohand|claude|codex|pi, prompted with --intent].
         #[arg(last = true)]
         command: Vec<String>,
@@ -354,7 +362,14 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
             let overview = api::overview(&repo)?;
             emit(json, &overview, || print!("{}", view::overview_text(&overview)))?;
         }
-        Cmd::Show { change } => {
+        Cmd::Show { change, log: true } => {
+            let id = repo.resolve(&change)?;
+            let Some(text) = run::log_of(&repo, &id)? else {
+                bail!("no log recorded for {}: run the agent with `zit run --log`", id.short());
+            };
+            emit(json, &serde_json::json!({"change": id, "log": text}), || print!("{text}"))?;
+        }
+        Cmd::Show { change, .. } => {
             let detail = api::detail(&repo, &repo.resolve(&change)?)?;
             emit(json, &detail, || print!("{}", view::detail_text(&detail)))?;
         }
@@ -435,7 +450,7 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
                 println!("{branch} is {}", current.short())
             })?;
         }
-        Cmd::Run { who, keep, accept, timeout, command } => {
+        Cmd::Run { who, keep, accept, timeout, log, command } => {
             let agent = who.agent.unwrap_or_else(default_agent);
             // Presets that print JSON events: their final message and usage are read from them.
             let structured = match command.is_empty() {
@@ -458,6 +473,7 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
                 quiet_stdout: json,
                 timeout: timeout.map(std::time::Duration::from_secs),
                 structured,
+                log,
                 command,
             };
             let report = run::run(&repo, &opts)?;

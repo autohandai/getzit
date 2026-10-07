@@ -263,6 +263,35 @@ fn each_workspace_has_a_port_the_agent_and_the_checks_see() {
     assert_ne!(other["port"], ws["port"], "live workspaces never share a port");
 }
 
+/// `--log` keeps the end of the agent's combined output with the change; `show --log` prints it.
+#[test]
+fn run_log_keeps_the_agents_output_with_the_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = cli(dir.path());
+    // 100 KB of numbered lines, then a last word on stderr: only the end is kept.
+    let script = "i=0; while [ $i -lt 10000 ]; do printf 'line %05d padding\\n' $i; i=$((i+1)); done; echo last-word >&2; echo b > b.txt";
+    let ran = cli.run(&["run", "--log", "--json", "--", "sh", "-c", script]).ok().json();
+    let id = ran["change"]["id"].as_str().unwrap().to_string();
+    let shown = cli.run(&["show", &id, "--log"]).ok().stdout;
+    assert!(shown.len() <= 64 * 1024, "{} bytes", shown.len());
+    // Two pipes: the streams' relative order is not kept, their content is.
+    assert!(shown.contains("line 09999 padding") && shown.contains("last-word\n"), "{shown:.200}");
+    assert!(!shown.contains("line 00000"), "the start was dropped");
+    assert_eq!(
+        common::git(&cli.root, &["cat-file", "-t", &format!("refs/zit/logs/{id}")]),
+        "blob",
+        "stored in the repository"
+    );
+    assert_eq!(cli.run(&["show", &id, "--log", "--json"]).ok().json()["log"].as_str().unwrap(), shown);
+
+    // Without --log nothing is kept, and show says so.
+    let ran = cli.run(&["run", "--json", "--", "sh", "-c", "echo hello; echo c > c.txt"]).ok().json();
+    let id = ran["change"]["id"].as_str().unwrap();
+    let none = cli.run(&["show", id, "--log"]);
+    assert_ne!(none.code, 0);
+    assert!(none.stderr.contains("no log"), "{}", none.stderr);
+}
+
 /// Processes the agent left behind (a dev server, a watcher) must not keep writing while its work is recorded.
 #[test]
 fn processes_the_agent_started_are_stopped_with_it() {
