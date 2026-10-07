@@ -282,9 +282,10 @@ impl Repo {
     }
 
     /// The object store: where git writes objects for this repository.
+    /// `git_dir` is the common directory already (`open` resolves it), so no
+    /// git process is needed to find it.
     pub(crate) fn object_dir(&self) -> Result<PathBuf> {
-        let common = self.git(&["rev-parse", "--git-common-dir"])?;
-        Ok(self.git_dir.join(common.trim()).join("objects"))
+        Ok(self.git_dir.join("objects"))
     }
 
     pub(crate) fn git<S: AsRef<OsStr>>(&self, args: &[S]) -> Result<String> {
@@ -540,6 +541,23 @@ mod tests {
         std::fs::write(&fake, "#!/bin/sh\nexit 1\n").unwrap();
         let _ = std::fs::write(home.join("git-ok").join(binary_identity(fake.as_os_str()).unwrap()), "");
         require_git_at(fake.as_os_str(), Some(&home)).unwrap_or_else(|_| panic!("remembered: git is not run"));
+    }
+
+    /// A repository opened from inside a linked worktree still writes its
+    /// objects to the main repository's store.
+    #[test]
+    fn the_object_store_is_the_common_one_wherever_the_repo_was_opened() {
+        let dir = tempfile::tempdir().unwrap();
+        sh(dir.path(), "git init -q -b main main && cd main && echo a > a && git add a && git -c user.name=t -c user.email=t@t commit -qm a && git worktree add -q --detach ../linked");
+        let main = Repo::open(&dir.path().join("main"), &dir.path().join("home")).unwrap();
+        let linked = Repo::open(&dir.path().join("linked"), &dir.path().join("home")).unwrap();
+        let expected = dir.path().join("main/.git/objects").canonicalize().unwrap();
+        assert_eq!(main.object_dir().unwrap(), expected);
+        assert_eq!(linked.object_dir().unwrap(), expected);
+        assert_eq!(
+            main.object_dir().unwrap(),
+            PathBuf::from(main.git(&["rev-parse", "--git-path", "objects"]).unwrap())
+        );
     }
 
     #[test]
