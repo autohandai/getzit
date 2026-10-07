@@ -23,6 +23,19 @@ fn count(dir: &Path) -> usize {
     fs::read_dir(dir).map(|d| d.flatten().filter(|e| e.path().is_dir()).count()).unwrap_or(0)
 }
 
+/// Take `file`'s lock exclusively, trying until `deadline`.
+fn lock_by(file: &fs::File, deadline: std::time::Instant) -> bool {
+    use std::os::fd::AsRawFd;
+    // SAFETY: `file` is an open descriptor we own.
+    while unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    true
+}
+
 fn free_bytes(path: &Path) -> Option<i64> {
     use std::os::unix::ffi::OsStrExt;
     let path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
@@ -65,13 +78,15 @@ pub fn clean(repo: &Repo, force: bool) -> Result<Report> {
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|e| e == "lock"))
         .chain([home.join("trees/.lock")].into_iter().filter(|p| p.exists()));
+    // A lock that frees within a second was not a clone or verification: on macOS a process
+    // spawned anywhere holds every open descriptor, locks included, until it execs.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
     for path in lock_files {
-        use std::os::fd::AsRawFd;
         let Ok(file) = fs::File::open(&path) else { continue };
-        // SAFETY: `file` is an open descriptor we own.
-        match unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } {
-            0 => held.push(file),
-            _ => busy.push(path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
+        if lock_by(&file, deadline) {
+            held.push(file);
+        } else {
+            busy.push(path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
         }
     }
     if !busy.is_empty() && !force {

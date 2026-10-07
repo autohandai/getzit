@@ -4,6 +4,8 @@ All notable changes to Zit. Versions follow [Semantic Versioning](https://semver
 
 ## Unreleased
 
+- `zit clean` no longer refuses over a lock that frees within a second. On macOS, a process spawned anywhere briefly holds every open descriptor, locks included, so `clean` could report a finished verification as still in progress.
+
 ## 0.1.1 - 2026-10-07
 
 - CI runs every test on XFS with reflinks as well as btrfs.

@@ -78,3 +78,21 @@ fn clean_refuses_while_a_verification_holds_its_view() {
     drop(lock);
     zit::clean::clean(&fx.repo, false).unwrap();
 }
+
+/// A lock released moments after clean looks is not a verification in progress. On macOS a
+/// concurrent process spawn briefly holds every open descriptor, locks included.
+#[test]
+fn clean_waits_out_a_lock_held_for_a_moment() {
+    use std::os::fd::AsRawFd;
+    let fx = Fixture::new(&[("zit.toml", CHECK), ("a.txt", "a\n")]);
+    let c = fx.change("claude", &[("a.txt", "b\n")]);
+    evidence::verify(&fx.repo, &c.id, false).unwrap();
+    let lock = std::fs::File::open(fx.repo.home().join("verify/0.lock")).unwrap();
+    assert_eq!(unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) }, 0);
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        drop(lock);
+    });
+    zit::clean::clean(&fx.repo, false).unwrap();
+    release.join().unwrap();
+}
