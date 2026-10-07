@@ -215,6 +215,265 @@ pub fn diff(repo: &Repo, id: &Oid, against: Option<&Oid>, stat: bool) -> Result<
     Ok(Diff { change: id.clone(), against, diff })
 }
 
+/// One line of `zit doctor`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Probe {
+    pub name: String,
+    pub status: Health,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Health {
+    Pass,
+    /// Works, with less than it could: no copy-on-write, an agent not installed.
+    Warn,
+    /// Zit cannot do its job here until this is fixed.
+    Fail,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Doctor {
+    pub checks: Vec<Probe>,
+}
+
+impl Doctor {
+    pub fn failed(&self) -> bool {
+        self.checks.iter().any(|c| c.status == Health::Fail)
+    }
+}
+
+/// Can Zit work here? Git, its home, the file system, the repository, the
+/// checks it declares, the agents on PATH. Runs outside a repository too.
+pub fn doctor(cwd: &std::path::Path) -> Doctor {
+    use std::path::PathBuf;
+    let mut checks = Vec::new();
+    let mut probe = |name: &str, status: Health, detail: String| {
+        checks.push(Probe { name: name.into(), status, detail });
+    };
+
+    let version = crate::git::git_command().arg("--version").output().ok();
+    let version = version.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    match crate::git::require_git() {
+        Ok(()) => probe("git", Health::Pass, version),
+        Err(e) => probe("git", Health::Fail, e.to_string()),
+    }
+
+    let repo = Repo::discover(cwd);
+    let home = match &repo {
+        Ok(repo) => repo.home().to_path_buf(),
+        Err(_) => std::env::var_os("ZIT_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".zit")))
+            .unwrap_or_else(|| PathBuf::from(".zit")),
+    };
+    let writable = std::fs::create_dir_all(&home).and_then(|()| {
+        let probe = home.join(format!(".zit-doctor-{}", std::process::id()));
+        std::fs::write(&probe, b"zit")?;
+        std::fs::remove_file(probe)
+    });
+    match writable {
+        Ok(()) => probe("home", Health::Pass, format!("{} (writable)", home.display())),
+        Err(e) => probe("home", Health::Fail, format!("{}: {e}", home.display())),
+    }
+    let (fs_name, free) = file_system(&home);
+    let cow = home.is_dir() && workspace::copy_on_write(&home);
+    probe(
+        "copy-on-write",
+        if cow { Health::Pass } else { Health::Warn },
+        match cow {
+            true => format!("{fs_name}: workspaces are clones"),
+            false => format!("{fs_name}: no clonefile/FICLONE, workspaces are plain checkouts"),
+        },
+    );
+    const GB: u64 = 1_000_000_000;
+    probe(
+        "free space",
+        if free >= GB { Health::Pass } else { Health::Warn },
+        format!("{:.1} GB free on the volume holding {}", free as f64 / GB as f64, home.display()),
+    );
+
+    let current = match &repo {
+        Err(e) => Err(e.to_string()),
+        Ok(repo) => match repo.current() {
+            Err(e) => Err(e.to_string()),
+            // By name, so git verifies the object is there.
+            Ok(id) => {
+                repo.resolve("current").map_err(|_| format!("{} points at a missing commit {id}", crate::git::CURRENT))
+            }
+        },
+    };
+    match (&repo, &current) {
+        (Ok(_), Ok(id)) => probe("repository", Health::Pass, format!("current {}", id.short())),
+        (_, Err(why)) => probe("repository", Health::Fail, why.clone()),
+        (Err(e), _) => probe("repository", Health::Fail, e.to_string()),
+    }
+    if let (Ok(repo), Ok(current)) = (&repo, &current) {
+        let (status, detail) = match config_programs(repo, current) {
+            Err(e) => (Health::Fail, e.to_string()),
+            Ok(None) => (Health::Pass, "none".into()),
+            Ok(Some((summary, missing))) if missing.is_empty() => (Health::Pass, summary),
+            Ok(Some((_, missing))) => (Health::Fail, missing.join("; ")),
+        };
+        probe("zit.toml", status, detail);
+    }
+
+    for agent in ["autohand", "claude", "codex", "pi"] {
+        let (status, detail) = match on_path(agent).and_then(|p| version_of(&p)) {
+            Some(version) => (Health::Pass, version),
+            None => (Health::Warn, format!("not on PATH; `zit run --agent {agent}` needs it")),
+        };
+        probe(&format!("agent {agent}"), status, detail);
+    }
+    let gh = std::env::var_os("ZIT_GH").map(PathBuf::from).or_else(|| on_path("gh"));
+    match gh.and_then(|p| version_of(&p)) {
+        Some(version) => probe("gh", Health::Pass, version),
+        None => probe("gh", Health::Warn, "not on PATH; `zit export --pr` needs it".into()),
+    }
+
+    let languages = [("go", "go"), ("js", "javascript"), ("py", "python"), ("rs", "rust"), ("ts", "typescript")];
+    let built: Vec<&str> = languages
+        .iter()
+        .filter(|(ext, _)| crate::symbols::index(&format!("probe.{ext}"), b"").is_some())
+        .map(|(_, name)| *name)
+        .collect();
+    let all = built.len() == languages.len();
+    probe("languages", if all { Health::Pass } else { Health::Fail }, built.join(", "));
+
+    Doctor { checks }
+}
+
+/// Programs declared by the state's zit.toml that are missing from PATH.
+/// `None` when the state has no zit.toml.
+fn config_programs(repo: &Repo, state: &Oid) -> Result<Option<(String, Vec<String>)>> {
+    if repo.objects()?.read(&format!("{state}:zit.toml"))?.is_none() {
+        return Ok(None);
+    }
+    let checks = evidence::checks(repo, state)?;
+    let derived = evidence::derived(repo, state)?;
+    let prepare = evidence::prepare(repo, state)?;
+    let mut commands: Vec<(String, &str)> =
+        checks.iter().map(|c| (format!("check {}", c.name), c.run.as_str())).collect();
+    commands.extend(derived.iter().map(|d| (format!("derive {}", d.path), d.run.as_str())));
+    commands.extend(prepare.iter().map(|p| ("prepare".to_string(), p.run.as_str())));
+    let missing = commands
+        .iter()
+        .filter_map(|(what, run)| {
+            let program = program_of(run)?;
+            (!on_path_or_builtin(&program)).then(|| format!("`{program}` ({what}) is not on PATH"))
+        })
+        .collect();
+    let summary = format!(
+        "{} check{}, {} derived, prepare: {}",
+        checks.len(),
+        if checks.len() == 1 { "" } else { "s" },
+        derived.len(),
+        if prepare.is_some() { "yes" } else { "no" }
+    );
+    Ok(Some((summary, missing)))
+}
+
+/// The program a shell command line starts with: past `VAR=value`
+/// assignments; `None` for an empty line or one that starts with a keyword.
+fn program_of(run: &str) -> Option<String> {
+    let first = run.lines().find(|l| !l.trim().is_empty())?;
+    first
+        .split_whitespace()
+        .find(|word| !word.split_once('=').is_some_and(|(k, _)| k.chars().all(|c| c.is_alphanumeric() || c == '_')))
+        .map(str::to_string)
+}
+
+/// Shell builtins and keywords `sh -c` runs without a file on PATH.
+fn on_path_or_builtin(program: &str) -> bool {
+    const BUILTIN: &[&str] = &[
+        "test", "[", "true", "false", "cd", "echo", "exit", ":", ".", "source", "set", "export", "if", "for", "while",
+        "case", "!", "{", "(", "eval", "exec", "command", "printf", "read", "trap", "wait", "umask", "ulimit",
+    ];
+    // A path into the checked-out state cannot be verified from here.
+    BUILTIN.contains(&program) || program.contains('/') || on_path(program).is_some()
+}
+
+fn on_path(program: &str) -> Option<std::path::PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|dir| dir.join(program))
+        .find(|p| p.metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0))
+}
+
+/// The first line `program --version` prints, within five seconds.
+fn version_of(program: &std::path::Path) -> Option<String> {
+    use std::process::{Command, Stdio};
+    let mut child = Command::new(program)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .ok()?;
+    let started = std::time::Instant::now();
+    while child.try_wait().ok()?.is_none() {
+        if started.elapsed() > std::time::Duration::from_secs(5) {
+            let _ = child.kill();
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let out = child.wait_with_output().ok()?;
+    let text = [out.stdout, out.stderr].concat();
+    String::from_utf8_lossy(&text).lines().map(str::trim).find(|l| !l.is_empty()).map(str::to_string)
+}
+
+fn wide<T: TryInto<u64>>(n: T) -> u64 {
+    n.try_into().unwrap_or(0)
+}
+
+/// The file system type holding `dir`, and the bytes free on it.
+#[cfg(target_os = "macos")]
+fn file_system(dir: &std::path::Path) -> (String, u64) {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(path) = std::ffi::CString::new(dir.as_os_str().as_bytes()) else { return ("unknown".into(), 0) };
+    let mut fs: libc::statfs = unsafe { std::mem::zeroed() };
+    // SAFETY: `path` is NUL-terminated and `fs` is a zeroed statfs for the call to fill.
+    if unsafe { libc::statfs(path.as_ptr(), &mut fs) } != 0 {
+        return ("unknown".into(), 0);
+    }
+    // SAFETY: f_fstypename is a NUL-terminated name within the struct.
+    let name = unsafe { std::ffi::CStr::from_ptr(fs.f_fstypename.as_ptr()) }.to_string_lossy().into_owned();
+    (name, wide(fs.f_bavail) * wide(fs.f_bsize))
+}
+
+#[cfg(target_os = "linux")]
+fn file_system(dir: &std::path::Path) -> (String, u64) {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(path) = std::ffi::CString::new(dir.as_os_str().as_bytes()) else { return ("unknown".into(), 0) };
+    let mut fs: libc::statfs = unsafe { std::mem::zeroed() };
+    // SAFETY: `path` is NUL-terminated and `fs` is a zeroed statfs for the call to fill.
+    if unsafe { libc::statfs(path.as_ptr(), &mut fs) } != 0 {
+        return ("unknown".into(), 0);
+    }
+    // Magic numbers from linux/magic.h.
+    let name = match wide(fs.f_type) {
+        0x9123683E => "btrfs".to_string(),
+        0x58465342 => "xfs".to_string(),
+        0xEF53 => "ext4".to_string(),
+        0x01021994 => "tmpfs".to_string(),
+        0x794C7630 => "overlayfs".to_string(),
+        0x2FC12FC1 => "zfs".to_string(),
+        0xF2F52010 => "f2fs".to_string(),
+        0x6969 => "nfs".to_string(),
+        0x65735546 => "fuse".to_string(),
+        0x9FA0 => "procfs".to_string(),
+        other => format!("fs type {other:#x}"),
+    };
+    (name, wide(fs.f_bavail) * wide(fs.f_bsize))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn file_system(_dir: &std::path::Path) -> (String, u64) {
+    ("unknown".into(), 0)
+}
+
 #[derive(Debug, Serialize)]
 pub struct Recorded {
     /// `null` when the workspace held no edits.

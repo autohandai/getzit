@@ -192,6 +192,9 @@ enum Cmd {
     },
     /// Interactive view of changes and workspaces.
     Ui,
+    /// Check this machine and repository: git, Zit's home, copy-on-write, free space,
+    /// the graph, zit.toml's programs, agents on PATH. Exit 1 if anything fails.
+    Doctor,
     /// Print a shell completion script: `zit completions zsh > ~/.zfunc/_zit`.
     Completions {
         #[arg(value_enum)]
@@ -321,9 +324,15 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
         completions(shell);
         return Ok(OK);
     }
-    zit::git::require_git()?;
     let json = cli.json;
     let cwd = std::env::current_dir()?;
+    // Runs before the git check: an old git is one of its findings.
+    if let Cmd::Doctor = cli.command {
+        let report = api::doctor(&cwd);
+        emit(json, &versioned(&report)?, || print!("{}", view::doctor_text(&report)))?;
+        return Ok(if report.failed() { ExitCode::from(NO) } else { OK });
+    }
+    zit::git::require_git()?;
     if let Cmd::Mcp { integrator } = cli.command {
         mcp::serve(&cwd, integrator, std::io::stdin().lock(), std::io::stdout().lock())?;
         return Ok(OK);
@@ -553,7 +562,7 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
             }
             server.run();
         }
-        Cmd::Mcp { .. } | Cmd::Completions { .. } => unreachable!("handled above"),
+        Cmd::Mcp { .. } | Cmd::Completions { .. } | Cmd::Doctor => unreachable!("handled above"),
     }
     Ok(OK)
 }

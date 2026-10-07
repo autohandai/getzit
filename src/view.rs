@@ -1,7 +1,7 @@
 //! Plain-text rendering shared by the CLI and the UI.
 
 use crate::accept::{Invalid, Staleness, Status};
-use crate::api::{Detail, Log, Overview, WorkspaceRow};
+use crate::api::{Detail, Doctor, Health, Log, Overview, WorkspaceRow};
 use crate::change::Change;
 use crate::footprint::ConflictKind;
 use std::fmt::Write;
@@ -169,6 +169,21 @@ pub fn log_text(log: &Log) -> String {
         t.input_tokens,
         t.output_tokens
     );
+    out
+}
+
+/// `pass  name  detail`, one line per check.
+pub fn doctor_text(d: &Doctor) -> String {
+    let mut out = String::new();
+    let width = d.checks.iter().map(|c| c.name.len()).max().unwrap_or(0);
+    for c in &d.checks {
+        let status = match c.status {
+            Health::Pass => "pass",
+            Health::Warn => "warn",
+            Health::Fail => "fail",
+        };
+        let _ = writeln!(out, "{status}  {:<width$}  {}", c.name, c.detail);
+    }
     out
 }
 

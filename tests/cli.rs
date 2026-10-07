@@ -267,6 +267,126 @@ fn completions_are_generated_for_each_shell() {
     assert_eq!(cli.run_in(dir.path(), &["completions", "powershell"]).code, 2, "only shells it is tested for");
 }
 
+fn fake_program(bin: &Path, name: &str, script: &str) {
+    std::fs::create_dir_all(bin).unwrap();
+    let path = bin.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
+    std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+}
+
+/// A PATH holding `bin`, git, and the usual system directories only.
+fn narrow_path(bin: &Path) -> String {
+    let path = std::env::var("PATH").unwrap();
+    let git_dir = std::env::split_paths(&path).find(|p| p.join("git").is_file()).expect("git on PATH");
+    let dirs = [bin.to_path_buf(), git_dir, "/usr/bin".into(), "/bin".into()];
+    std::env::join_paths(dirs).unwrap().into_string().unwrap()
+}
+
+fn doctor(cli: &Cli, cwd: &Path, path: &str, json: bool) -> common::Ran {
+    let mut args = vec!["doctor"];
+    if json {
+        args.push("--json");
+    }
+    let out = cli.command(cwd).env("PATH", path).args(args).output().unwrap();
+    common::Ran {
+        code: out.status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&out.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&out.stderr).to_string(),
+    }
+}
+
+/// `zit doctor`: one line per check, pass/warn/fail, exit 1 only when something fails.
+#[test]
+fn doctor_checks_the_machine_the_repository_and_the_agents() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = Cli::new(dir.path(), &[("zit.toml", "[[check]]\nname = \"t\"\nrun = \"test -f ok\"\n"), ("ok", "\n")]);
+    let bin = dir.path().join("bin");
+    fake_program(&bin, "claude", "echo '2.1.288 (Claude Code)'");
+    fake_program(&bin, "gh", "echo 'gh version 2.80.0 (2025-10-01)'");
+    let path = narrow_path(&bin);
+
+    // Before `zit init`: the repository check fails, and so does the command.
+    let before = doctor(&cli, &cli.root, &path, true);
+    assert_eq!(before.code, 1, "{}", before.stdout);
+    let report = before.json();
+    assert_eq!(report["schema"], 1);
+    let checks = report["checks"].as_array().unwrap().clone();
+    let find = |name: &str| checks.iter().find(|c| c["name"] == name).unwrap_or_else(|| panic!("no check {name}"));
+    assert_eq!(find("repository")["status"], "fail");
+    assert!(find("repository")["detail"].as_str().unwrap().contains("zit init"));
+
+    cli.run(&["init"]).ok();
+    let after = doctor(&cli, &cli.root, &path, true);
+    assert_eq!(after.code, 0, "{}\n{}", after.stdout, after.stderr);
+    let checks = after.json()["checks"].as_array().unwrap().clone();
+    let find = |name: &str| checks.iter().find(|c| c["name"] == name).unwrap_or_else(|| panic!("no check {name}"));
+    let status = |name: &str| find(name)["status"].as_str().unwrap().to_string();
+    let detail = |name: &str| find(name)["detail"].as_str().unwrap().to_string();
+    assert_eq!(status("git"), "pass");
+    assert!(detail("git").contains("git version 2."), "{}", detail("git"));
+    assert_eq!(status("home"), "pass");
+    assert!(detail("home").contains(cli.home.to_str().unwrap()), "{}", detail("home"));
+    assert!(["pass", "warn"].contains(&status("copy-on-write").as_str()));
+    assert!(!detail("copy-on-write").is_empty(), "names the file system");
+    assert!(["pass", "warn"].contains(&status("free space").as_str()));
+    assert!(detail("free space").contains("GB"), "{}", detail("free space"));
+    assert_eq!(status("repository"), "pass");
+    assert!(detail("repository").contains(&git(&cli.root, &["rev-parse", "--short=10", "HEAD"])));
+    assert_eq!(status("zit.toml"), "pass");
+    assert!(detail("zit.toml").contains("1 check"), "{}", detail("zit.toml"));
+    assert_eq!(status("agent claude"), "pass");
+    assert_eq!(detail("agent claude"), "2.1.288 (Claude Code)");
+    for missing in ["agent autohand", "agent codex", "agent pi"] {
+        assert_eq!(status(missing), "warn", "{missing}");
+        assert!(detail(missing).contains("not on PATH"), "{}", detail(missing));
+    }
+    assert_eq!(status("gh"), "pass");
+    assert!(detail("gh").starts_with("gh version 2.80.0"));
+    assert_eq!(status("languages"), "pass");
+    for lang in ["go", "javascript", "python", "rust", "typescript"] {
+        assert!(detail("languages").contains(lang), "{}", detail("languages"));
+    }
+
+    let text = doctor(&cli, &cli.root, &path, false);
+    assert_eq!(text.code, 0);
+    assert!(text.stdout.lines().any(|l| l.starts_with("pass  git ")), "{}", text.stdout);
+    assert!(text.stdout.lines().any(|l| l.starts_with("warn  agent codex")), "{}", text.stdout);
+    assert!(text.stdout.lines().all(|l| l.starts_with("pass  ") || l.starts_with("warn  ")), "{}", text.stdout);
+
+    // Outside any repository the machine checks still run; the repository check fails.
+    let outside = doctor(&cli, dir.path(), &path, true);
+    assert_eq!(outside.code, 1);
+    let checks = outside.json()["checks"].as_array().unwrap().clone();
+    let find = |name: &str| checks.iter().find(|c| c["name"] == name).unwrap();
+    assert_eq!(find("git")["status"], "pass");
+    assert_eq!(find("repository")["status"], "fail");
+    assert!(find("repository")["detail"].as_str().unwrap().contains("not a git repository"));
+}
+
+/// A check whose program is missing, or a zit.toml that does not parse, fails the doctor:
+/// every accept would be rejected.
+#[test]
+fn doctor_fails_on_a_missing_check_program_or_a_broken_zit_toml() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = Cli::new(dir.path(), &[("zit.toml", "[[check]]\nname = \"t\"\nrun = \"FOO=1 no-such-tool-zz --all\"\n")]);
+    cli.run(&["init"]).ok();
+    let path = narrow_path(&dir.path().join("bin"));
+    let ran = doctor(&cli, &cli.root, &path, false);
+    assert_eq!(ran.code, 1, "{}", ran.stdout);
+    let line = ran.stdout.lines().find(|l| l.starts_with("fail  zit.toml")).unwrap_or_else(|| panic!("{}", ran.stdout));
+    assert!(line.contains("no-such-tool-zz") && line.contains("check t"), "{line}");
+
+    let broken = tempfile::tempdir().unwrap();
+    let cli = Cli::new(broken.path(), &[("zit.toml", "[[check]\n")]);
+    cli.run(&["init"]).ok();
+    let ran = doctor(&cli, &cli.root, &path, true);
+    assert_eq!(ran.code, 1);
+    let checks = ran.json()["checks"].as_array().unwrap().clone();
+    let toml = checks.iter().find(|c| c["name"] == "zit.toml").unwrap();
+    assert_eq!(toml["status"], "fail");
+    assert!(toml["detail"].as_str().unwrap().contains("zit.toml"), "{toml}");
+}
+
 /// Integrations detect a format change by the `schema` field every `--json` report carries.
 #[test]
 fn json_reports_carry_a_schema_version() {
