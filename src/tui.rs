@@ -4,7 +4,7 @@ use crate::accept::{self, Outcome};
 use crate::api::{self, Overview};
 use crate::git::{Oid, Repo};
 use crate::{change, evidence, view, workspace, Result};
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Cell, Paragraph, Row, Table, TableState};
@@ -73,6 +73,15 @@ impl App {
             Pane::Workspaces => (&mut self.workspace, self.overview.workspaces.len()),
         };
         *index = index.saturating_add_signed(delta).min(len.saturating_sub(1));
+    }
+
+    /// A key press with its modifiers. In raw mode Ctrl-C is a key, not a
+    /// signal: it quits rather than running `c`.
+    pub fn on_event(&mut self, key: KeyEvent) -> Action {
+        match key.code {
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::Quit,
+            code => self.on_key(code),
+        }
     }
 
     pub fn on_key(&mut self, key: KeyCode) -> Action {
@@ -226,7 +235,7 @@ pub fn run(repo: &Repo) -> Result<()> {
             terminal.draw(|frame| app.draw(frame))?;
             let action = match event::poll(REFRESH)? {
                 true => match event::read()? {
-                    Event::Key(key) if key.kind == KeyEventKind::Press => app.on_key(key.code),
+                    Event::Key(key) if key.kind == KeyEventKind::Press => app.on_event(key),
                     _ => Action::None,
                 },
                 false => Action::Refresh,

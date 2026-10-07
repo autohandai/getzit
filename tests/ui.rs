@@ -88,6 +88,16 @@ fn selection_moves_and_stays_in_bounds() {
     assert!(ids.iter().all(|id| listed.contains(id)));
 }
 
+/// In raw mode Ctrl-C arrives as a key, not a signal: it must quit, not run `c` (check).
+#[test]
+fn ctrl_c_quits_instead_of_running_a_check() {
+    use ratatui::crossterm::event::{KeyEvent, KeyModifiers};
+    let (fx, ..) = scene();
+    let mut app = App::new(api::overview(&fx.repo).unwrap());
+    assert_eq!(app.on_event(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)), Action::Quit);
+    assert!(matches!(app.on_event(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE)), Action::Check(_)));
+}
+
 #[test]
 fn an_empty_graph_renders_and_ignores_actions() {
     let fx = Fixture::new(&[("a.txt", "a\n")]);
