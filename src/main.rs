@@ -405,7 +405,7 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
                             .map(|c| format!("{} ({})", c.check, if c.run { "run" } else { "reused" }))
                             .collect();
                         let planned = if planned.is_empty() { "none".to_string() } else { planned.join(", ") };
-                        println!("would accept {} ({how}); checks: {planned}", change);
+                        println!("would accept {change} ({how}); checks: {planned}");
                     }
                 })?;
                 return Ok(if matches!(dry, DryRun::Rejected(_)) { ExitCode::from(NO) } else { OK });

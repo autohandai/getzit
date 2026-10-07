@@ -261,8 +261,7 @@ fn parallel_evidence_is_the_same_evidence() {
             .collect::<Vec<_>>()
     };
     assert_eq!(essentials(&parallel), essentials(&sequential));
-    assert_eq!(essentials(&parallel)[0].2, true);
-    assert_eq!(essentials(&parallel)[1].2, false);
+    assert!(essentials(&parallel)[0].2 && !essentials(&parallel)[1].2, "one passes, two fails");
 }
 
 /// Nothing is materialised, workspace or verification view, when the volume
