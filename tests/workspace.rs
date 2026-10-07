@@ -151,6 +151,18 @@ fn a_workspace_id_is_never_a_path() {
     assert!(ws.path().exists());
 }
 
+/// A workspace whose meta.json is damaged still goes away on dispose; its id is what names it.
+#[test]
+fn a_workspace_with_a_damaged_meta_file_can_still_be_disposed() {
+    let fx = Fixture::new(FILES);
+    let ws = fx.workspace("claude");
+    fs::write(ws.path().parent().unwrap().join("meta.json"), "{not json").unwrap();
+    assert!(workspace::get(&fx.repo, &ws.id).is_err());
+    workspace::dispose(&fx.repo, &ws.id).unwrap();
+    assert!(!ws.path().parent().unwrap().exists());
+    assert!(matches!(workspace::dispose(&fx.repo, &ws.id), Err(zit::Error::UnknownWorkspace(_))));
+}
+
 #[test]
 fn a_same_size_edit_right_after_a_delta_materialisation_is_recorded() {
     let fx = Fixture::new(FILES);

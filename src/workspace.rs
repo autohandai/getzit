@@ -570,12 +570,17 @@ mod cache {
     }
 }
 
-pub fn get(repo: &Repo, id: &str) -> Result<Workspace> {
+/// The directory of workspace `id`, which may or may not exist.
+fn dir_of(repo: &Repo, id: &str) -> Result<PathBuf> {
     // Ids are generated here; anything else (a path, say) names no workspace.
     if id.is_empty() || !id.bytes().all(|b| b.is_ascii_alphanumeric()) {
         return Err(Error::UnknownWorkspace(id.to_string()));
     }
-    let meta = fs::read(root(repo).join(id).join("meta.json")).map_err(|_| Error::UnknownWorkspace(id.to_string()))?;
+    Ok(root(repo).join(id))
+}
+
+pub fn get(repo: &Repo, id: &str) -> Result<Workspace> {
+    let meta = fs::read(dir_of(repo, id)?.join("meta.json")).map_err(|_| Error::UnknownWorkspace(id.to_string()))?;
     Ok(serde_json::from_slice(&meta)?)
 }
 
@@ -600,8 +605,12 @@ pub fn containing(repo: &Repo, cwd: &Path) -> Option<Workspace> {
 
 /// Delete the view. Recorded changes are unaffected.
 pub fn dispose(repo: &Repo, id: &str) -> Result<()> {
-    let ws = get(repo, id)?;
-    fs::remove_dir_all(ws.dir())?;
+    // By id, not by what meta.json says: a damaged workspace must still be removable.
+    let dir = dir_of(repo, id)?;
+    if !dir.is_dir() {
+        return Err(Error::UnknownWorkspace(id.to_string()));
+    }
+    fs::remove_dir_all(dir)?;
     Ok(())
 }
 
