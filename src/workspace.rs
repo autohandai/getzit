@@ -527,6 +527,8 @@ mod cache {
     /// Atomically add `src` (a pristine `tree/` + `index`) to the cache as
     /// `tree`. With `replace`, an existing entry for `tree` is swapped out.
     fn publish(repo: &Repo, tree: &Oid, src: &Path, replace: bool) {
+        // Eviction removes `.tmp-*` leftovers under the exclusive lock: ours is not a leftover.
+        let _shared = Lock::acquire(repo, libc::LOCK_SH);
         let entry = root(repo).join(tree.as_str());
         let tmp = root(repo).join(format!(".tmp-{}", fresh_id()));
         if clonefile(src, &tmp).is_err() {
@@ -773,6 +775,37 @@ mod tests {
         assert_eq!(fs::read_to_string(out("w4/tree/b")).unwrap(), "keep\n");
         cache::publish_and_evict(&repo, &second, &out("w4"), false);
         assert_eq!(cache::clone_into(&repo, &second, &out("w5")).unwrap(), Source::Exact);
+    }
+
+    /// Eviction deletes leftover `.tmp-*` directories under the exclusive lock. A
+    /// publish in another process builds its entry in one of those, so it must hold
+    /// the shared lock, or eviction can empty the directory as it is renamed into place.
+    #[test]
+    fn publishing_holds_the_cache_lock() {
+        use std::os::fd::AsRawFd;
+        let dir = tempfile::tempdir().unwrap();
+        if !copy_on_write(dir.path()) {
+            eprintln!("skipped: no copy-on-write where the temp directory is");
+            return;
+        }
+        sh(dir.path(), "git init -q -b main . && echo one > a && git add -A && git -c user.name=t -c user.email=t@t commit -qm one");
+        let repo = Repo::open(dir.path(), &dir.path().join("home")).unwrap();
+        let tree = repo.tree_of(&repo.resolve("HEAD").unwrap()).unwrap();
+        let src = dir.path().join("w1");
+        assert_eq!(cache::clone_into(&repo, &tree, &src).unwrap(), Source::Scratch);
+        let entry = repo.home().join("trees").join(tree.as_str());
+
+        let lock = fs::File::create(repo.home().join("trees/.lock")).unwrap();
+        assert_eq!(unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) }, 0);
+        let publisher = std::thread::spawn({
+            let (repo, tree) = (repo.clone(), tree.clone());
+            move || cache::publish_and_evict(&repo, &tree, &src, false)
+        });
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(!entry.exists(), "published while another process held the cache exclusively");
+        drop(lock);
+        publisher.join().unwrap();
+        assert!(entry.exists());
     }
 }
 
