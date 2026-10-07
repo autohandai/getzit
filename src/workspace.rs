@@ -783,6 +783,34 @@ pub fn dispose(repo: &Repo, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// What `dispose --orphaned` did: workspace id and agent of each.
+#[derive(Debug, Default, Serialize)]
+pub struct Orphans {
+    pub disposed: Vec<(String, String)>,
+    /// Owner gone, but holding unrecorded edits; kept unless forced.
+    pub kept: Vec<(String, String)>,
+}
+
+/// Dispose every workspace whose owning `zit run` is gone and that holds no
+/// unrecorded edits; with `force`, those with edits too. Workspaces that
+/// never had an owner (made by hand or over MCP) are not touched.
+pub fn dispose_orphaned(repo: &Repo, force: bool) -> Result<Orphans> {
+    let mut report = Orphans::default();
+    for ws in list(repo)? {
+        if ws.pid.is_none() || owner_alive(&ws) {
+            continue;
+        }
+        let who = (ws.id.clone(), ws.agent.clone());
+        if !force && is_dirty(repo, &ws).unwrap_or(true) {
+            report.kept.push(who);
+            continue;
+        }
+        dispose(repo, &ws.id)?;
+        report.disposed.push(who);
+    }
+    Ok(report)
+}
+
 /// Does the view differ from its base state?
 pub fn is_dirty(_repo: &Repo, ws: &Workspace) -> Result<bool> {
     Ok(!run(ws.git().args(["status", "--porcelain"]))?.is_empty())

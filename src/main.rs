@@ -129,6 +129,12 @@ enum Cmd {
         ids: Vec<String>,
         #[arg(long)]
         all: bool,
+        /// Delete every workspace whose `zit run` is gone and that has no unrecorded edits.
+        #[arg(long, conflicts_with_all = ["ids", "all"])]
+        orphaned: bool,
+        /// With --orphaned: also those with unrecorded edits.
+        #[arg(long, requires = "orphaned")]
+        force: bool,
     },
     /// Delete every local copy zit made for this repository: workspaces,
     /// cached checkouts, verification views, caches. Changes stay in the graph.
@@ -408,7 +414,22 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
             }
             emit(json, &serde_json::json!({"discarded": changes}), || {})?;
         }
-        Cmd::Dispose { ids, all } => {
+        Cmd::Dispose { orphaned: true, force, .. } => {
+            let report = workspace::dispose_orphaned(&repo, force)?;
+            let ids = |v: &[(String, String)]| v.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>();
+            emit(json, &serde_json::json!({"disposed": ids(&report.disposed), "kept": ids(&report.kept)}), || {
+                for (id, agent) in &report.disposed {
+                    println!("disposed {id} ({agent})");
+                }
+                for (id, agent) in &report.kept {
+                    println!("kept {id} ({agent}): unrecorded edits; record it or pass --force");
+                }
+                if report.disposed.is_empty() && report.kept.is_empty() {
+                    println!("no orphaned workspaces");
+                }
+            })?;
+        }
+        Cmd::Dispose { ids, all, .. } => {
             let ids = if all { workspace::list(&repo)?.into_iter().map(|w| w.id).collect() } else { ids };
             for id in &ids {
                 workspace::dispose(&repo, id)?;

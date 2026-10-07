@@ -64,6 +64,50 @@ fn clean_refuses_to_pull_a_workspace_from_under_a_running_agent() {
     assert!(workspace::list(&fx.repo).unwrap().is_empty());
 }
 
+/// `dispose --orphaned` removes workspaces whose `zit run` is gone, keeping
+/// those with unrecorded edits unless forced.
+#[test]
+fn dispose_orphaned_removes_workspaces_whose_owner_is_gone() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = common::Cli::new(dir.path(), &[("a.txt", "a\n")]);
+    cli.run(&["init"]).ok();
+    let mut gone = std::process::Command::new("true").spawn().unwrap();
+    gone.wait().unwrap();
+    let make = |agent: &str, owner: Option<u32>| -> String {
+        let path = cli.run(&["materialise", "--agent", agent]).ok().stdout.trim().to_string();
+        let meta_path = std::path::Path::new(&path).parent().unwrap().join("meta.json");
+        let mut meta: serde_json::Value = serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
+        meta["pid"] = serde_json::json!(owner);
+        std::fs::write(&meta_path, serde_json::to_vec(&meta).unwrap()).unwrap();
+        path
+    };
+    let clean_orphan = make("clean-orphan", Some(gone.id()));
+    let dirty_orphan = make("dirty-orphan", Some(gone.id()));
+    std::fs::write(std::path::Path::new(&dirty_orphan).join("a.txt"), "edited\n").unwrap();
+    let owned = make("owned", Some(std::process::id()));
+    let unowned = make("unowned", None);
+    let id =
+        |path: &str| std::path::Path::new(path).parent().unwrap().file_name().unwrap().to_str().unwrap().to_string();
+
+    let out = cli.run(&["dispose", "--orphaned"]).ok();
+    assert!(out.stdout.contains(&format!("disposed {} (clean-orphan)", id(&clean_orphan))), "{}", out.stdout);
+    assert!(
+        out.stdout.contains(&format!("kept {} (dirty-orphan): unrecorded edits", id(&dirty_orphan))),
+        "{}",
+        out.stdout
+    );
+    assert!(!std::path::Path::new(&clean_orphan).exists());
+    for still in [&dirty_orphan, &owned, &unowned] {
+        assert!(std::path::Path::new(still).exists(), "{still}");
+    }
+
+    let forced = cli.run(&["dispose", "--orphaned", "--force", "--json"]).ok().json();
+    assert_eq!(forced["disposed"], serde_json::json!([id(&dirty_orphan)]));
+    assert_eq!(forced["kept"], serde_json::json!([]));
+    assert!(!std::path::Path::new(&dirty_orphan).exists());
+    assert!(std::path::Path::new(&owned).exists() && std::path::Path::new(&unowned).exists());
+}
+
 /// A verification in progress holds its view's lock; clean waits for nobody and refuses instead.
 #[test]
 fn clean_refuses_while_a_verification_holds_its_view() {
