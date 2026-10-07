@@ -214,6 +214,26 @@ fn an_old_git_is_refused_with_the_version_needed() {
     assert!(err.contains("git 2.38 or newer") && err.contains("2.30.1"), "{err}");
 }
 
+/// `$ZIT_HOME` may be relative to where zit is run (and contain spaces): git is pointed at
+/// files under it by path, from the repository's git directory and from workspaces.
+#[test]
+fn a_relative_zit_home_is_resolved_against_the_working_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = Cli::new(dir.path(), &[("a.txt", "a\n")]);
+    cli.run(&["init"]).ok();
+    let run = |args: &[&str]| {
+        let out = cli.command(&cli.root).env("ZIT_HOME", "rel home").args(args).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap()
+    };
+    let ws = run(&["materialise", "--json"]);
+    let path = Path::new(ws["path"].as_str().unwrap()).to_path_buf();
+    assert!(path.starts_with(cli.root.canonicalize().unwrap().join("rel home")), "{}", path.display());
+    write(&path, &[("b.txt", "b\n")]);
+    run(&["record", "--json", "--workspace", ws["id"].as_str().unwrap()]);
+    assert_eq!(run(&["status", "--json"])["changes"].as_array().unwrap().len(), 1);
+}
+
 /// Code in a language Zit cannot parse is one resource with no inferred reads; recording says so.
 #[test]
 fn recording_code_zit_cannot_parse_says_so() {

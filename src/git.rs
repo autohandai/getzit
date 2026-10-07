@@ -149,7 +149,7 @@ impl Repo {
     /// Open the repository containing `cwd`; local state lives under
     /// `$ZIT_HOME` (default `~/.zit`).
     pub fn discover(cwd: &Path) -> Result<Repo> {
-        let home = match std::env::var_os("ZIT_HOME") {
+        let home = match std::env::var_os("ZIT_HOME").filter(|h| !h.is_empty()) {
             Some(h) => PathBuf::from(h),
             None => PathBuf::from(std::env::var_os("HOME").ok_or_else(|| Error::msg("HOME is not set"))?).join(".zit"),
         };
@@ -176,6 +176,9 @@ impl Repo {
             other => other,
         };
         let key = format!("{}-{}", name.unwrap_or("repo"), crate::hash(git_dir.as_os_str().as_encoded_bytes()));
+        // Workspaces point git at files under home by path; commands then run from other directories.
+        let home_root =
+            if home_root.is_absolute() { home_root.to_path_buf() } else { std::env::current_dir()?.join(home_root) };
         Ok(Repo { git_dir, home: home_root.join(key), strategy: Strategy::Clone, alternate: None })
     }
 
