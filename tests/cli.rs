@@ -237,6 +237,19 @@ fn a_wrong_zit_git_is_named() {
     assert!(err.contains("/no/such/git") && err.contains("ZIT_GIT"), "{err}");
 }
 
+/// A repository with no commits cannot be initialised; say so instead of "unknown revision: HEAD".
+#[test]
+fn init_before_the_first_commit_says_what_is_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("repo");
+    std::fs::create_dir(&root).unwrap();
+    git(&root, &["init", "-q", "-b", "main"]);
+    let cli = Cli { root, home: dir.path().join("home") };
+    let ran = cli.run(&["init"]);
+    assert_eq!(ran.code, 2);
+    assert!(ran.stderr.contains("no commits"), "{}", ran.stderr);
+}
+
 /// `$ZIT_HOME` may be relative to where zit is run (and contain spaces): git is pointed at
 /// files under it by path, from the repository's git directory and from workspaces.
 #[test]

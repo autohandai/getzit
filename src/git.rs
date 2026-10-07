@@ -260,7 +260,11 @@ impl Repo {
         if let Ok(cur) = self.current() {
             return Ok(cur);
         }
-        let genesis = self.resolve(rev.unwrap_or("HEAD"))?;
+        let rev = rev.unwrap_or("HEAD");
+        let genesis = self.resolve(rev).map_err(|e| match rev {
+            "HEAD" => Error::msg("HEAD has no commits yet: commit first, or run `zit init --from <rev>`"),
+            _ => e,
+        })?;
         self.git(&["update-ref", CURRENT, genesis.as_str(), ""])?;
         self.current()
     }
