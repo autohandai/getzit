@@ -1,6 +1,6 @@
 {
 	"name": "pi-zit",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Zit for the Pi coding agent: work in a disposable Zit workspace, claim files before editing, and record the session as a change alongside other agents",
 	"keywords": [
 		"pi-package",

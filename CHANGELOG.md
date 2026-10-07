@@ -2,7 +2,7 @@
 
 All notable changes to Zit. Versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.1.2 - 2026-10-08
 
 ### Added
 
