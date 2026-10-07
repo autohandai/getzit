@@ -265,6 +265,10 @@ pub fn accept_with(repo: &Repo, change: &Oid, policy: &Policy) -> Result<Outcome
             }
             let subject = source.intent.lines().next().unwrap_or_default();
             let linear = policy.linear || evidence::linear(repo, &current)?;
+            // A linear compose is the only commit of the span that lands: it
+            // carries what the span declared it read.
+            let reads: Vec<Resource> =
+                if linear { footprint::between(repo, &base, change)?.reads.into_iter().collect() } else { vec![] };
             let mut msg = change::message(
                 &match linear {
                     true => subject.to_string(),
@@ -273,7 +277,7 @@ pub fn accept_with(repo: &Repo, change: &Oid, policy: &Policy) -> Result<Outcome
                 source.summary.as_deref(),
                 &source.agent,
                 None,
-                &[],
+                &reads,
             );
             if linear {
                 msg.push_str(&format!("Zit-Change: {change}\n"));

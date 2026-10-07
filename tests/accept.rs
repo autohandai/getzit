@@ -478,3 +478,27 @@ fn a_linear_accept_of_a_chain_tip_accepts_the_chain() {
     assert!(matches!(accept::accept_with(&fx.repo, &c1.id, &policy).unwrap(), Outcome::AlreadyAccepted));
     assert!(change::speculative(&fx.repo).unwrap().is_empty());
 }
+
+/// What a change declared it read is part of current's footprint once it
+/// lands, however it landed: a later write to it is a conflict.
+#[test]
+fn a_linear_compose_keeps_the_declared_reads_of_the_change() {
+    for linear in [false, true] {
+        let fx = fixture();
+        let first = fx.change("a", &[("notes.txt", "moved\n")]);
+        let ws = fx.workspace("codex");
+        write(ws.path(), &[("src/shop.rs", "pub fn buy() { lib::price(3); }\n")]);
+        let reads = [zit::resource::Resource::parse("src/lib.rs#price")];
+        let reader =
+            change::record(&fx.repo, &ws.id, &Record { reads: reads.to_vec(), ..Default::default() }).unwrap().unwrap();
+        let writer = fx.change("claude", &[("src/lib.rs", &LIB.replace("    x\n}", "    x + 0\n}"))]);
+        accepted(accept::accept(&fx.repo, &first.id).unwrap());
+        let policy = accept::Policy { linear, ..Default::default() };
+        let (current, composed) = accepted(accept::accept_with(&fx.repo, &reader.id, &policy).unwrap());
+        assert!(composed);
+        let Outcome::Rejected(Invalid::Stale(why)) = accept::accept(&fx.repo, &writer.id).unwrap() else {
+            panic!("linear = {linear}: a write to what current read was accepted");
+        };
+        assert_eq!((why[0].kind, why[0].by.as_ref()), (ConflictKind::WriteRead, Some(&current)), "linear = {linear}");
+    }
+}
