@@ -1,5 +1,5 @@
 use anyhow::{bail, Context};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use std::process::ExitCode;
 use zit::accept::{self, Invalid, Outcome};
@@ -192,6 +192,11 @@ enum Cmd {
     },
     /// Interactive view of changes and workspaces.
     Ui,
+    /// Print a shell completion script: `zit completions zsh > ~/.zfunc/_zit`.
+    Completions {
+        #[arg(value_enum)]
+        shell: Shell,
+    },
     /// Live graph in the browser: accepted line, speculative changes, workspaces, diffs.
     Web {
         /// Port to listen on (a free one is chosen if it is taken).
@@ -201,6 +206,25 @@ enum Cmd {
         #[arg(long)]
         no_open: bool,
     },
+}
+
+/// The shells `zit completions` is tested for.
+#[derive(Clone, Copy, ValueEnum)]
+enum Shell {
+    Bash,
+    Zsh,
+    Fish,
+}
+
+/// The script is always for `zit`; `git zit` completes through git's own machinery.
+fn completions(shell: Shell) {
+    use clap::CommandFactory;
+    let shell = match shell {
+        Shell::Bash => clap_complete::Shell::Bash,
+        Shell::Zsh => clap_complete::Shell::Zsh,
+        Shell::Fish => clap_complete::Shell::Fish,
+    };
+    clap_complete::generate(shell, &mut Cli::command(), "zit", &mut std::io::stdout());
 }
 
 fn default_agent() -> String {
@@ -293,6 +317,10 @@ const OK: ExitCode = ExitCode::SUCCESS;
 const NO: u8 = 1;
 
 fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
+    if let Cmd::Completions { shell } = cli.command {
+        completions(shell);
+        return Ok(OK);
+    }
     zit::git::require_git()?;
     let json = cli.json;
     let cwd = std::env::current_dir()?;
@@ -525,7 +553,7 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
             }
             server.run();
         }
-        Cmd::Mcp { .. } => unreachable!("handled above"),
+        Cmd::Mcp { .. } | Cmd::Completions { .. } => unreachable!("handled above"),
     }
     Ok(OK)
 }

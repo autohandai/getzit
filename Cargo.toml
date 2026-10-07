@@ -24,6 +24,7 @@ required-features = ["bench"]
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
 libc = "0.2"
 ratatui = "0.30"
 serde = { version = "1", features = ["derive"] }

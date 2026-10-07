@@ -254,6 +254,19 @@ fn diff_shows_a_change_against_its_base_or_against_current() {
     assert_eq!(cli.run(&["diff", "nope"]).code, 2);
 }
 
+/// `zit completions SHELL` prints a completion script for bash, zsh or fish; no repository needed.
+#[test]
+fn completions_are_generated_for_each_shell() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = Cli::new(dir.path(), &[("a.txt", "a\n")]);
+    for (shell, marker) in [("bash", "_zit()"), ("zsh", "#compdef zit"), ("fish", "complete -c zit")] {
+        let out = cli.run_in(dir.path(), &["completions", shell]).ok().stdout;
+        assert!(out.contains(marker), "{shell}: {}", &out[..out.len().min(200)]);
+        assert!(out.contains("materialise") && out.contains("log"), "{shell} knows every subcommand");
+    }
+    assert_eq!(cli.run_in(dir.path(), &["completions", "powershell"]).code, 2, "only shells it is tested for");
+}
+
 /// Integrations detect a format change by the `schema` field every `--json` report carries.
 #[test]
 fn json_reports_carry_a_schema_version() {
