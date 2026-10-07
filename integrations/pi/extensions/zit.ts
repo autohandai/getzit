@@ -199,7 +199,10 @@ export default function zitExtension(pi: ExtensionAPI) {
 			const outcome = await record(ws, summary, { dispose: true });
 			if (ctx.hasUI) ctx.ui.notify(`Zit: ${outcome.text.split("\n")[0]}; workspace ${ws.id} deleted.`, "info");
 		} catch (error) {
-			if (ctx.hasUI) ctx.ui.notify(`Zit: could not record workspace ${ws.id}: ${(error as Error).message}`, "error");
+			// Work that was not recorded must not go unmentioned, UI or not.
+			const message = `Zit: could not record workspace ${ws.id}: ${(error as Error).message}`;
+			if (ctx.hasUI) ctx.ui.notify(message, "error");
+			else console.error(message);
 		}
 	});
 
