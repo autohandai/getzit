@@ -224,6 +224,36 @@ fn log_lists_accepted_changes_with_their_cost_and_totals() {
     assert_eq!(limited["totals"]["input_tokens"], 300, "totals cover what is listed");
 }
 
+/// `zit diff`: what a change did, against its base by default or against current.
+#[test]
+fn diff_shows_a_change_against_its_base_or_against_current() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = cli(dir.path());
+    let landed = change(&cli, "claude", &[("src/shop.rs", "pub fn buy() { 1; }\n")]);
+    let b = change(&cli, "codex", &[("src/lib.rs", &LIB.replace("x / 10", "x / 5"))]);
+    cli.run(&["accept", &landed]).ok();
+
+    let base = cli.run(&["diff", &b]).ok().stdout;
+    assert!(base.contains("+    x / 5") && base.contains("-    x / 10"), "{base}");
+    assert!(!base.contains("shop.rs"), "against its own base, shop.rs is untouched: {base}");
+
+    let current = cli.run(&["diff", &b, "--against", "current"]).ok().stdout;
+    assert!(current.contains("-pub fn buy() { 1; }"), "current has shop.rs edits the change lacks: {current}");
+    assert!(current.contains("+    x / 5"), "{current}");
+
+    let stat = cli.run(&["diff", &b, "--stat"]).ok().stdout;
+    assert!(stat.contains("src/lib.rs") && stat.contains("1 file changed"), "{stat}");
+    assert!(!stat.contains("+    x / 5"), "a summary, not the patch: {stat}");
+
+    let json = cli.run(&["diff", &b, "--json"]).ok().json();
+    assert_eq!(json["schema"], 1);
+    assert_eq!(json["change"], b.as_str());
+    assert_eq!(json["against"], git(&cli.root, &["rev-parse", &format!("{b}^")]));
+    assert!(json["diff"].as_str().unwrap().contains("+    x / 5"));
+
+    assert_eq!(cli.run(&["diff", "nope"]).code, 2);
+}
+
 /// Integrations detect a format change by the `schema` field every `--json` report carries.
 #[test]
 fn json_reports_carry_a_schema_version() {

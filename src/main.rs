@@ -92,6 +92,16 @@ enum Cmd {
     Status,
     /// One change: what, why, dependencies, evidence.
     Show { change: String },
+    /// What a change did: its diff against its base, as `git diff` prints it.
+    Diff {
+        change: String,
+        /// Compare with this change (`current`, an id, any git revision) instead of the base.
+        #[arg(long, value_name = "CHANGE")]
+        against: Option<String>,
+        /// Only the summary of changed files.
+        #[arg(long)]
+        stat: bool,
+    },
     /// Accepted history from current backwards: who, what, why, and what it cost.
     Log {
         /// Show at most this many changes [default: all].
@@ -377,6 +387,15 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
         Cmd::Show { change } => {
             let detail = api::detail(&repo, &repo.resolve(&change)?)?;
             emit(json, &versioned(&detail)?, || print!("{}", view::detail_text(&detail)))?;
+        }
+        Cmd::Diff { change, against, stat } => {
+            let against = against.as_deref().map(|rev| repo.resolve(rev)).transpose()?;
+            let diff = api::diff(&repo, &repo.resolve(&change)?, against.as_ref(), stat)?;
+            emit(json, &versioned(&diff)?, || {
+                if !diff.diff.is_empty() {
+                    println!("{}", diff.diff);
+                }
+            })?;
         }
         Cmd::Log { limit } => {
             let log = api::log(&repo, limit)?;

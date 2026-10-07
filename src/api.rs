@@ -190,6 +190,31 @@ pub fn log(repo: &Repo, limit: Option<usize>) -> Result<Log> {
     Ok(Log { totals: Totals::of(&changes), changes })
 }
 
+/// A change's diff, as `git diff` prints it.
+#[derive(Debug, Serialize)]
+pub struct Diff {
+    pub change: Oid,
+    /// What it is compared with: its base, or the change asked for. `null`
+    /// for a change with no parent, which is shown whole.
+    pub against: Option<Oid>,
+    pub diff: String,
+}
+
+/// The diff of `id` against `against`, or its first parent. `stat` asks for
+/// the summary of changed files instead of the patch.
+pub fn diff(repo: &Repo, id: &Oid, against: Option<&Oid>, stat: bool) -> Result<Diff> {
+    let against = match against {
+        Some(other) => Some(other.clone()),
+        None => change::load(repo, id)?.parents.first().cloned(),
+    };
+    let summary: &[&str] = if stat { &["--stat"] } else { &[] };
+    let diff = match &against {
+        Some(from) => repo.git(&[&["diff", "--no-color"], summary, &[from.as_str(), id.as_str()]].concat())?,
+        None => repo.git(&[&["show", "--no-color", "--format="], summary, &[id.as_str()]].concat())?,
+    };
+    Ok(Diff { change: id.clone(), against, diff })
+}
+
 #[derive(Debug, Serialize)]
 pub struct Recorded {
     /// `null` when the workspace held no edits.
