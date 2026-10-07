@@ -149,7 +149,12 @@ fn a_known_agent_needs_no_command() {
         zit::run::preset("autohand", "Fix it", &writable).unwrap(),
         ["autohand", "-p", "Fix it", "--yes", "--output-format", "stream-json"]
     );
-    assert_eq!(zit::run::preset("pi", "Fix it", &writable).unwrap(), ["pi", "-p", "Fix it"]);
+    assert_eq!(zit::run::preset("pi", "Fix it", &writable).unwrap(), ["pi", "--mode", "json", "-p", "Fix it"]);
+    // Pi in its JSON mode is read like the others; in text mode its output is the account.
+    let s = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert!(zit::run::prints_json_events(&s(&["pi", "--mode", "json", "-p", "x"])));
+    assert!(zit::run::prints_json_events(&s(&["pi", "--mode=json", "-p", "x"])));
+    assert!(!zit::run::prints_json_events(&s(&["pi", "-p", "x"])));
     assert!(zit::run::preset("unknown", "x", &writable).is_none());
 }
 

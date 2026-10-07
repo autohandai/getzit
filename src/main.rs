@@ -475,7 +475,7 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
             let agent = who.agent.unwrap_or_else(default_agent);
             // Presets that print JSON events: their final message and usage are read from them.
             let structured = match command.is_empty() {
-                true => matches!(agent.as_str(), "claude" | "codex" | "autohand"),
+                true => matches!(agent.as_str(), "claude" | "codex" | "autohand" | "pi"),
                 false => run::prints_json_events(&command),
             };
             let command = match command.is_empty() {

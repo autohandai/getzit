@@ -71,21 +71,58 @@ echo '{"type":"turn.completed","usage":{"input_tokens":200,"cached_input_tokens"
     assert!(change["usage"]["cost_usd"].is_null(), "codex reports no price");
 }
 
+/// A fake agent that writes `b.txt` and replays a captured output file.
+fn replay(bin: &Path, name: &str, fixture: &str) {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(fixture);
+    fake(bin, name, &format!("echo edited > b.txt\ncat '{}'", path.display()));
+}
+
+/// Autohand Code 0.9.9's stream-json carries its final message and nothing about cost.
 #[test]
 fn an_autohand_turn_keeps_its_final_message() {
     let dir = tempfile::tempdir().unwrap();
     let cli = Cli::new(dir.path(), &[("a.txt", "a\n")]);
     cli.run(&["init"]).ok();
     let bin = dir.path().join("bin");
-    fake(
-        &bin,
-        "autohand",
-        r#"echo edited > b.txt
-echo '{"type":"result","content":"Created b.txt."}'"#,
-    );
+    replay(&bin, "autohand", "autohand-stream-json.jsonl");
     let report = run_preset(&cli, &bin, "autohand");
-    assert_eq!(report["change"]["summary"], "Created b.txt.");
+    assert_eq!(report["change"]["summary"], "ok");
     assert!(report["change"]["usage"].is_null(), "autohand reports no usage");
+}
+
+/// Pi's `--mode json` reports every assistant message's tokens and its own
+/// price for them; the last assistant message is the account.
+#[test]
+fn a_pi_turn_records_its_tokens_price_and_final_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = Cli::new(dir.path(), &[("a.txt", "a\n")]);
+    cli.run(&["init"]).ok();
+    let bin = dir.path().join("bin");
+    replay(&bin, "pi", "pi-mode-json.jsonl");
+    let report = run_preset(&cli, &bin, "pi");
+    let change = &report["change"];
+    assert_eq!(change["summary"], "Hey! How can I help you today?");
+    assert_eq!(change["usage"]["input_tokens"], 6321);
+    assert_eq!(change["usage"]["output_tokens"], 67);
+    assert_eq!(change["usage"]["cost_usd"], 0.0, "a free model: Pi prices it at zero");
+    let shown = cli.run(&["show", change["id"].as_str().unwrap()]).ok().stdout;
+    assert!(shown.contains("usage    6321 tokens in, 67 out, $0.0000"), "{shown}");
+}
+
+/// Tokens and cost are summed over Pi's assistant messages (one per model call); cached
+/// input counts as input, and the events that repeat a message are not counted again.
+#[test]
+fn pi_usage_is_summed_over_its_messages() {
+    let events = r#"{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"toolCall","id":"1","name":"read"}],"usage":{"input":100,"output":10,"cacheRead":50,"cacheWrite":25,"totalTokens":185,"cost":{"input":0.001,"output":0.002,"cacheRead":0,"cacheWrite":0,"total":0.003}},"stopReason":"toolUse"}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Done."}],"usage":{"input":200,"output":20,"cacheRead":0,"cacheWrite":0,"totalTokens":220,"cost":{"input":0.002,"output":0.004,"cacheRead":0,"cacheWrite":0,"total":0.006}},"stopReason":"stop"}}
+{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"Done."}],"usage":{"input":200,"output":20,"cacheRead":0,"cacheWrite":0,"totalTokens":220,"cost":{"total":0.006}}}}
+"#;
+    let (said, usage) = zit::run::read_events(events);
+    assert_eq!(said.as_deref(), Some("Done."));
+    let usage = usage.unwrap();
+    assert_eq!((usage.input_tokens, usage.output_tokens), (375, 30));
+    assert!((usage.cost_usd.unwrap() - 0.009).abs() < 1e-9, "{usage:?}");
 }
 
 /// An explicit command already in the agent's JSON mode is read the same way as a preset.

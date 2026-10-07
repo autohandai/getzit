@@ -104,14 +104,14 @@ pub fn preset(agent: &str, prompt: &str, writable: &[PathBuf]) -> Option<Vec<Str
             argv
         }
         "autohand" => s(&["autohand", "-p", prompt, "--yes", "--output-format", "stream-json"]),
-        "pi" => s(&["pi", "-p", prompt]),
+        "pi" => s(&["pi", "--mode", "json", "-p", prompt]),
         _ => return None,
     })
 }
 
 /// Whether `argv` runs a known agent in the JSON mode `zit run` reads:
 /// `claude … --output-format json|stream-json`, `codex exec … --json`,
-/// `autohand … --output-format stream-json`.
+/// `autohand … --output-format stream-json`, `pi … --mode json`.
 pub fn prints_json_events(argv: &[String]) -> bool {
     let program = argv.first().and_then(|p| std::path::Path::new(p).file_name()).and_then(|n| n.to_str());
     let has = |flag: &str, values: &[&str]| {
@@ -122,6 +122,7 @@ pub fn prints_json_events(argv: &[String]) -> bool {
         Some("claude") => has("--output-format", &["json", "stream-json"]),
         Some("autohand") => has("--output-format", &["stream-json"]),
         Some("codex") => argv.iter().any(|a| a == "--json"),
+        Some("pi") => has("--mode", &["json"]),
         _ => false,
     }
 }
@@ -347,16 +348,39 @@ pub fn run(repo: &Repo, opts: &Run) -> Result<Report> {
     })
 }
 
-/// The agent's account: colour codes removed, trimmed, at most
-/// `MAX_SUMMARY` bytes from the end.
-/// The final message and usage in an agent's JSON output: Claude Code's
-/// result object, Codex's JSONL events, Autohand's stream-json.
-fn read_events(output: &str) -> (Option<String>, Option<Usage>) {
+/// The final message and usage in an agent's JSON output, one event per
+/// line: Claude Code's `result` object, Codex's `item.completed` and
+/// `turn.completed`, Autohand's `result`, Pi's `message_end` (every
+/// assistant message's tokens and Pi's own price for them, summed; cached
+/// input counts as input). Lines that are not JSON are skipped.
+pub fn read_events(output: &str) -> (Option<String>, Option<Usage>) {
     let (mut said, mut usage): (Option<String>, Option<Usage>) = (None, None);
     let n = |v: &serde_json::Value, k: &str| v[k].as_u64().unwrap_or(0);
     for line in output.lines() {
         let Ok(event) = serde_json::from_str::<serde_json::Value>(line.trim()) else { continue };
         match event["type"].as_str() {
+            Some("message_end") if event["message"]["role"] == "assistant" => {
+                let message = &event["message"];
+                let text: Vec<&str> = message["content"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|c| c["type"] == "text")
+                    .filter_map(|c| c["text"].as_str())
+                    .collect();
+                if !text.is_empty() {
+                    said = Some(text.join("\n").trim().to_string());
+                }
+                let u = &message["usage"];
+                if u.is_object() {
+                    let total = usage.get_or_insert_with(Usage::default);
+                    total.input_tokens += n(u, "input") + n(u, "cacheRead") + n(u, "cacheWrite");
+                    total.output_tokens += n(u, "output");
+                    if let Some(cost) = u["cost"]["total"].as_f64() {
+                        total.cost_usd = Some(total.cost_usd.unwrap_or(0.0) + cost);
+                    }
+                }
+            }
             Some("result") => {
                 if let Some(text) = event["result"].as_str().or(event["content"].as_str()) {
                     said = Some(text.to_string());
@@ -386,6 +410,8 @@ fn read_events(output: &str) -> (Option<String>, Option<Usage>) {
     (said, usage)
 }
 
+/// The agent's account: colour codes removed, trimmed, at most
+/// `MAX_SUMMARY` bytes from the end.
 fn account(raw: &str) -> Option<String> {
     let mut clean = String::with_capacity(raw.len());
     let mut chars = raw.chars().peekable();
