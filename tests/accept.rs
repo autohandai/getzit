@@ -602,6 +602,85 @@ fn batch_from_the_shell_lists_what_landed_and_what_was_skipped() {
     );
 }
 
+#[test]
+fn a_dry_run_reports_the_outcome_and_the_checks_but_moves_and_runs_nothing() {
+    let scratch = tempfile::tempdir().unwrap();
+    let (config, log) = counting_check(scratch.path());
+    let config = format!("{config}\n[[check]]\nname = \"scoped\"\nrun = \"true\"\ninputs = [\"b.txt\"]\n");
+    let fx = Fixture::new(&[("zit.toml", &config), ("a.txt", "-\n"), ("b.txt", "-\n")]);
+    let a = fx.change("a", &[("a.txt", "A\n")]);
+    let before = fx.repo.current().unwrap();
+    zit::evidence::verify(&fx.repo, &before, false).unwrap();
+    assert_eq!(run_count(&log), 1);
+
+    let policy = accept::Policy::default();
+    let dry = accept::dry_run(&fx.repo, &a.id, &policy).unwrap();
+    let accept::DryRun::WouldAccept { composed, checks } = dry else { panic!("{dry:?}") };
+    assert!(!composed);
+    let planned: Vec<(&str, bool)> = checks.iter().map(|c| (c.check.as_str(), c.run)).collect();
+    assert_eq!(planned, [("t", true), ("scoped", false)], "scoped's input is unchanged, so it would be reused");
+    assert_eq!(run_count(&log), 1, "nothing ran");
+    assert_eq!(fx.repo.current().unwrap(), before, "nothing moved");
+    assert_eq!(change::speculative(&fx.repo).unwrap(), vec![a.clone()]);
+
+    // --rerun would run everything again.
+    let rerun = accept::Policy { rerun: true, ..Default::default() };
+    let accept::DryRun::WouldAccept { checks, .. } = accept::dry_run(&fx.repo, &a.id, &rerun).unwrap() else {
+        panic!()
+    };
+    assert!(checks.iter().all(|c| c.run));
+
+    // Once current moves, the dry run composes and validates against it.
+    let other = fx.change("b", &[("b.txt", "B\n")]);
+    accepted(accept::accept(&fx.repo, &other.id).unwrap());
+    let accept::DryRun::WouldAccept { composed, .. } = accept::dry_run(&fx.repo, &a.id, &policy).unwrap() else {
+        panic!()
+    };
+    assert!(composed);
+    assert!(matches!(accept::dry_run(&fx.repo, &other.id, &policy).unwrap(), accept::DryRun::AlreadyAccepted));
+}
+
+#[test]
+fn a_dry_run_rejects_what_accept_would_reject() {
+    let fx = fixture();
+    let callee = fx.change("claude", &[("src/lib.rs", &LIB.replace("price(x: u32)", "price(x: u32, t: u32)"))]);
+    let caller = fx.change("codex", &[("src/shop.rs", CALLER)]);
+    accepted(accept::accept(&fx.repo, &callee.id).unwrap());
+    let dry = accept::dry_run(&fx.repo, &caller.id, &accept::Policy::default()).unwrap();
+    assert!(matches!(dry, accept::DryRun::Rejected(Invalid::Stale(_))), "{dry:?}");
+
+    let fx = Fixture::new(&[("m.go", GO)]);
+    let (wrap, split) = wrap_and_split(&fx);
+    accepted(accept::accept(&fx.repo, &wrap.id).unwrap());
+    let policy = accept::Policy { allow_stale: true, ..Default::default() };
+    let dry = accept::dry_run(&fx.repo, &split.id, &policy).unwrap();
+    assert!(matches!(dry, accept::DryRun::Rejected(Invalid::Error(_))), "{dry:?}");
+}
+
+#[test]
+fn dry_run_from_the_shell() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli =
+        common::Cli::new(dir.path(), &[("zit.toml", "[[check]]\nname = \"t\"\nrun = \"true\"\n"), ("a.txt", "a\n")]);
+    cli.run(&["init"]).ok();
+    let ws = cli.run(&["materialise", "--agent", "a", "--intent", "Edit a", "--json"]).ok().json();
+    let path = std::path::PathBuf::from(ws["path"].as_str().unwrap());
+    write(&path, &[("a.txt", "A\n")]);
+    let id =
+        cli.run_in(&path, &["record", "--dispose", "--json"]).ok().json()["change"]["id"].as_str().unwrap().to_string();
+
+    let ran = cli.run(&["accept", "--dry-run", &id]).ok();
+    assert!(ran.stdout.contains("would accept") && ran.stdout.contains("fast-forward"), "{}", ran.stdout);
+    assert!(ran.stdout.contains("t (run)"), "{}", ran.stdout);
+    let out = cli.run(&["accept", "--dry-run", &id, "--json"]).ok().json();
+    assert_eq!(out["outcome"], "would-accept");
+    assert_eq!(out["checks"][0]["check"], "t");
+    assert_eq!(out["checks"][0]["run"], true);
+    let status = cli.run(&["status", "--json"]).ok().json();
+    assert_eq!(status["changes"][0]["id"], id.as_str(), "still speculative");
+    assert_eq!(status["changes"][0]["status"], "speculative", "no evidence was produced");
+}
+
 const GO: &str = "package m\n\nfunc f() {\n\ta()\n\tb()\n\tc()\n\td()\n\te()\n}\n";
 
 /// One side wraps the body in a block, the other splits the function: each

@@ -287,7 +287,12 @@ fn lookup_keyed(repo: &Repo, state: &Oid, governing: Option<&Oid>) -> Result<Vec
 
 /// Existing evidence for each check of a state. Runs nothing.
 pub fn lookup(repo: &Repo, state: &Oid) -> Result<Vec<(Check, Option<Evidence>)>> {
-    Ok(lookup_keyed(repo, state, None)?.into_iter().map(|(check, _, found)| (check, found)).collect())
+    lookup_with(repo, state, None)
+}
+
+/// As `lookup`, with a governing revision's checks applying too.
+pub(crate) fn lookup_with(repo: &Repo, state: &Oid, governing: Option<&Oid>) -> Result<Vec<(Check, Option<Evidence>)>> {
+    Ok(lookup_keyed(repo, state, governing)?.into_iter().map(|(check, _, found)| (check, found)).collect())
 }
 
 /// This clone's record of the evidence it produced. Evidence refs travel

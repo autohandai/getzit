@@ -363,6 +363,57 @@ pub fn accept_with(repo: &Repo, change: &Oid, policy: &Policy) -> Result<Outcome
     }
 }
 
+/// A check acceptance would consult, and whether it would run or reuse evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Planned {
+    pub check: String,
+    /// No evidence for its inputs yet (or every check is to be rerun).
+    pub run: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "kebab-case", tag = "outcome")]
+pub enum DryRun {
+    /// It composes and validates; these checks would decide.
+    WouldAccept {
+        composed: bool,
+        checks: Vec<Planned>,
+    },
+    AlreadyAccepted,
+    Rejected(Invalid),
+}
+
+/// What `accept` would do, without doing it: compose and validate (staleness,
+/// text merge, parse check), then name the checks and whether each would run.
+/// Nothing is written, run or moved. Generated files are not regenerated, so
+/// a check whose inputs include one may be reported as running when it would
+/// be reused.
+pub fn dry_run(repo: &Repo, change: &Oid, policy: &Policy) -> Result<DryRun> {
+    let (source, Some(current)) = load_with_current(repo, change)? else {
+        return Ok(DryRun::AlreadyAccepted);
+    };
+    let base = repo.merge_base(change, &current)?.ok_or_else(|| no_shared_history(change))?;
+    if base == *change || landed_linearly(repo, change, &base, &current)? {
+        return Ok(DryRun::AlreadyAccepted);
+    }
+    let composed = base != current;
+    let state = match composed {
+        false => source.state,
+        true => {
+            let rules = evidence::accept_rules(repo, &current)?;
+            match validate(repo, change, &base, &current, policy, &rules)? {
+                Ok(merged) => merged.state,
+                Err(invalid) => return Ok(DryRun::Rejected(invalid)),
+            }
+        }
+    };
+    let checks = evidence::lookup_with(repo, &state, Some(&current))?
+        .into_iter()
+        .map(|(check, found)| Planned { check: check.name, run: policy.rerun || found.is_none() })
+        .collect();
+    Ok(DryRun::WouldAccept { composed, checks })
+}
+
 /// A change a batch passed over, and why.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Skipped {

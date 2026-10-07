@@ -2,7 +2,7 @@ use anyhow::{bail, Context};
 use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 use std::process::ExitCode;
-use zit::accept::{self, BatchOutcome, Invalid, Outcome};
+use zit::accept::{self, BatchOutcome, DryRun, Invalid, Outcome};
 use zit::change::{self, Record};
 use zit::claim::{self, Claimed};
 use zit::resource::Resource;
@@ -117,6 +117,9 @@ enum Cmd {
         /// Compose as one commit on top of current, never a merge commit.
         #[arg(long)]
         linear: bool,
+        /// Compose and validate only: report the outcome and which checks would run. Moves nothing, runs nothing.
+        #[arg(long, conflicts_with = "batch")]
+        dry_run: bool,
     },
     /// Rebuild a stale change on current, in a new workspace, to reconsider.
     Retry { change: String },
@@ -384,8 +387,26 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
                 return Ok(ExitCode::from(NO));
             }
         }
-        Cmd::Accept { changes, batch, allow_stale, rerun, linear } => {
+        Cmd::Accept { changes, batch, allow_stale, rerun, linear, dry_run } => {
             let policy = accept::Policy { allow_stale, rerun, linear };
+            if dry_run {
+                let [change] = changes.as_slice() else { bail!("--dry-run takes one change") };
+                let dry = accept::dry_run(&repo, &repo.resolve(change)?, &policy)?;
+                emit(json, &dry, || match &dry {
+                    DryRun::AlreadyAccepted => println!("already accepted"),
+                    DryRun::Rejected(invalid) => print_invalid(&repo, invalid),
+                    DryRun::WouldAccept { composed, checks } => {
+                        let how = if *composed { "composed onto current" } else { "fast-forward" };
+                        let planned: Vec<String> = checks
+                            .iter()
+                            .map(|c| format!("{} ({})", c.check, if c.run { "run" } else { "reused" }))
+                            .collect();
+                        let planned = if planned.is_empty() { "none".to_string() } else { planned.join(", ") };
+                        println!("would accept {} ({how}); checks: {planned}", change);
+                    }
+                })?;
+                return Ok(if matches!(dry, DryRun::Rejected(_)) { ExitCode::from(NO) } else { OK });
+            }
             if let ([change], false) = (changes.as_slice(), batch) {
                 let outcome = accept::accept_with(&repo, &repo.resolve(change)?, &policy)?;
                 return report_outcome(&repo, json, &outcome);
