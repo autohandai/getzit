@@ -1,7 +1,7 @@
 //! Plain-text rendering shared by the CLI and the UI.
 
 use crate::accept::{Invalid, Staleness, Status};
-use crate::api::{Detail, Overview, WorkspaceRow};
+use crate::api::{Detail, Log, Overview, WorkspaceRow};
 use crate::change::Change;
 use crate::footprint::ConflictKind;
 use std::fmt::Write;
@@ -137,6 +137,38 @@ pub fn overview_text(o: &Overview) -> String {
             );
         }
     }
+    out
+}
+
+/// `1000 in, 50 out, $0.2500`; the price only when the agent reported one.
+pub fn usage_line(u: &crate::change::Usage) -> String {
+    let cost = u.cost_usd.map(|c| format!(", ${c:.4}")).unwrap_or_default();
+    format!("{} in, {} out{cost}", u.input_tokens, u.output_tokens)
+}
+
+/// One accepted change per entry: id, age, agent, intent; below it the
+/// first line of the account and what it cost; the totals last.
+pub fn log_text(log: &Log) -> String {
+    let mut out = String::new();
+    for c in &log.changes {
+        let _ = writeln!(out, "{}  {:>3}  {:<10}  {}", c.id.short(), age(c.time), c.agent, subject(c));
+        if let Some(line) = c.summary.as_deref().and_then(|s| s.lines().next()) {
+            let _ = writeln!(out, "{:17}{line}", "");
+        }
+        if let Some(u) = &c.usage {
+            let _ = writeln!(out, "{:17}{}", "", usage_line(u));
+        }
+    }
+    let t = &log.totals;
+    let cost = t.cost_usd.map(|c| format!(", ${c:.4}")).unwrap_or_default();
+    let _ = writeln!(
+        out,
+        "{} change{}, {} tokens in, {} out{cost}",
+        t.changes,
+        if t.changes == 1 { "" } else { "s" },
+        t.input_tokens,
+        t.output_tokens
+    );
     out
 }
 

@@ -92,6 +92,12 @@ enum Cmd {
     Status,
     /// One change: what, why, dependencies, evidence.
     Show { change: String },
+    /// Accepted history from current backwards: who, what, why, and what it cost.
+    Log {
+        /// Show at most this many changes [default: all].
+        #[arg(short = 'n', long = "max-count", value_name = "N")]
+        limit: Option<usize>,
+    },
     /// Produce evidence for a change by running its state's checks.
     Check {
         change: String,
@@ -371,6 +377,10 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
         Cmd::Show { change } => {
             let detail = api::detail(&repo, &repo.resolve(&change)?)?;
             emit(json, &versioned(&detail)?, || print!("{}", view::detail_text(&detail)))?;
+        }
+        Cmd::Log { limit } => {
+            let log = api::log(&repo, limit)?;
+            emit(json, &versioned(&log)?, || print!("{}", view::log_text(&log)))?;
         }
         Cmd::Check { change, rerun } => {
             let verdicts = evidence::verify(&repo, &repo.resolve(&change)?, rerun)?;

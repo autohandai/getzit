@@ -147,6 +147,49 @@ pub fn detail(repo: &Repo, id: &Oid) -> Result<Detail> {
     Ok(Detail { status: accept::status(repo, id)?, change, writes, evidence })
 }
 
+/// What a run of changes cost altogether, from their `Zit-Tokens` and
+/// `Zit-Cost-USD` trailers; changes without them count as zero.
+#[derive(Debug, Default, PartialEq, Serialize)]
+pub struct Totals {
+    pub changes: usize,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    /// `null` when no change reported a price.
+    pub cost_usd: Option<f64>,
+}
+
+impl Totals {
+    pub fn of<'a>(changes: impl IntoIterator<Item = &'a Change>) -> Totals {
+        changes.into_iter().fold(Totals::default(), |mut t, c| {
+            t.changes += 1;
+            if let Some(u) = &c.usage {
+                t.input_tokens += u.input_tokens;
+                t.output_tokens += u.output_tokens;
+                if let Some(cost) = u.cost_usd {
+                    t.cost_usd = Some(t.cost_usd.unwrap_or(0.0) + cost);
+                }
+            }
+            t
+        })
+    }
+}
+
+/// Accepted history from current backwards, with what it cost.
+#[derive(Debug, Serialize)]
+pub struct Log {
+    /// Newest first.
+    pub changes: Vec<Change>,
+    /// Over the changes listed.
+    pub totals: Totals,
+}
+
+/// The accepted line, `limit` changes at most (all of it when `None`).
+pub fn log(repo: &Repo, limit: Option<usize>) -> Result<Log> {
+    // git reads -n as an int; larger values are "not an integer".
+    let changes = change::accepted(repo, limit.unwrap_or(i32::MAX as usize))?;
+    Ok(Log { totals: Totals::of(&changes), changes })
+}
+
 #[derive(Debug, Serialize)]
 pub struct Recorded {
     /// `null` when the workspace held no edits.

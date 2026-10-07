@@ -1,7 +1,10 @@
 mod common;
 
-use common::{git, write, Cli};
+use common::{git, write, Cli, Fixture};
 use std::path::Path;
+use zit::change::{self, Record, Usage};
+use zit::workspace::{self, NewWorkspace};
+use zit::{accept, Oid};
 
 const LIB: &str = "pub fn price(x: u32) -> u32 {\n    x\n}\n\npub fn tax(x: u32) -> u32 {\n    x / 10\n}\n";
 
@@ -163,6 +166,62 @@ fn claim_exits_1_and_names_the_holder_when_refused() {
 
     let status = cli.run(&["status"]).ok();
     assert!(status.stdout.contains("claims src/lib.rs#price, src/shop.rs"), "{}", status.stdout);
+}
+
+/// A recorded change with an account and a reported cost, as `zit run` leaves one.
+fn costed(fx: &Fixture, agent: &str, intent: &str, summary: &str, usage: Option<Usage>, file: (&str, &str)) -> Oid {
+    let new = NewWorkspace { from: None, intent, agent, session: None };
+    let ws = workspace::materialise(&fx.repo, &new).unwrap();
+    write(ws.path(), &[file]);
+    let opts = Record { summary: Some(summary.to_string()), usage, ..Default::default() };
+    let change = change::record(&fx.repo, &ws.id, &opts).unwrap().unwrap();
+    workspace::dispose(&fx.repo, &ws.id).unwrap();
+    change.id
+}
+
+/// `zit log`: the accepted history, newest first, with what each change cost and the totals.
+#[test]
+fn log_lists_accepted_changes_with_their_cost_and_totals() {
+    let fx = Fixture::new(&[("a.txt", "a\n")]);
+    let cost = |i, o, c| Some(Usage { input_tokens: i, output_tokens: o, cost_usd: c });
+    let first = costed(
+        &fx,
+        "claude",
+        "Raise the price",
+        "Finance asked.\n\nMore detail.",
+        cost(1000, 50, Some(0.25)),
+        ("a.txt", "1\n"),
+    );
+    accept::accept(&fx.repo, &first).unwrap();
+    let second = costed(&fx, "codex", "Add tax", "Tax is law.", cost(300, 10, None), ("b.txt", "2\n"));
+    accept::accept(&fx.repo, &second).unwrap();
+    let unaccepted = costed(&fx, "pi", "Not yet", "Pending.", None, ("c.txt", "3\n"));
+    let cli = Cli { root: fx.root(), home: fx.dir.path().join("home") };
+
+    let log = cli.run(&["log", "--json"]).ok().json();
+    assert_eq!(log["schema"], 1);
+    let changes = log["changes"].as_array().unwrap();
+    assert_eq!(changes.len(), 3, "second, first, genesis: {changes:?}");
+    assert_eq!(changes[0]["id"], second.as_str());
+    assert_eq!(changes[0]["usage"]["input_tokens"], 300);
+    assert_eq!(changes[1]["id"], first.as_str());
+    assert_eq!(changes[1]["usage"]["cost_usd"], 0.25);
+    assert!(changes[2]["usage"].is_null(), "a plain git commit reports no cost");
+    assert!(!changes.iter().any(|c| c["id"] == unaccepted.as_str()), "only accepted history is listed");
+    assert_eq!(
+        log["totals"],
+        serde_json::json!({"changes": 3, "input_tokens": 1300, "output_tokens": 60, "cost_usd": 0.25})
+    );
+
+    let text = cli.run(&["log"]).ok().stdout;
+    assert!(text.contains(second.short()) && text.contains("codex") && text.contains("Add tax"), "{text}");
+    assert!(text.contains("Finance asked.") && !text.contains("More detail."), "first line of the account: {text}");
+    assert!(text.contains("1000 in, 50 out, $0.2500") && text.contains("300 in, 10 out"), "{text}");
+    assert!(text.contains("3 changes, 1300 tokens in, 60 out, $0.2500"), "{text}");
+
+    let limited = cli.run(&["log", "-n", "1", "--json"]).ok().json();
+    assert_eq!(limited["changes"].as_array().unwrap().len(), 1);
+    assert_eq!(limited["totals"]["input_tokens"], 300, "totals cover what is listed");
 }
 
 /// Integrations detect a format change by the `schema` field every `--json` report carries.
