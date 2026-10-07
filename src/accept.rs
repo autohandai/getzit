@@ -2,7 +2,7 @@
 //! derived from the graph on demand, never stored.
 
 use crate::change::{self, Change};
-use crate::evidence::{self, Verdict};
+use crate::evidence::{self, AcceptRules, Verdict};
 use crate::footprint::{self, ConflictKind};
 use crate::git::{Oid, Repo, CHANGES, CURRENT};
 use crate::resource::Resource;
@@ -165,21 +165,28 @@ fn unparsable(repo: &Repo, base: &Oid, ours: &Oid, theirs: &Oid, merged: &Oid) -
     Ok(bad)
 }
 
-/// Compose `change` onto `current` without writing anything: staleness, the
-/// text merge, and the parse check (unless current's zit.toml turns it off).
-fn validate(repo: &Repo, change: &Oid, base: &Oid, current: &Oid, policy: &Policy) -> Checked<Merged> {
+/// Compose `change` onto `onto` without writing anything: staleness, the
+/// text merge, and the parse check (unless the `rules` turn it off).
+fn validate(
+    repo: &Repo,
+    change: &Oid,
+    base: &Oid,
+    onto: &Oid,
+    policy: &Policy,
+    rules: &AcceptRules,
+) -> Checked<Merged> {
     if !policy.allow_stale {
-        let stale = staleness(repo, base, change, current)?;
+        let stale = staleness(repo, base, change, onto)?;
         if !stale.is_empty() {
             return Ok(Err(Invalid::Stale(stale)));
         }
     }
-    let merged = merge(repo, current, change)?;
+    let merged = merge(repo, onto, change)?;
     if !merged.conflicts.is_empty() {
         return Ok(Err(Invalid::Conflict(merged.conflicts)));
     }
-    if evidence::accept_rules(repo, current)?.parse_check {
-        let bad = unparsable(repo, base, current, change, &merged.state)?;
+    if rules.parse_check {
+        let bad = unparsable(repo, base, onto, change, &merged.state)?;
         if !bad.is_empty() {
             return Ok(Err(Invalid::Error(format!("does not parse after composing: {}", bad.join(", ")))));
         }
@@ -189,10 +196,17 @@ fn validate(repo: &Repo, change: &Oid, base: &Oid, current: &Oid, policy: &Polic
 
 /// Write the compose change for a validated merge and regenerate its
 /// generated files: the candidate and its state.
-fn land(repo: &Repo, source: &Change, current: &Oid, merged: &Merged, policy: &Policy) -> Checked<(Oid, Oid)> {
+fn land(
+    repo: &Repo,
+    source: &Change,
+    onto: &Oid,
+    merged: &Merged,
+    policy: &Policy,
+    rules: &AcceptRules,
+) -> Checked<(Oid, Oid)> {
     let change = &source.id;
     let subject = source.intent.lines().next().unwrap_or_default();
-    let linear = policy.linear || evidence::accept_rules(repo, current)?.linear;
+    let linear = policy.linear || rules.linear;
     let mut msg = change::message(
         &match linear {
             true => subject.to_string(),
@@ -206,7 +220,7 @@ fn land(repo: &Repo, source: &Change, current: &Oid, merged: &Merged, policy: &P
     if linear {
         msg.push_str(&format!("Zit-Change: {change}\n"));
     }
-    let parents: Vec<&Oid> = if linear { vec![current] } else { vec![current, change] };
+    let parents: Vec<&Oid> = if linear { vec![onto] } else { vec![onto, change] };
     let id = change::commit(repo, &merged.state, &parents, &source.agent, &msg, workspace::now())?;
     let rules = evidence::derived(repo, &id)?;
     if rules.is_empty() {
@@ -319,11 +333,12 @@ pub fn accept_with(repo: &Repo, change: &Oid, policy: &Policy) -> Result<Outcome
 
         let composed = base != current;
         let (candidate, state) = if composed {
-            let merged = match validate(repo, change, &base, &current, policy)? {
+            let rules = evidence::accept_rules(repo, &current)?;
+            let merged = match validate(repo, change, &base, &current, policy, &rules)? {
                 Ok(merged) => merged,
                 Err(invalid) => return Ok(Outcome::Rejected(invalid)),
             };
-            match land(repo, &source, &current, &merged, policy)? {
+            match land(repo, &source, &current, &merged, policy, &rules)? {
                 Ok(landed) => landed,
                 Err(invalid) => return Ok(Outcome::Rejected(invalid)),
             }
@@ -344,22 +359,104 @@ pub fn accept_with(repo: &Repo, change: &Oid, policy: &Policy) -> Result<Outcome
         if landed {
             return Ok(Outcome::Accepted { current: candidate, composed, verdicts });
         }
-        // Someone else advanced current first: re-evaluate against the new one.
-        // If current did not move, the update itself is failing (a stale
-        // lock, permissions); do not spin on it.
-        if repo.current()? == current {
-            stuck += 1;
-            if stuck >= STUCK_LIMIT {
-                return Err(Error::msg(format!(
-                    "could not move {CURRENT}; check for a stale {CURRENT}.lock in {}",
-                    repo.git_dir().display()
-                )));
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        } else {
-            stuck = 0;
-        }
+        lost_the_race(repo, &current, &mut stuck)?;
     }
+}
+
+/// A change a batch passed over, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Skipped {
+    pub change: Oid,
+    #[serde(flatten)]
+    pub reason: Invalid,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "kebab-case", tag = "outcome")]
+pub enum BatchOutcome {
+    /// Current moved to `current` (unchanged when nothing landed).
+    Accepted { current: Oid, landed: Vec<Oid>, skipped: Vec<Skipped>, verdicts: Vec<Verdict> },
+    /// A check failed on the combined state of `tried`; nothing landed.
+    Rejected { failed: Vec<String>, tried: Vec<Oid>, skipped: Vec<Skipped> },
+}
+
+/// Speculative changes whose own checks all passed and that compose onto
+/// current: what `accept --batch` takes by default.
+pub fn verified(repo: &Repo) -> Result<Vec<Oid>> {
+    let current = repo.current()?;
+    let speculative = change::speculative(repo)?;
+    Ok(speculative.into_iter().filter(|c| evaluate(repo, c, &current) == Status::Verified).map(|c| c.id).collect())
+}
+
+/// Accept `changes` as one batch: compose each onto the result of the
+/// previous ones in order, skipping any that is stale, does not merge or
+/// does not parse; run the checks once on the combined state; move current
+/// once. Every change keeps its own commit and reason in history. A failing
+/// check lands nothing, since it cannot say which change is responsible.
+pub fn accept_batch(repo: &Repo, changes: &[Oid], policy: &Policy) -> Result<BatchOutcome> {
+    let mut stuck = 0;
+    loop {
+        let current = repo.current()?;
+        let rules = evidence::accept_rules(repo, &current)?;
+        let (mut candidate, mut state) = (current.clone(), repo.tree_of(&current)?);
+        let (mut landed, mut skipped) = (Vec::new(), Vec::new());
+        for change in changes {
+            let source = change::load(repo, change)?;
+            let base = repo.merge_base(change, &candidate)?.ok_or_else(|| no_shared_history(change))?;
+            if base == *change || landed_linearly(repo, change, &base, &candidate)? {
+                skipped.push(Skipped { change: change.clone(), reason: Invalid::Error("already accepted".into()) });
+                continue;
+            }
+            let next = match base == candidate {
+                true => Ok((change.clone(), source.state.clone())),
+                false => match validate(repo, change, &base, &candidate, policy, &rules)? {
+                    Ok(merged) => land(repo, &source, &candidate, &merged, policy, &rules)?,
+                    Err(invalid) => Err(invalid),
+                },
+            };
+            match next {
+                Ok(next) => {
+                    (candidate, state) = next;
+                    landed.push(change.clone());
+                }
+                Err(reason) => skipped.push(Skipped { change: change.clone(), reason }),
+            }
+        }
+        if landed.is_empty() {
+            return Ok(BatchOutcome::Accepted { current, landed, skipped, verdicts: vec![] });
+        }
+        let verdicts = evidence::verify_state(repo, &candidate, &state, Some(&current), policy.rerun)?;
+        let failed: Vec<String> =
+            verdicts.iter().filter(|v| !v.evidence.passed).map(|v| v.evidence.check.clone()).collect();
+        if !failed.is_empty() {
+            return Ok(BatchOutcome::Rejected { failed, tried: landed, skipped });
+        }
+        let mut updates = vec![format!("update {CURRENT} {candidate} {current}")];
+        updates.extend(landed.iter().map(|c| format!("delete {CHANGES}/{c}")));
+        if repo.transaction(&updates)? {
+            return Ok(BatchOutcome::Accepted { current: candidate, landed, skipped, verdicts });
+        }
+        lost_the_race(repo, &current, &mut stuck)?;
+    }
+}
+
+/// Current could not be moved from `seen`. Someone else advanced it first:
+/// the caller re-evaluates against the new one. If it did not move, the
+/// update itself is failing (a stale lock, permissions); do not spin on it.
+fn lost_the_race(repo: &Repo, seen: &Oid, stuck: &mut usize) -> Result<()> {
+    if repo.current()? != *seen {
+        *stuck = 0;
+        return Ok(());
+    }
+    *stuck += 1;
+    if *stuck >= STUCK_LIMIT {
+        return Err(Error::msg(format!(
+            "could not move {CURRENT}; check for a stale {CURRENT}.lock in {}",
+            repo.git_dir().display()
+        )));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    Ok(())
 }
 
 /// Drop speculative refs of changes that current already contains (the

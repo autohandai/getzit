@@ -2,7 +2,7 @@ use anyhow::{bail, Context};
 use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 use std::process::ExitCode;
-use zit::accept::{self, Invalid, Outcome};
+use zit::accept::{self, BatchOutcome, Invalid, Outcome};
 use zit::change::{self, Record};
 use zit::claim::{self, Claimed};
 use zit::resource::Resource;
@@ -99,9 +99,15 @@ enum Cmd {
         #[arg(long)]
         rerun: bool,
     },
-    /// Make a change part of the current state.
+    /// Make a change part of the current state. Several changes land as one batch.
     Accept {
-        change: String,
+        /// One change; or several, composed in order, checked once, landed together.
+        #[arg(required_unless_present = "batch")]
+        changes: Vec<String>,
+        /// Every verified, non-conflicting change as one batch: compose all, check once, move current once.
+        /// A change that is stale or does not compose is skipped and reported; a failing check lands nothing.
+        #[arg(long)]
+        batch: bool,
         /// Compose a stale change anyway; the checks on the composed state decide.
         #[arg(long)]
         allow_stale: bool,
@@ -378,10 +384,18 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
                 return Ok(ExitCode::from(NO));
             }
         }
-        Cmd::Accept { change, allow_stale, rerun, linear } => {
+        Cmd::Accept { changes, batch, allow_stale, rerun, linear } => {
             let policy = accept::Policy { allow_stale, rerun, linear };
-            let outcome = accept::accept_with(&repo, &repo.resolve(&change)?, &policy)?;
-            return report_outcome(&repo, json, &outcome);
+            if let ([change], false) = (changes.as_slice(), batch) {
+                let outcome = accept::accept_with(&repo, &repo.resolve(change)?, &policy)?;
+                return report_outcome(&repo, json, &outcome);
+            }
+            let ids = match changes.is_empty() {
+                true => accept::verified(&repo)?,
+                false => changes.iter().map(|c| repo.resolve(c)).collect::<Result<_, _>>()?,
+            };
+            let outcome = accept::accept_batch(&repo, &ids, &policy)?;
+            return report_batch(&repo, json, &outcome);
         }
         Cmd::Retry { change } => {
             let ws = accept::retry(&repo, &repo.resolve(&change)?)?;
@@ -485,6 +499,45 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
         Cmd::Mcp { .. } => unreachable!("handled above"),
     }
     Ok(OK)
+}
+
+fn report_batch(repo: &Repo, json: bool, outcome: &BatchOutcome) -> anyhow::Result<ExitCode> {
+    let subject = |id: &zit::Oid| change::load(repo, id).map(|c| view::subject(&c).to_string()).unwrap_or_default();
+    let print_skipped = |skipped: &[accept::Skipped]| {
+        for s in skipped {
+            let status = accept::Status::Invalid(s.reason.clone());
+            println!("skipped  {}  {}", s.change.short(), view::status_label(&status));
+            view::reasons(&status).iter().for_each(|line| println!("    {line}"));
+        }
+    };
+    emit(json, outcome, || match outcome {
+        BatchOutcome::Accepted { current, landed, skipped, verdicts } => {
+            landed.iter().for_each(|id| println!("landed   {}  {}", id.short(), subject(id)));
+            print_skipped(skipped);
+            let reused = verdicts.iter().filter(|v| v.cached).count();
+            println!(
+                "current is {} ({} landed, {} skipped; checks: {} run, {reused} reused)",
+                current.short(),
+                landed.len(),
+                skipped.len(),
+                verdicts.len() - reused
+            );
+        }
+        BatchOutcome::Rejected { failed, tried, skipped } => {
+            print_skipped(skipped);
+            let tried: Vec<&str> = tried.iter().map(zit::Oid::short).collect();
+            println!(
+                "rejected: failed checks: {} on the combined state of {}; nothing landed",
+                failed.join(", "),
+                tried.join(", ")
+            );
+            println!("next: accept one at a time to find the change responsible: `zit accept <change>`");
+        }
+    })?;
+    Ok(match outcome {
+        BatchOutcome::Rejected { .. } => ExitCode::from(NO),
+        _ => OK,
+    })
 }
 
 fn report_outcome(repo: &Repo, json: bool, outcome: &Outcome) -> anyhow::Result<ExitCode> {
