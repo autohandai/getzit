@@ -99,6 +99,18 @@ fn input_paths_are_normalised_before_they_are_looked_up() {
     assert!(!evidence::verify(&fx.repo, &c.id, false).unwrap()[0].cached, "a changed input must not reuse evidence");
 }
 
+/// `git ls-tree` does not glob, so a pattern would address nothing and the
+/// evidence would be reused whatever the matching files became.
+#[test]
+fn an_input_pattern_is_refused() {
+    let fx = Fixture::new(&[
+        ("zit.toml", "[[check]]\nname = \"x\"\nrun = \"true\"\ninputs = [\"src/*.rs\"]\n"),
+        ("src/a.rs", "fn a() {}\n"),
+    ]);
+    let err = evidence::verify(&fx.repo, &fx.repo.current().unwrap(), false).unwrap_err().to_string();
+    assert!(err.contains("src/*.rs"), "{err}");
+}
+
 #[test]
 fn an_input_outside_the_state_is_refused() {
     let fx = Fixture::new(&[("zit.toml", "[[check]]\nname = \"x\"\nrun = \"true\"\ninputs = [\"../x\"]\n")]);
@@ -128,6 +140,18 @@ fn verification_reuses_one_view_keeping_ignored_build_output_and_nothing_else() 
     assert_eq!((lines[1].as_str(), lines[3].as_str()), ("one", "two"), "each run saw exactly its own state");
     assert_eq!(lines[4], "WARM", "ignored build output survived; untracked junk and edits did not");
     assert!(workspace::list(&fx.repo).unwrap().is_empty(), "the view is not a workspace anyone has to manage");
+}
+
+/// Evidence says what the state does, so every check sees the state, not
+/// what an earlier check (a formatter, a code generator) left in the view.
+#[test]
+fn a_check_sees_the_state_not_what_an_earlier_check_wrote() {
+    let config = "[[check]]\nname = \"fmt\"\nrun = \"echo formatted > a.txt && echo junk > b.txt\"\n\n\
+                  [[check]]\nname = \"test\"\nrun = \"test ! -e b.txt && grep -q one a.txt\"\n";
+    let fx = Fixture::new(&[("zit.toml", config), ("a.txt", "one\n")]);
+    let verdicts = evidence::verify(&fx.repo, &fx.repo.current().unwrap(), false).unwrap();
+    assert!(verdicts[0].evidence.passed);
+    assert!(verdicts[1].evidence.passed, "{}", verdicts[1].evidence.output);
 }
 
 #[test]

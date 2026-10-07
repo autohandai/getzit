@@ -262,6 +262,11 @@ fn normalise(input: &str) -> Result<String> {
     if parts.contains(&"..") {
         return Err(Error::msg(format!("zit.toml: input `{input}` is outside the state")));
     }
+    // `ls-tree` takes paths, not patterns: a glob would address nothing and
+    // the evidence would never expire.
+    if input.contains(['*', '?']) {
+        return Err(Error::msg(format!("zit.toml: input `{input}` is a pattern; inputs are paths")));
+    }
     Ok(parts.join("/"))
 }
 
@@ -454,7 +459,7 @@ pub(crate) fn verify_state(
             // The gate's own rules say how many checks may run at once.
             let jobs = accept_rules(repo, governing.unwrap_or(state))?.jobs.max(1);
             let view = View::acquire(repo, change, state)?;
-            run_checks(repo, pending, jobs, state, change, &view.workspace, &mut verdicts)
+            run_checks(repo, pending, jobs, state, change, &view, &mut verdicts)
         }
     };
     // Keep what was learned before anything else can fail. A check that timed out or was
@@ -477,7 +482,7 @@ fn run_checks(
     jobs: usize,
     state: &Oid,
     change: &Oid,
-    view: &Workspace,
+    view: &View,
     verdicts: &mut [Option<Verdict>],
 ) -> Result<()> {
     use std::sync::{Condvar, Mutex};
@@ -490,14 +495,24 @@ fn run_checks(
         }
         n
     };
+    let mut restore: Result<()> = Ok(());
     std::thread::scope(|s| {
-        for (i, check, key) in pending {
+        for (started, (i, check, key)) in pending.into_iter().enumerate() {
             let serial = check.serial;
             // Room for one more; a serial check needs the view to itself.
             let mut n = wait_until(if serial { 0 } else { jobs - 1 });
+            // An earlier check may have edited the view; the next one sees the
+            // state. Only possible when nothing is running alongside.
+            if started > 0 && *n == 0 {
+                if let Err(e) = view.restore() {
+                    restore = Err(e);
+                    break;
+                }
+            }
             *n += 1;
             drop(n);
             let (done, running) = (&done, &running);
+            let view = &view.workspace;
             s.spawn(move || {
                 let result = execute(repo, &check, key, state, change, view);
                 done.lock().unwrap_or_else(|e| e.into_inner()).push((i, result));
@@ -509,6 +524,7 @@ fn run_checks(
             }
         }
     });
+    restore?;
     let mut first_error = None;
     for (i, result) in done.into_inner().unwrap_or_else(|e| e.into_inner()) {
         match result {
@@ -573,6 +589,13 @@ impl View {
             return Ok(View { workspace, _lock: lock });
         }
         unreachable!("the last view is waited for")
+    }
+
+    /// Put the view back at its state: tracked edits and untracked files go, ignored files stay.
+    fn restore(&self) -> Result<()> {
+        crate::git::run(self.workspace.git().args(["reset", "--hard", "--quiet"]))?;
+        crate::git::run(self.workspace.git().args(["clean", "-fd", "--quiet"]))?;
+        Ok(())
     }
 
     /// Move an existing view to `change` in place; `None` if there is none or it is damaged.

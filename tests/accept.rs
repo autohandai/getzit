@@ -332,6 +332,22 @@ fn generated_files_are_regenerated_on_compose_not_conflicted() {
     assert_eq!(change::load(&fx.repo, &current).unwrap().parents, vec![b.id, c.id]);
 }
 
+/// A conflict in a generated file is ignored because the file is rebuilt.
+/// When the change drops the rule that rebuilds it, nothing does: the
+/// conflict stands, and markers never land.
+#[test]
+fn dropping_a_derive_rule_brings_its_conflicts_back() {
+    let rule = "[[derive]]\npath = \"registry.txt\"\nrun = \"ls items | sort > registry.txt\"\n";
+    let fx = Fixture::new(&[("zit.toml", rule), ("items/a", "a\n"), ("registry.txt", "a\n")]);
+    let b = fx.change("dev-1", &[("items/b", "b\n"), ("registry.txt", "a\nb\n")]);
+    let c = fx.change("dev-2", &[("zit.toml", "ignore = []\n"), ("registry.txt", "by hand\n")]);
+    accepted(accept::accept(&fx.repo, &b.id).unwrap());
+    let outcome = accept::accept(&fx.repo, &c.id).unwrap();
+    assert!(matches!(outcome, Outcome::Rejected(Invalid::Conflict(_))), "{outcome:?}");
+    assert!(!show(&fx, "refs/zit/current", "registry.txt").contains("<<<<"));
+    assert!(matches!(accept::status(&fx.repo, &c.id).unwrap(), Status::Invalid(Invalid::Conflict(_))));
+}
+
 #[test]
 fn a_generated_file_is_not_a_reason_to_be_stale() {
     let fx = Fixture::new(&[("zit.toml", DERIVE), ("items/a", "a\n"), ("registry.txt", "a\n")]);
@@ -760,4 +776,100 @@ fn a_method_signature_change_stales_users_of_the_type() {
         panic!("expected stale");
     };
     assert_eq!(why[0].resource.to_string(), "src/shape.rs#Shape::area");
+}
+
+/// Linear compose lands the chain's tip as one commit; the ancestors landed with it.
+#[test]
+fn a_linear_accept_of_a_chain_tip_accepts_the_chain() {
+    let fx = fixture();
+    let other = fx.change("b", &[("src/shop.rs", "pub fn buy() { 1; }\n")]);
+    let c1 = fx.change("a", &[("notes.txt", "1\n")]);
+    let c2 = fx.change_from(Some(&c1.id), "a", &[("notes.txt", "2\n")]);
+    accepted(accept::accept(&fx.repo, &other.id).unwrap());
+    let policy = accept::Policy { linear: true, ..Default::default() };
+    let (current, composed) = accepted(accept::accept_with(&fx.repo, &c2.id, &policy).unwrap());
+    assert!(composed);
+    assert_eq!(change::load(&fx.repo, &current).unwrap().parents, vec![other.id.clone()]);
+    assert_eq!(accept::status(&fx.repo, &c2.id).unwrap(), Status::Accepted);
+    assert_eq!(accept::status(&fx.repo, &c1.id).unwrap(), Status::Accepted);
+    assert!(matches!(accept::accept_with(&fx.repo, &c1.id, &policy).unwrap(), Outcome::AlreadyAccepted));
+    assert!(change::speculative(&fx.repo).unwrap().is_empty());
+}
+
+/// What a change declared it read is part of current's footprint once it
+/// lands, however it landed: a later write to it is a conflict.
+#[test]
+fn a_linear_compose_keeps_the_declared_reads_of_the_change() {
+    for linear in [false, true] {
+        let fx = fixture();
+        let first = fx.change("a", &[("notes.txt", "moved\n")]);
+        let ws = fx.workspace("codex");
+        write(ws.path(), &[("src/shop.rs", "pub fn buy() { lib::price(3); }\n")]);
+        let reads = [zit::resource::Resource::parse("src/lib.rs#price")];
+        let reader =
+            change::record(&fx.repo, &ws.id, &Record { reads: reads.to_vec(), ..Default::default() }).unwrap().unwrap();
+        let writer = fx.change("claude", &[("src/lib.rs", &LIB.replace("    x\n}", "    x + 0\n}"))]);
+        accepted(accept::accept(&fx.repo, &first.id).unwrap());
+        let policy = accept::Policy { linear, ..Default::default() };
+        let (current, composed) = accepted(accept::accept_with(&fx.repo, &reader.id, &policy).unwrap());
+        assert!(composed);
+        let Outcome::Rejected(Invalid::Stale(why)) = accept::accept(&fx.repo, &writer.id).unwrap() else {
+            panic!("linear = {linear}: a write to what current read was accepted");
+        };
+        assert_eq!((why[0].kind, why[0].by.as_ref()), (ConflictKind::WriteRead, Some(&current)), "linear = {linear}");
+    }
+}
+
+/// A declared read is data, not a line of the commit message: it cannot
+/// forge a trailer that says another change already landed.
+#[test]
+fn a_declared_read_cannot_forge_a_trailer() {
+    let fx = fixture();
+    let victim = fx.change("a", &[("notes.txt", "victim\n")]);
+    let ws = fx.workspace("mallory");
+    write(ws.path(), &[("src/shop.rs", "pub fn buy() { 1; }\n")]);
+    let reads = [zit::resource::Resource::parse(&format!("src/lib.rs#price\nZit-Change: {}", victim.id))];
+    let forged =
+        change::record(&fx.repo, &ws.id, &Record { reads: reads.to_vec(), ..Default::default() }).unwrap().unwrap();
+    accepted(accept::accept(&fx.repo, &forged.id).unwrap());
+    assert_ne!(accept::status(&fx.repo, &victim.id).unwrap(), Status::Accepted);
+    accepted(accept::accept(&fx.repo, &victim.id).unwrap());
+    assert_eq!(show(&fx, "refs/zit/current", "notes.txt"), "victim");
+}
+
+/// Work continues from a change after it landed linearly: the next change
+/// in the same workspace is judged by its own edits, not its parent's again.
+#[test]
+fn a_change_built_on_a_linearly_landed_change_is_not_stale_against_it() {
+    let fx = fixture();
+    let other = fx.change("b", &[("src/shop.rs", "pub fn buy() { 1; }\n")]);
+    let ws = fx.workspace("a");
+    write(ws.path(), &[("notes.txt", "1\n")]);
+    let c1 = change::record(&fx.repo, &ws.id, &Record::default()).unwrap().unwrap();
+    accepted(accept::accept(&fx.repo, &other.id).unwrap());
+    let policy = accept::Policy { linear: true, ..Default::default() };
+    accepted(accept::accept_with(&fx.repo, &c1.id, &policy).unwrap());
+
+    write(ws.path(), &[("notes.txt", "2\n")]);
+    let c2 = change::record(&fx.repo, &ws.id, &Record::default()).unwrap().unwrap();
+    assert_eq!(c2.parents, vec![c1.id.clone()]);
+    assert_eq!(accept::status(&fx.repo, &c2.id).unwrap(), Status::Verified);
+    let (current, _) = accepted(accept::accept_with(&fx.repo, &c2.id, &policy).unwrap());
+    assert_eq!(show(&fx, current.as_str(), "notes.txt"), "2");
+    assert_eq!(change::load(&fx.repo, &current).unwrap().parents.len(), 1);
+}
+
+/// A session id is data too: it cannot end its trailer and start another.
+#[test]
+fn a_session_id_cannot_forge_a_trailer() {
+    let fx = fixture();
+    let victim = fx.change("a", &[("notes.txt", "victim\n")]);
+    let session = format!("s1\nZit-Change: {}", victim.id);
+    let new = workspace::NewWorkspace { from: None, intent: "work", agent: "mallory", session: Some(&session) };
+    let ws = workspace::materialise(&fx.repo, &new).unwrap();
+    write(ws.path(), &[("src/shop.rs", "pub fn buy() { 1; }\n")]);
+    let forged = change::record(&fx.repo, &ws.id, &Record::default()).unwrap().unwrap();
+    accepted(accept::accept(&fx.repo, &forged.id).unwrap());
+    assert_ne!(accept::status(&fx.repo, &victim.id).unwrap(), Status::Accepted);
+    accepted(accept::accept(&fx.repo, &victim.id).unwrap());
 }

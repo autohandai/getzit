@@ -158,7 +158,7 @@ fn methods<'t>(lang: Lang, node: tree_sitter::Node<'t>, text: &str) -> Vec<(Stri
         |n: tree_sitter::Node| n.child_by_field_name("name").map(|c| (text[c.byte_range()].to_string(), c.id()));
     let (owner, body, kinds): (Option<String>, Option<tree_sitter::Node>, &[&str]) = match (lang, node.kind()) {
         (Lang::Rust, "impl_item") => (
-            node.child_by_field_name("type").map(|t| type_name(&text[t.byte_range()])),
+            node.child_by_field_name("type").map(|t| base_type(t, text)),
             node.child_by_field_name("body"),
             &["function_item"],
         ),
@@ -405,7 +405,8 @@ fn index_markdown(text: &str) -> FileIndex {
         }
         let hashes = trimmed.bytes().take_while(|b| *b == b'#').count();
         if !fenced && (1..=6).contains(&hashes) && trimmed[hashes..].starts_with(' ') {
-            section = Some(trimmed[hashes..].trim().trim_end_matches('#').trim().to_string());
+            // A heading with no name is module-level text, not a section of its own.
+            section = Some(trimmed[hashes..].trim().trim_end_matches('#').trim().to_string()).filter(|n| !n.is_empty());
         }
         let body = bodies.entry(section.clone()).or_default();
         body.push_str(line);
@@ -416,10 +417,10 @@ fn index_markdown(text: &str) -> FileIndex {
         let hash = crate::hash(body.as_bytes());
         let unit = Unit { sig: hash.clone(), hash, refs: BTreeSet::new() };
         match name {
-            Some(name) if !name.is_empty() => {
+            Some(name) => {
                 ix.symbols.insert(name, unit);
             }
-            _ => ix.top = unit,
+            None => ix.top = unit,
         }
     }
     ix
@@ -442,16 +443,21 @@ impl Def {
     }
 }
 
-/// Bare type name: `&mut a::Foo<T>` -> `Foo`, `Stack[T]` -> `Stack`.
-fn type_name(raw: &str) -> String {
-    let base = raw.split(['<', '[']).find(|s| !s.is_empty()).unwrap_or(raw);
-    let base = base.rsplit("::").next().unwrap_or(base);
-    base.trim_start_matches(['&', '*', ' ']).trim().to_string()
+/// The type an `impl` or a receiver names, through references, pointers,
+/// paths and generic arguments: `&'a mut a::Foo<T>` -> `Foo`, `*Stack[T, U]` -> `Stack`.
+fn base_type(node: tree_sitter::Node, text: &str) -> String {
+    let inner = match node.kind() {
+        "reference_type" | "pointer_type" | "generic_type" => {
+            node.child_by_field_name("type").or_else(|| node.named_child(0))
+        }
+        "scoped_type_identifier" => node.child_by_field_name("name"),
+        _ => None,
+    };
+    inner.map_or_else(|| text[node.byte_range()].to_string(), |n| base_type(n, text))
 }
 
 /// The top-level symbols `node` defines; empty for module-level code.
 fn definitions(lang: Lang, node: tree_sitter::Node, text: &str) -> Vec<Def> {
-    let field = |n: tree_sitter::Node, f: &str| n.child_by_field_name(f).map(|c| text[c.byte_range()].to_string());
     let named = |n: tree_sitter::Node| n.child_by_field_name("name").map(|c| Def::at(c, text)).into_iter().collect();
     let specs = |n: tree_sitter::Node, kinds: &[&str]| {
         let mut c = n.walk();
@@ -467,7 +473,9 @@ fn definitions(lang: Lang, node: tree_sitter::Node, text: &str) -> Vec<Def> {
             .collect::<Vec<_>>()
     };
     match (lang, node.kind()) {
-        (Lang::Rust, "impl_item") => field(node, "type").map(|t| Def::using(type_name(&t))).into_iter().collect(),
+        (Lang::Rust, "impl_item") => {
+            node.child_by_field_name("type").map(|t| Def::using(base_type(t, text))).into_iter().collect()
+        }
         (Lang::Rust, k) if k.ends_with("_item") || k == "macro_definition" => named(node),
         (Lang::Python, "function_definition" | "class_definition") => named(node),
         (Lang::Python, "decorated_definition") => node.child_by_field_name("definition").map(named).unwrap_or_default(),
@@ -481,13 +489,23 @@ fn definitions(lang: Lang, node: tree_sitter::Node, text: &str) -> Vec<Def> {
         (Lang::Js, "export_statement") => {
             node.child_by_field_name("declaration").map(|d| definitions(lang, d, text)).unwrap_or_default()
         }
+        // `declare ...` wraps its declaration; `namespace N {}` is an expression statement.
+        (Lang::Js, "ambient_declaration" | "expression_statement") => node
+            .named_child(0)
+            .filter(|d| node.kind() == "ambient_declaration" || d.kind() == "internal_module")
+            .map(|d| definitions(lang, d, text))
+            .unwrap_or_default(),
         (Lang::Js, "lexical_declaration" | "variable_declaration") => specs(node, &["variable_declarator"]),
-        (Lang::Js, k) if k.ends_with("_declaration") || k == "internal_module" => named(node),
-        (Lang::Go, "method_declaration") => field(node, "receiver")
+        (Lang::Js, k) if k.ends_with("_declaration") || k == "function_signature" || k == "internal_module" => {
+            named(node)
+        }
+        (Lang::Go, "method_declaration") => node
+            .child_by_field_name("receiver")
+            .and_then(|r| r.named_child(0))
+            .and_then(|p| p.child_by_field_name("type"))
             .zip(node.child_by_field_name("name"))
             .map(|(r, name)| {
-                let inner = r.trim_matches(['(', ')']);
-                let owner = type_name(inner.rsplit([' ', '*']).next().unwrap_or(inner));
+                let owner = base_type(r, text);
                 Def { name: format!("{owner}::{}", &text[name.byte_range()]), declared_by: Some(name.id()) }
             })
             .into_iter()
@@ -955,5 +973,59 @@ mod tests {
         assert!(unparsed_code("Shop.kt") && !unparsed_code("Shop.java") && !unparsed_code("a.rs"));
         assert!(!unparsed_code("shop.rb") && !unparsed_code("Shop.cs"));
         assert!(index("a.rs", &[0xff, 0xfe, 0x00]).is_none());
+    }
+
+    #[test]
+    fn receiver_and_impl_types_are_named_through_pointers_lifetimes_and_generics() {
+        let ix = index(
+            "a.go",
+            b"package a\ntype Stack[T any, U any] struct{}\nfunc (s *Stack[T, U]) Push(v T) {}\nfunc (Stack[T, U]) Pop() {}\n",
+        )
+        .unwrap();
+        assert_eq!(names(&ix), ["Stack", "Stack::Pop", "Stack::Push"]);
+        let ix = index(
+            "a.rs",
+            b"struct Foo;\nimpl<'a> IntoIterator for &'a Foo { fn into_iter(self) {} }\nimpl Drop for &mut Foo { fn drop(&mut self) {} }\nimpl<T> Tr for *const a::Foo<T> { fn c() {} }\n",
+        )
+        .unwrap();
+        assert_eq!(names(&ix), ["Foo", "Foo::c", "Foo::drop", "Foo::into_iter"]);
+    }
+
+    #[test]
+    fn comments_inside_a_type_with_methods_are_not_its_interface() {
+        let rs = "/// Shape.\nimpl Shape {\n    // helper\n    const K: u8 = 1;\n    fn area(&self) -> u32 { 1 }\n}\n";
+        let a = index("a.rs", rs.as_bytes()).unwrap();
+        let b = index("a.rs", rs.replace("// helper", "// a helper").replace("/// Shape.", "/// A shape.").as_bytes())
+            .unwrap();
+        assert_eq!(a.symbols["Shape"].sig, b.symbols["Shape"].sig);
+        assert_ne!(a.symbols["Shape"].hash, b.symbols["Shape"].hash);
+        let py = "class Shape:\n    # helper\n    K = 1\n    def area(self):\n        return 1\n";
+        let a = index("a.py", py.as_bytes()).unwrap();
+        let b = index("a.py", py.replace("# helper", "# a helper").as_bytes()).unwrap();
+        assert_eq!(a.symbols["Shape"].sig, b.symbols["Shape"].sig);
+        let c = index("a.py", py.replace("K = 1", "K = 2").as_bytes()).unwrap();
+        assert_ne!(a.symbols["Shape"].sig, c.symbols["Shape"].sig);
+    }
+
+    #[test]
+    fn typescript_overloads_and_ambient_declarations_are_symbols() {
+        let ix = index(
+            "a.ts",
+            b"export function f(a: string): void;\nexport function f(a: number): void;\nexport function f(a: any) {}\ndeclare function g(): void;\ndeclare const K: number;\nexport declare class D {}\nnamespace N {}\n",
+        )
+        .unwrap();
+        assert_eq!(names(&ix), ["D", "K", "N", "f", "g"]);
+        assert!(!ix.symbols["f"].refs.contains("f"));
+        let overload = index("a.ts", b"export function f(a: string): void;\nexport function f(a: any) {}\n").unwrap();
+        let changed = index("a.ts", b"export function f(a: boolean): void;\nexport function f(a: any) {}\n").unwrap();
+        assert_ne!(overload.symbols["f"].sig, changed.symbols["f"].sig, "an overload is part of the interface");
+        assert_eq!(overload.top, changed.top);
+    }
+
+    #[test]
+    fn an_empty_heading_does_not_hide_the_text_before_it() {
+        let a = index("a.md", b"intro\n\n# \ntext\n").unwrap();
+        let b = index("a.md", b"outro\n\n# \ntext\n").unwrap();
+        assert_ne!(a.top.hash, b.top.hash);
     }
 }

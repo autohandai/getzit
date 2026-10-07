@@ -70,12 +70,41 @@ struct Merged {
 }
 
 /// Text-level composition, where conflicts inside generated files do not
-/// count: those files are regenerated on the result.
-fn merge(repo: &Repo, ours: &Oid, theirs: &Oid) -> Result<Merged> {
-    let mut merged = merge_text(repo, ours, theirs)?;
-    let generated = generated_paths(repo, ours)?;
+/// count: those files are regenerated on the result. `base` replaces the
+/// merge base git would compute: the ancestor of `theirs` that already
+/// landed linearly, whose edits are on both sides.
+fn merge(repo: &Repo, ours: &Oid, theirs: &Oid, base: Option<&Oid>) -> Result<Merged> {
+    let mut merged = match base {
+        None => merge_text(repo, ours, theirs)?,
+        Some(base) => {
+            // `merge-tree --merge-base` needs git 2.40; three throwaway
+            // commits give the merge that base on 2.38. Deterministic, so
+            // repeated evaluations write nothing new.
+            let root = synthetic(repo, &repo.tree_of(base)?, None)?;
+            let ours = synthetic(repo, &repo.tree_of(ours)?, Some(&root))?;
+            let theirs = synthetic(repo, &repo.tree_of(theirs)?, Some(&root))?;
+            merge_text(repo, &ours, &theirs)?
+        }
+    };
+    // The composed state's rules are what will regenerate; a rule the change
+    // dropped rebuilds nothing. Unreadable (conflicted) config drops nothing.
+    let generated = generated_paths(repo, &merged.state).unwrap_or_default();
     merged.conflicts.retain(|path| !generated.contains(path));
     Ok(merged)
+}
+
+fn synthetic(repo: &Repo, tree: &Oid, parent: Option<&Oid>) -> Result<Oid> {
+    let mut args = vec!["commit-tree", "--no-gpg-sign", tree.as_str()];
+    if let Some(parent) = parent {
+        args.extend(["-p", parent.as_str()]);
+    }
+    let ident = [("NAME", "zit"), ("EMAIL", "zit@localhost"), ("DATE", "@0 +0000")];
+    let env: Vec<(String, &str)> = ["AUTHOR", "COMMITTER"]
+        .iter()
+        .flat_map(|who| ident.iter().map(move |(k, v)| (format!("GIT_{who}_{k}"), *v)))
+        .collect();
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+    Ok(Oid::new(repo.git_stdin(&args, &env, "zit: merge base")?))
 }
 
 /// Paths of the generated files declared by `rev`'s `zit.toml`.
@@ -107,12 +136,14 @@ fn merge_text(repo: &Repo, ours: &Oid, theirs: &Oid) -> Result<Merged> {
     }
 }
 
-/// Why `change` cannot be composed onto `current`, given their merge base,
-/// with the accepted change responsible for each reason.
-fn staleness(repo: &Repo, base: &Oid, change: &Oid, current: &Oid) -> Result<Vec<Staleness>> {
+/// Why `change` cannot be composed onto `current`, comparing what it did
+/// since `base` with what current did since `since` (the same commit, or the
+/// one that landed `change`'s ancestor linearly), with the accepted change
+/// responsible for each reason.
+fn staleness(repo: &Repo, base: &Oid, change: &Oid, since: &Oid, current: &Oid) -> Result<Vec<Staleness>> {
     let mine = footprint::between(repo, base, change)?;
     let generated = generated_paths(repo, current)?;
-    let mut conflicts = mine.conflicts(&footprint::between(repo, base, current)?);
+    let mut conflicts = mine.conflicts(&footprint::between(repo, since, current)?);
     conflicts.retain(|c| {
         let path = c.resource.path();
         let text_decides =
@@ -123,7 +154,7 @@ fn staleness(repo: &Repo, base: &Oid, change: &Oid, current: &Oid) -> Result<Vec
         return Ok(vec![]);
     }
 
-    let range = format!("{base}..{current}");
+    let range = format!("{since}..{current}");
     let log = repo.git(&["rev-list", "--first-parent", "--reverse", "--parents", &range])?;
     let mut steps = Vec::new();
     for line in log.lines() {
@@ -167,26 +198,50 @@ fn unparsable(repo: &Repo, base: &Oid, ours: &Oid, theirs: &Oid, merged: &Oid) -
 
 /// Compose `change` onto `onto` without writing anything: staleness, the
 /// text merge, and the parse check (unless the `rules` turn it off).
+/// Where a change and `onto` part: its merge base, where the change's own edits
+/// start (`mine`) and where `onto`'s start (`since`). The two differ only after a
+/// linear accept landed an ancestor of the change, which `onto`'s history does not
+/// contain; then `ancestor` is that landed change, the base the text merge uses.
+struct Span {
+    base: Oid,
+    mine: Oid,
+    since: Oid,
+    ancestor: Option<Oid>,
+}
+
+/// `None` when `onto` already contains the change, by ancestry or linearly.
+fn span(repo: &Repo, change: &Oid, onto: &Oid) -> Result<Option<Span>> {
+    let base = repo.merge_base(change, onto)?.ok_or_else(|| no_shared_history(change))?;
+    if base == *change {
+        return Ok(None);
+    }
+    Ok(match landed_linearly(repo, change, &base, onto)? {
+        Landed::All => None,
+        Landed::Upto(ancestor, by) => Some(Span { base, mine: ancestor.clone(), since: by, ancestor: Some(ancestor) }),
+        Landed::None => Some(Span { mine: base.clone(), since: base.clone(), base, ancestor: None }),
+    })
+}
+
 fn validate(
     repo: &Repo,
     change: &Oid,
-    base: &Oid,
+    span: &Span,
     onto: &Oid,
     policy: &Policy,
     rules: &AcceptRules,
 ) -> Checked<Merged> {
     if !policy.allow_stale {
-        let stale = staleness(repo, base, change, onto)?;
+        let stale = staleness(repo, &span.mine, change, &span.since, onto)?;
         if !stale.is_empty() {
             return Ok(Err(Invalid::Stale(stale)));
         }
     }
-    let merged = merge(repo, onto, change)?;
+    let merged = merge(repo, onto, change, span.ancestor.as_ref())?;
     if !merged.conflicts.is_empty() {
         return Ok(Err(Invalid::Conflict(merged.conflicts)));
     }
     if rules.parse_check {
-        let bad = unparsable(repo, base, onto, change, &merged.state)?;
+        let bad = unparsable(repo, &span.mine, onto, change, &merged.state)?;
         if !bad.is_empty() {
             return Ok(Err(Invalid::Error(format!("does not parse after composing: {}", bad.join(", ")))));
         }
@@ -199,6 +254,7 @@ fn validate(
 fn land(
     repo: &Repo,
     source: &Change,
+    span: &Span,
     onto: &Oid,
     merged: &Merged,
     policy: &Policy,
@@ -207,6 +263,10 @@ fn land(
     let change = &source.id;
     let subject = source.intent.lines().next().unwrap_or_default();
     let linear = policy.linear || rules.linear;
+    // A linear compose is the only commit of the span that lands: it carries
+    // what the span declared it read.
+    let reads: Vec<Resource> =
+        if linear { footprint::between(repo, &span.mine, change)?.reads.into_iter().collect() } else { vec![] };
     let mut msg = change::message(
         &match linear {
             true => subject.to_string(),
@@ -215,7 +275,7 @@ fn land(
         source.summary.as_deref(),
         &source.agent,
         None,
-        &[],
+        &reads,
     );
     if linear {
         msg.push_str(&format!("Zit-Change: {change}\n"));
@@ -266,15 +326,21 @@ fn try_evaluate(repo: &Repo, change: &Change, current: &Oid) -> Result<Status> {
         return Ok(Status::Current);
     }
     let base = repo.merge_base(&change.id, current)?.ok_or_else(|| no_shared_history(&change.id))?;
-    if base == change.id || landed_linearly(repo, &change.id, &base, current)? {
+    if base == change.id {
         return Ok(Status::Accepted);
     }
+    let landed = match landed_linearly(repo, &change.id, &base, current)? {
+        Landed::All => return Ok(Status::Accepted),
+        Landed::Upto(ancestor, by) => Some((ancestor, by)),
+        Landed::None => None,
+    };
     if base != *current {
-        let stale = staleness(repo, &base, &change.id, current)?;
+        let (mine, since) = landed.clone().unwrap_or((base.clone(), base.clone()));
+        let stale = staleness(repo, &mine, &change.id, &since, current)?;
         if !stale.is_empty() {
             return Ok(Status::Invalid(Invalid::Stale(stale)));
         }
-        let merged = merge(repo, current, &change.id)?;
+        let merged = merge(repo, current, &change.id, landed.as_ref().map(|(a, _)| a))?;
         if !merged.conflicts.is_empty() {
             return Ok(Status::Invalid(Invalid::Conflict(merged.conflicts)));
         }
@@ -310,11 +376,45 @@ pub struct Policy {
     pub linear: bool,
 }
 
-/// The commit on current's first-parent line that landed `change` linearly, if any.
-fn landed_linearly(repo: &Repo, change: &Oid, base: &Oid, current: &Oid) -> Result<bool> {
-    let grep = format!("--grep=^Zit-Change: {change}$");
-    let found = repo.git(&["log", "--first-parent", "-1", "--format=%H", &grep, &format!("{base}..{current}")])?;
-    Ok(!found.trim().is_empty())
+/// How much of a change the `Zit-Change` trailers on current's first-parent
+/// line say landed linearly.
+enum Landed {
+    None,
+    /// It, or a change built on it.
+    All,
+    /// An ancestor of it, and the commit on current's line that landed that ancestor.
+    Upto(Oid, Oid),
+}
+
+fn landed_linearly(repo: &Repo, change: &Oid, base: &Oid, current: &Oid) -> Result<Landed> {
+    let range = format!("{base}..{current}");
+    let log = repo.git(&["log", "--first-parent", "--format=%H%x00%B%x01", "--grep=^Zit-Change: ", &range])?;
+    // Newest first.
+    let mut landed = Vec::new();
+    for record in log.split('\x01') {
+        let Some((by, body)) = record.trim_start().split_once('\0') else { continue };
+        for id in body.lines().filter_map(|l| l.strip_prefix("Zit-Change: ")) {
+            if id == change.as_str() {
+                return Ok(Landed::All);
+            }
+            landed.push((Oid::new(id), Oid::new(by)));
+        }
+    }
+    if landed.is_empty() {
+        return Ok(Landed::None);
+    }
+    // Nothing of `change` outside what landed: it is an ancestor of one of them.
+    let mut args = vec!["rev-list".to_string(), "-n1".to_string(), change.to_string()];
+    args.extend(landed.iter().map(|(id, _)| format!("^{id}")));
+    if repo.git(&args)?.trim().is_empty() {
+        return Ok(Landed::All);
+    }
+    for (id, by) in landed {
+        if repo.is_ancestor(&id, change)? {
+            return Ok(Landed::Upto(id, by));
+        }
+    }
+    Ok(Landed::None)
 }
 
 /// Failed ref updates with current unchanged before giving up.
@@ -326,19 +426,17 @@ pub fn accept_with(repo: &Repo, change: &Oid, policy: &Policy) -> Result<Outcome
         let (source, Some(current)) = load_with_current(repo, change)? else {
             return Ok(Outcome::AlreadyAccepted);
         };
-        let base = repo.merge_base(change, &current)?.ok_or_else(|| no_shared_history(change))?;
-        if base == *change || landed_linearly(repo, change, &base, &current)? {
+        let Some(span) = span(repo, change, &current)? else {
             return Ok(Outcome::AlreadyAccepted);
-        }
-
-        let composed = base != current;
+        };
+        let composed = span.base != current;
         let (candidate, state) = if composed {
             let rules = evidence::accept_rules(repo, &current)?;
-            let merged = match validate(repo, change, &base, &current, policy, &rules)? {
+            let merged = match validate(repo, change, &span, &current, policy, &rules)? {
                 Ok(merged) => merged,
                 Err(invalid) => return Ok(Outcome::Rejected(invalid)),
             };
-            match land(repo, &source, &current, &merged, policy, &rules)? {
+            match land(repo, &source, &span, &current, &merged, policy, &rules)? {
                 Ok(landed) => landed,
                 Err(invalid) => return Ok(Outcome::Rejected(invalid)),
             }
@@ -353,9 +451,13 @@ pub fn accept_with(repo: &Repo, change: &Oid, policy: &Policy) -> Result<Outcome
             return Ok(Outcome::Rejected(Invalid::Failed(failed)));
         }
 
-        // Advance current and retire the speculative ref in one atomic step.
-        let landed = repo
-            .transaction(&[format!("update {CURRENT} {candidate} {current}"), format!("delete {CHANGES}/{change}")])?;
+        // Advance current and retire the speculative refs of the change and of
+        // what it was built on in one atomic step (a linear compose leaves them unmerged).
+        let retired =
+            repo.git(&["for-each-ref", "--merged", change.as_str(), "--format=delete %(refname)", CHANGES])?;
+        let mut updates = vec![format!("update {CURRENT} {candidate} {current}")];
+        updates.extend(retired.lines().map(str::to_string));
+        let landed = repo.transaction(&updates)?;
         if landed {
             return Ok(Outcome::Accepted { current: candidate, composed, verdicts });
         }
@@ -392,16 +494,15 @@ pub fn dry_run(repo: &Repo, change: &Oid, policy: &Policy) -> Result<DryRun> {
     let (source, Some(current)) = load_with_current(repo, change)? else {
         return Ok(DryRun::AlreadyAccepted);
     };
-    let base = repo.merge_base(change, &current)?.ok_or_else(|| no_shared_history(change))?;
-    if base == *change || landed_linearly(repo, change, &base, &current)? {
+    let Some(span) = span(repo, change, &current)? else {
         return Ok(DryRun::AlreadyAccepted);
-    }
-    let composed = base != current;
+    };
+    let composed = span.base != current;
     let state = match composed {
         false => source.state,
         true => {
             let rules = evidence::accept_rules(repo, &current)?;
-            match validate(repo, change, &base, &current, policy, &rules)? {
+            match validate(repo, change, &span, &current, policy, &rules)? {
                 Ok(merged) => merged.state,
                 Err(invalid) => return Ok(DryRun::Rejected(invalid)),
             }
@@ -453,15 +554,14 @@ pub fn accept_batch(repo: &Repo, changes: &[Oid], policy: &Policy) -> Result<Bat
         let (mut landed, mut skipped) = (Vec::new(), Vec::new());
         for change in changes {
             let source = change::load(repo, change)?;
-            let base = repo.merge_base(change, &candidate)?.ok_or_else(|| no_shared_history(change))?;
-            if base == *change || landed_linearly(repo, change, &base, &candidate)? {
+            let Some(span) = span(repo, change, &candidate)? else {
                 skipped.push(Skipped { change: change.clone(), reason: Invalid::Error("already accepted".into()) });
                 continue;
-            }
-            let next = match base == candidate {
+            };
+            let next = match span.base == candidate {
                 true => Ok((change.clone(), source.state.clone())),
-                false => match validate(repo, change, &base, &candidate, policy, &rules)? {
-                    Ok(merged) => land(repo, &source, &candidate, &merged, policy, &rules)?,
+                false => match validate(repo, change, &span, &candidate, policy, &rules)? {
+                    Ok(merged) => land(repo, &source, &span, &candidate, &merged, policy, &rules)?,
                     Err(invalid) => Err(invalid),
                 },
             };
@@ -527,7 +627,7 @@ pub(crate) fn prune_accepted(repo: &Repo) -> Result<()> {
 pub fn retry(repo: &Repo, change: &Oid) -> Result<Workspace> {
     let current = repo.current()?;
     let source = change::load(repo, change)?;
-    let merged = merge(repo, &current, change)?;
+    let merged = merge(repo, &current, change, None)?;
     let new = NewWorkspace {
         from: Some(&current),
         intent: &source.intent,
