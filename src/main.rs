@@ -242,6 +242,10 @@ fn workspace_id(repo: &Repo, given: Option<String>) -> anyhow::Result<String> {
 
 fn main() -> ExitCode {
     use clap::{CommandFactory, FromArgMatches};
+    // Rust ignores SIGPIPE, so `zit status | head` would panic on the closed
+    // pipe; end quietly like every other command-line tool instead.
+    // SAFETY: resetting a signal disposition before any thread exists.
+    unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
     // Called as `git zit`, say so in usage and errors.
     let invoked = std::env::args_os().next().map(std::path::PathBuf::from);
     let as_git = invoked.as_deref().and_then(|p| p.file_stem()).is_some_and(|stem| stem == "git-zit");
