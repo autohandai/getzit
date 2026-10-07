@@ -87,6 +87,8 @@ fn lists_its_tools_with_schemas() {
             "zit_record",
             "zit_status",
             "zit_show",
+            "zit_log",
+            "zit_diff",
             "zit_check",
             "zit_retry",
             "zit_dispose"
@@ -153,6 +155,33 @@ fn an_agent_can_do_the_whole_loop_over_mcp() {
     assert_eq!(accepted["outcome"], "accepted");
     let (_, status) = server.call("zit_status", json!({}));
     assert_eq!(status["current"]["id"], id);
+}
+
+/// `zit_log` and `zit_diff` mirror the CLI commands, for agents that review rather than write.
+#[test]
+fn an_agent_can_read_the_log_and_a_changes_diff() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = cli(dir.path());
+    let mut server = Server::start_with(&cli, &["--integrator"]);
+    let (_, ws) = server.call("zit_materialise", json!({"intent": "Raise price"}));
+    write(Path::new(ws["path"].as_str().unwrap()), &[("src/lib.rs", "pub fn price(x: u32) -> u32 { x + 1 }\n")]);
+    let (_, rec) = server.call("zit_record", json!({"workspace": ws["id"], "dispose": true}));
+    let id = rec["change"]["id"].clone();
+
+    let (err, diff) = server.call("zit_diff", json!({"change": id}));
+    assert!(!err, "{diff}");
+    assert!(diff["diff"].as_str().unwrap().contains("+pub fn price(x: u32) -> u32 { x + 1 }"), "{diff}");
+    let (_, stat) = server.call("zit_diff", json!({"change": id, "against": "current", "stat": true}));
+    assert!(stat["diff"].as_str().unwrap().contains("1 file changed"), "{stat}");
+
+    server.call("zit_accept", json!({"change": id}));
+    let (err, log) = server.call("zit_log", json!({"limit": 1}));
+    assert!(!err, "{log}");
+    assert_eq!(log["changes"][0]["id"], id);
+    assert_eq!(log["changes"].as_array().unwrap().len(), 1);
+    assert_eq!(log["totals"]["changes"], 1);
+    let (_, all) = server.call("zit_log", json!({}));
+    assert_eq!(all["changes"].as_array().unwrap().len(), 2, "genesis too");
 }
 
 #[test]
