@@ -119,6 +119,10 @@
   tbody tr.picked { background: var(--raised); }
   td.why { color: var(--mute); }
   td .state { white-space: nowrap; }
+  th.num, td.num { text-align: right; white-space: nowrap; }
+  td.num { font-family: var(--mono); font-size: 12.5px; }
+  tfoot td { position: sticky; bottom: 0; background: var(--paper); border-top: 1px solid var(--rule); border-bottom: 0; color: var(--mute); font-weight: 600; }
+  tfoot tr { cursor: default; }
 
   @media (max-width: 960px) {
     body { grid-template: "top" auto "track" 44vh "side" auto "book" auto / 1fr; }
@@ -161,8 +165,9 @@
 <aside id="side"><p class="hint">Select a change or a workspace to see what it wrote, why it stands where it does, its evidence and its diff. Keys: <code>j</code>/<code>k</code> to move, <code>/</code> to filter, <code>Esc</code> to clear.</p></aside>
 
 <section id="book"><table>
-  <thead><tr><th class="label">State</th><th class="label">Id</th><th class="label">Agent</th><th class="label">Age</th><th class="label">Intent</th><th class="label">Why</th></tr></thead>
+  <thead><tr><th class="label">State</th><th class="label">Id</th><th class="label">Agent</th><th class="label">Age</th><th class="label num">Tokens</th><th class="label num">Cost</th><th class="label">Intent</th><th class="label">Why</th></tr></thead>
   <tbody id="rows"></tbody>
+  <tfoot><tr id="total"></tr></tfoot>
 </table></section>
 
 <script>
@@ -185,6 +190,10 @@ const reasons = c => c.status !== "invalid" ? [] :
   c.reason === "conflict" ? c.detail.map(p => ({ text: `${p} does not merge with current` })) :
   c.reason === "failed" ? c.detail.map(n => ({ text: `check ${n} failed` })) : [{ text: String(c.detail) }];
 const brief = list => list.length > 1 ? `${list[0]}  (+${list.length - 1} more)` : list[0] || "";
+// What a change cost, as the agent reported it: "1,000 in / 50 out" and "$0.2500"; nothing when it reported nothing.
+const num = n => n.toLocaleString("en-US");
+const tokens = u => u ? `${num(u.input_tokens)} in / ${num(u.output_tokens)} out` : "";
+const cost = u => u && u.cost_usd != null ? `$${u.cost_usd.toFixed(4)}` : "";
 
 // What to type next for the selected thing. The page itself never changes the graph.
 function nextCommand(c) {
@@ -300,19 +309,29 @@ function header(g) {
 
 function rows(g) {
   const out = [];
-  for (const c of g.changes) if (shown.has(kind(c)) && matches(changeText(c))) out.push({ id: c.id, cls: kind(c), state: label(c), short: short(c.id), agent: c.agent, age: age(c.time), intent: intentOf(c), why: brief(reasons(c).map(r => r.text + (r.by ? short(r.by) : ""))) });
-  for (const w of g.workspaces) if (shown.has("workspace") && matches(workspaceText(w))) out.push({ id: "ws:" + w.id, cls: "workspace", state: w.dirty ? "working" : "open", short: w.id, agent: w.agent, age: age(w.created), intent: w.intent, why: brief([...w.overlaps.map(o => `${o.resource} also held by ${o.with}`), ...w.claims.map(c => "claims " + c), ...w.writes.map(c => "writing " + c)]) || `on ${short(w.base)}${w.alive === false ? ", owner gone" : ""}` });
+  for (const c of g.changes) if (shown.has(kind(c)) && matches(changeText(c))) out.push({ id: c.id, cls: kind(c), state: label(c), short: short(c.id), agent: c.agent, age: age(c.time), usage: c.usage, intent: intentOf(c), why: brief(reasons(c).map(r => r.text + (r.by ? short(r.by) : ""))) });
+  for (const w of g.workspaces) if (shown.has("workspace") && matches(workspaceText(w))) out.push({ id: "ws:" + w.id, cls: "workspace", state: w.dirty ? "working" : "open", short: w.id, agent: w.agent, age: age(w.created), usage: null, intent: w.intent, why: brief([...w.overlaps.map(o => `${o.resource} also held by ${o.with}`), ...w.claims.map(c => "claims " + c), ...w.writes.map(c => "writing " + c)]) || `on ${short(w.base)}${w.alive === false ? ", owner gone" : ""}` });
   return out;
 }
 
 function ledger(g) {
-  document.getElementById("rows").replaceChildren(...rows(g).map(r => {
+  const listed = rows(g);
+  document.getElementById("rows").replaceChildren(...listed.map(r => {
     const tr = h("tr", { className: picked === r.id ? "picked" : "" },
       h("td", {}, h("span", { className: "state " + r.cls }, h("span", { className: "dot" }), r.state)),
-      h("td", { className: "mono" }, r.short), h("td", {}, r.agent), h("td", {}, r.age), h("td", {}, clip(r.intent, 90)), h("td", { className: "why" }, r.why));
+      h("td", { className: "mono" }, r.short), h("td", {}, r.agent), h("td", {}, r.age),
+      h("td", { className: "num" }, tokens(r.usage)), h("td", { className: "num" }, cost(r.usage)),
+      h("td", {}, clip(r.intent, 90)), h("td", { className: "why" }, r.why));
     tr.onclick = () => pick(r.id);
     return tr;
   }));
+  // Over the changes listed, so a filter totals what it shows.
+  const costed = listed.filter(r => r.usage);
+  const sum = costed.reduce((t, r) => ({ input_tokens: t.input_tokens + r.usage.input_tokens, output_tokens: t.output_tokens + r.usage.output_tokens, cost_usd: r.usage.cost_usd == null ? t.cost_usd : (t.cost_usd || 0) + r.usage.cost_usd }), { input_tokens: 0, output_tokens: 0, cost_usd: null });
+  const changes = listed.filter(r => !r.id.startsWith("ws:")).length;
+  document.getElementById("total").replaceChildren(
+    h("td", { colSpan: 4 }, `${changes} change${changes === 1 ? "" : "s"}${costed.length < changes ? ` (${changes - costed.length} without a reported cost)` : ""}`),
+    h("td", { className: "num" }, costed.length ? tokens(sum) : ""), h("td", { className: "num" }, cost(sum)), h("td", { colSpan: 2 }, ""));
 }
 
 function render() { if (!graph) return; header(graph); draw(graph); ledger(graph); }
@@ -348,7 +367,8 @@ async function pick(id) {
   const d = await res.json();
   const next = nextCommand(d);
   const rowsOf = [["agent", d.agent], ["change", d.id, "mono"], ["state", short(d.state), "mono"], ["recorded", age(d.time) + " ago"],
-    ...d.parents.map((p, i) => [i ? "composes" : "built on", short(p), "mono"]), ...(d.session ? [["session", d.session, "mono"]] : [])];
+    ...d.parents.map((p, i) => [i ? "composes" : "built on", short(p), "mono"]), ...(d.session ? [["session", d.session, "mono"]] : []),
+    ...(d.usage ? [["cost", `${tokens(d.usage)}${cost(d.usage) ? " · " + cost(d.usage) : ""}`]] : [])];
   side.replaceChildren(
     h("span", { className: "state label " + kind(d) }, h("span", { className: "dot" }), d.status === "current" || d.status === "accepted" ? d.status : label(d)),
     h("h2", {}, clip(intentOf(d), 200) || "(no intent)"),

@@ -39,6 +39,8 @@ struct Graph {
     mainline: Vec<Change>,
     changes: Vec<Forked<ChangeRow>>,
     workspaces: Vec<Forked<WorkspaceRow>>,
+    /// What the speculative changes cost together.
+    totals: api::Totals,
 }
 
 #[derive(Serialize)]
@@ -54,7 +56,9 @@ fn graph(repo: &Repo) -> Result<Graph> {
     let mut mainline = change::accepted(repo, MAINLINE)?;
     mainline.reverse();
     let fork = |id: &Oid| repo.merge_base(id, &current).ok().flatten();
+    let totals = api::Totals::of(overview.changes.iter().map(|row| &row.change));
     Ok(Graph {
+        totals,
         repo: repo
             .git_dir()
             .parent()
