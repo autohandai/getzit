@@ -130,6 +130,17 @@ fn declared_reads_are_carried_into_the_change() {
     assert_eq!(c.reads, vec![Resource::parse("README.md")]);
 }
 
+/// A declared read names a file the way git does, or it never matches the write that makes it stale.
+#[test]
+fn declared_reads_are_named_the_way_git_names_files() {
+    let fx = Fixture::new(FILES);
+    let ws = fx.workspace("claude");
+    let absolute = ws.path().join("src/a.rs#a").display().to_string();
+    workspace::declare_reads(&fx.repo, &ws.id, &[Resource::parse("./README.md"), Resource::parse(&absolute)]).unwrap();
+    assert_eq!(ws.declared_reads(), vec![Resource::parse("README.md"), Resource::parse("src/a.rs#a")]);
+    assert!(workspace::declare_reads(&fx.repo, &ws.id, &[Resource::parse("../secret")]).is_err());
+}
+
 #[test]
 fn materialising_a_new_state_reuses_the_cached_one() {
     let fx = Fixture::new(FILES);

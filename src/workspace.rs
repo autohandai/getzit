@@ -108,6 +108,33 @@ impl Workspace {
         claims
     }
 
+    /// `resource` with its path as the workspace's git names it: relative to
+    /// the workspace root, no `.` or `..`, no trailing slash. Agents pass
+    /// absolute paths and `./a`; one file must be one resource however it is spelt.
+    pub(crate) fn relative(&self, resource: &Resource) -> Result<Resource> {
+        use std::path::Component;
+        let given = Path::new(resource.path());
+        let relative = given.strip_prefix(&self.path).unwrap_or(given);
+        let mut parts: Vec<&str> = Vec::new();
+        for component in relative.components() {
+            match component {
+                Component::Normal(name) => parts.push(name.to_str().unwrap_or_default()),
+                Component::CurDir => {}
+                Component::ParentDir if parts.pop().is_some() => {}
+                _ => return Err(Error::msg(format!("`{resource}` is not a path inside the workspace"))),
+            }
+        }
+        if parts.is_empty() {
+            return Err(Error::msg(format!("`{resource}` names no file")));
+        }
+        let path = parts.join("/");
+        Ok(match resource {
+            Resource::File(_) => Resource::File(path),
+            Resource::Top(_) => Resource::Top(path),
+            Resource::Symbol(_, name) => Resource::Symbol(path, name.clone()),
+        })
+    }
+
     pub fn declared_reads(&self) -> Vec<Resource> {
         let text = fs::read_to_string(self.reads_file()).unwrap_or_default();
         let mut reads: Vec<Resource> = text.lines().filter(|l| !l.is_empty()).map(Resource::parse).collect();
@@ -736,8 +763,9 @@ pub fn in_flight(repo: &Repo, ws: &Workspace) -> Result<crate::footprint::Footpr
 pub fn declare_reads(repo: &Repo, id: &str, reads: &[Resource]) -> Result<()> {
     use std::io::Write;
     let ws = get(repo, id)?;
+    let reads: Vec<Resource> = reads.iter().map(|r| ws.relative(r)).collect::<Result<_>>()?;
     let mut file = fs::OpenOptions::new().create(true).append(true).open(ws.reads_file())?;
-    for read in reads {
+    for read in &reads {
         writeln!(file, "{read}")?;
     }
     Ok(())
