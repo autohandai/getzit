@@ -172,3 +172,25 @@ fn mcp_rejects_resources_that_are_not_a_list_of_strings() {
     let (_, status) = mcp.call("zit_status", json!({}));
     assert_eq!(status["workspaces"][0]["claims"], json!([]));
 }
+
+/// JSON that is not a request object is answered with -32600 (Invalid Request), id null;
+/// an object without a method is -32600 too, not "method not found".
+#[test]
+fn mcp_answers_invalid_requests_with_32600() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = cli(dir.path());
+    let mut mcp = Mcp::start(&cli, &[]);
+    for raw in ["42", "\"ping\"", "null"] {
+        mcp.send(raw.as_bytes());
+        let reply = mcp.read();
+        assert_eq!(reply["error"]["code"], -32600, "{raw}: {reply}");
+        assert_eq!(reply["id"], Value::Null, "{raw}: {reply}");
+    }
+    mcp.send(br#"{"jsonrpc": "2.0", "id": 7}"#);
+    let reply = mcp.read();
+    assert_eq!(reply["error"]["code"], -32600, "{reply}");
+    assert_eq!(reply["id"], 7);
+    mcp.send(br#"{"jsonrpc": "2.0", "id": 8, "method": 5}"#);
+    assert_eq!(mcp.read()["error"]["code"], -32600);
+    assert_eq!(mcp.request(9, "ping", json!({}))["result"], json!({}), "still serving");
+}
