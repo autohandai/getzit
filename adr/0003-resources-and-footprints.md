@@ -4,6 +4,8 @@ What a change wrote is derived from the diff at symbol granularity; what it read
 
 **Status:** accepted
 
+Amended by [ADR 21](0021-more-languages-and-manifests.md) and [ADR 22](0022-renames-unit-by-unit.md).
+
 ## Context
 
 "Agent C is stale because agent A changed `StripeClient`" requires knowing what each change read and wrote, at a finer grain than files and coarser than lines.

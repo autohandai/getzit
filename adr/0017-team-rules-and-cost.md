@@ -4,6 +4,8 @@ Commits are yours and can be signed; history can be linear; changes reach protec
 
 **Status:** accepted. Amends [ADR 4](0004-acceptance.md) and [ADR 8](0008-agent-integration.md). Came out of a hostile review of 0.1.0.
 
+Amended by [ADR 23](0023-workspace-slots-ports-liveness.md).
+
 ## Context
 
 Review 01: Zit did not fit a company's `main` (a fake `zit@localhost` committer, no signatures, a merge commit per change, a direct push to `main`), and no experiment reported cost.
@@ -19,4 +21,4 @@ Review 01: Zit did not fit a company's `main` (a fake `zit@localhost` committer,
 
 - Signing prompts for a passphrase once per commit if the key needs one, and Zit writes many commits; use an agent (`gpg-agent`, `ssh-agent`).
 - With presets in JSON mode, the agent's progress is not shown while it works; its final message is printed when it is done.
-- Codex reports no price, Autohand and Pi no usage yet; their cost is unknown, not zero.
+- Codex reports no price, Autohand no usage yet; their cost is unknown, not zero. (Pi reports both since [ADR 23](0023-workspace-slots-ports-liveness.md).)

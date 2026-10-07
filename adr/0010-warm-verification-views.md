@@ -4,6 +4,8 @@ Checks run in a reusable workspace at a fixed path, with a private temp director
 
 **Status:** accepted. Amends [ADR 6](0006-evidence.md). Came out of [Lesson 01](../docs/lessons.mdx).
 
+Amended by [ADR 24](0024-concurrent-checks-see-the-state.md).
+
 ## Context
 
 Checks used to run in a new workspace at a random path, deleted afterwards. Real build tools key their caches on absolute paths and file times. On a Rust project every verification therefore recompiled the crate from nothing (about 90 s) and left about 600 MB of build output behind, forever.

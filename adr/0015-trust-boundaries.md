@@ -4,6 +4,8 @@ The gate comes from the accepting side, and agents can do work but not land it.
 
 **Status:** accepted. Amends [ADR 6](0006-evidence.md) and [ADR 8](0008-agent-integration.md). Came out of a hostile review of 0.1.0.
 
+Amended by [ADR 20](0020-linear-acceptance-lands-spans.md).
+
 ## Context
 
 Zit runs work produced by agents that the person accepting it has usually not read. Review 01 found four places where that work could decide its own fate:

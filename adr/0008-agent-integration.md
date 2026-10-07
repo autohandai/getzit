@@ -4,6 +4,8 @@
 
 **Status:** accepted
 
+Amended by [ADR 23](0023-workspace-slots-ports-liveness.md) and [ADR 27](0027-doctor-and-integrations.md).
+
 ## Decision
 
 **`zit run -- <command>`** (CLI to CLI). Materialises a workspace, runs the command inside it, records the result when the command ends for any reason, and disposes the workspace.
@@ -15,7 +17,7 @@
 
 - `--timeout SECONDS` stops the agent with `SIGTERM`, records, and exits 124.
 
-**`zit mcp`** (Model Context Protocol, stdio, newline-delimited JSON-RPC 2.0). Eleven tools mirror the CLI. The agent name defaults to the MCP client's `clientInfo.name`.
+**`zit mcp`** (Model Context Protocol, stdio, newline-delimited JSON-RPC 2.0). Thirteen tools mirror the CLI. The agent name defaults to the MCP client's `clientInfo.name`.
 
 The MCP server is implemented directly (about 200 lines) rather than through an SDK: the protocol surface used is `initialize`, `ping`, `tools/list`, `tools/call`.
 

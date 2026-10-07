@@ -4,6 +4,8 @@ Zit calls git plumbing commands rather than linking a git library.
 
 **Status:** accepted
 
+Amended by [ADR 26](0026-fewer-git-processes.md), which has the current call counts.
+
 ## Decision
 
 Every object and ref operation is a `git` plumbing call (`commit-tree`, `merge-tree --write-tree`, `diff-tree`, `update-ref --stdin`, `cat-file --batch`). Requires git 2.38 or newer. `$ZIT_GIT` selects the binary.

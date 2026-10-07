@@ -4,6 +4,8 @@ A workspace is a disposable directory cloned from a cached checkout, with an unr
 
 **Status:** accepted
 
+Amended by [ADR 23](0023-workspace-slots-ports-liveness.md).
+
 ## Context
 
 Agents need a real directory, and their tools expect it to be a git repository (Codex refuses to run outside one). `git worktree` gives that, but registers the worktree in the repository, wants a branch, and checks out every file.

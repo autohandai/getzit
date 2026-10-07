@@ -4,6 +4,8 @@ Accept composes a change onto current if footprints do not conflict, verifies th
 
 **Status:** accepted
 
+Amended by [ADR 18](0018-batch-acceptance.md), [ADR 19](0019-composed-state-must-parse.md) and [ADR 20](0020-linear-acceptance-lands-spans.md).
+
 ## Decision
 
 `accept(change)`:

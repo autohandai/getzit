@@ -4,6 +4,8 @@ Built-in and project ignore patterns for every workspace; live write sets reused
 
 **Status:** accepted. Amends [ADR 5](0005-materialisation.md) and [ADR 11](0011-claims-and-awareness.md). Came out of [Lesson 02](../docs/lessons.mdx).
 
+Amended by [ADR 23](0023-workspace-slots-ports-liveness.md).
+
 ## Context
 
 With 30 agents and 20 developers on one repository:

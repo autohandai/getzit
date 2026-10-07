@@ -4,6 +4,8 @@ A check result is stored under a hash of the check and the tree ids of its input
 
 **Status:** accepted
 
+Amended by [ADR 24](0024-concurrent-checks-see-the-state.md).
+
 ## Decision
 
 Checks are declared in `zit.toml` at the root of the state being checked:

@@ -22,6 +22,7 @@ Your branches, history and remotes stay plain git. Teammates who never install Z
 
 ```sh
 cargo install zit --locked     # installs zit and git-zit; needs git 2.38+, macOS or Linux
+git zit doctor                 # git version, copy-on-write, free space, agents on PATH
 cd your-repo && git zit init   # refs/zit/current = HEAD; nothing else changes
 
 git zit run --agent autohand --intent "Add a discount function to src/lib.rs" &
@@ -34,6 +35,8 @@ git zit status                 # every change and workspace, and why a change ca
 git zit show <change>          # what it wrote, its author's reason, what it cost
 git zit web                    # watch it live in the browser
 git zit accept <change>        # land it, or get the reason it cannot land
+git zit accept --batch         # or land every verified change at once, checked once
+git zit log                    # what landed, by whom, and what it cost
 git zit export --branch main   # publish to git (or --branch zit/ready --pr for a pull request)
 ```
 
@@ -43,7 +46,7 @@ git zit export --branch main   # publish to git (or --branch zit/ready --pr for 
 
 **Agents that split the work instead of colliding.** Sessions on one machine see what the others are writing, and claim a file, a function or a Markdown section before starting (`zit claim src/lib.rs#price`). Five Claude Code agents given the same task landed 10 of 10 changes with claims and 4 of 10 without, at $1.01 against $2.54 per landed change.
 
-**Merges git can't judge, caught before they land.** A change that calls a function whose signature changed underneath it is refused even though git would merge it. Then the combined result must pass your checks, and the change's own, before `refs/zit/current` moves.
+**Merges git can't judge, caught before they land.** A change that calls a function whose signature changed underneath it is refused even though git would merge it. Footprints are at symbol level for Rust, Python, JavaScript, TypeScript, Go, Java, Ruby and C#, by section in Markdown, and by table or key in TOML and JSON manifests. Then the combined result must parse and pass your checks, and the change's own, before `refs/zit/current` moves.
 
 **The reason stays with the change.** An agent's final message becomes the commit body, and the tokens and dollars it reported become commit trailers, so `git log` keeps them.
 
@@ -56,7 +59,7 @@ git zit export --branch main   # publish to git (or --branch zit/ready --pr for 
 | **Autohand Code** | `git zit run --agent autohand`; `autohand --zit` runs a whole session in a Zit workspace, in the next Autohand Code release |
 | **Claude Code** | `git zit run --agent claude`, or `zit mcp` as an MCP server |
 | **Codex** | `git zit run --agent codex`, or `zit mcp` |
-| **Pi** | `git zit run --agent pi`, or the extension: `pi install npm:pi-zit` |
+| **Pi** | `git zit run --agent pi` (reports tokens and price), or the extension: `pi install npm:pi-zit` |
 | **Anything else** | `git zit run -- <command>` |
 
 ## Honest numbers
@@ -67,6 +70,7 @@ git zit export --branch main   # publish to git (or --branch zit/ready --pr for 
 | Disk, 5 workspaces of a project with 206 MB of npm dependencies | 327 MB with Zit and `[prepare]`; 1,619 MB for a worktree plus `npm ci` each |
 | 5 Claude Code agents, same task and prompt, 2 rounds | 10 of 10 landed with claims, 4 of 10 without; $1.01 against $2.54 per landed change |
 | Integration time against a plain merge loop, cheap checks | 2.2× **slower**: Zit does more work per change |
+| `zit status` with 100 speculative changes, repeated | 462 ms → 52 ms median once statuses are memoised; the first call after current moves still pays in full |
 
 Measured on one machine, in one or two runs each. Zit is not faster than worktrees at integrating; what it saves is disk, duplicated work and broken merges. How each number was produced, and what is not measured, is in [Benchmarks](https://getzit.org/benchmarks), [Lessons](https://getzit.org/lessons) and [Limits](https://getzit.org/limits).
 

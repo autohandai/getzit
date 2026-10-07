@@ -4,6 +4,8 @@ A change's status is computed from the graph and the evidence on demand.
 
 **Status:** accepted
 
+Amended by [ADR 25](0025-status-memoised.md).
+
 ## Context
 
 A change moves through speculative, verified, invalid, accepted, current. Storing that as a field means it can disagree with reality whenever current moves or evidence arrives.
