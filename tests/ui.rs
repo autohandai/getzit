@@ -98,6 +98,17 @@ fn ctrl_c_quits_instead_of_running_a_check() {
     assert!(matches!(app.on_event(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE)), Action::Check(_)));
 }
 
+/// A multi-line message (git errors are) must not push the key help off the two-line footer.
+#[test]
+fn a_multi_line_message_keeps_the_key_help_visible() {
+    let fx = Fixture::new(&[("a.txt", "a\n")]);
+    let mut app = App::new(api::overview(&fx.repo).unwrap());
+    app.message = "error: git merge: fatal: first line\nsecond line\nthird line".into();
+    let screen = screen(&app);
+    assert!(screen.contains("first line"), "{screen}");
+    assert!(screen.contains("a accept"), "key help is visible: {screen}");
+}
+
 #[test]
 fn an_empty_graph_renders_and_ignores_actions() {
     let fx = Fixture::new(&[("a.txt", "a\n")]);

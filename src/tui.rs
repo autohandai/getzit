@@ -192,7 +192,9 @@ impl App {
         let mut state = TableState::default().with_selected((!o.workspaces.is_empty()).then_some(self.workspace));
         frame.render_stateful_widget(table, workspaces, &mut state);
 
-        frame.render_widget(Paragraph::new(format!(" {}\n {HELP}", self.message)), foot);
+        // One line for the message (git errors span several), one for the keys.
+        let message = self.message.lines().collect::<Vec<_>>().join(" ");
+        frame.render_widget(Paragraph::new(format!(" {message}\n {HELP}")), foot);
     }
 }
 
