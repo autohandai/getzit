@@ -273,6 +273,22 @@ fn produced_here(repo: &Repo, key: &str) -> bool {
     ledger(repo).join(key).exists()
 }
 
+/// Everything `lookup` depends on besides the state itself, as one hash: the
+/// evidence refs, this clone's ledger and whether fetched evidence is
+/// trusted. Two lookups under the same fingerprint give the same answer.
+pub(crate) fn fingerprint(repo: &Repo) -> Result<String> {
+    let refs = repo.git(&["for-each-ref", "--format=%(refname) %(objectname)", EVIDENCE])?;
+    let mut produced: Vec<String> = std::fs::read_dir(ledger(repo))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    produced.sort_unstable();
+    let trusted = repo.git(&["config", "--bool", "zit.trustFetchedEvidence"]).unwrap_or_default();
+    Ok(crate::hash(format!("{refs}\n\n{}\n\n{trusted}", produced.join("\n")).as_bytes()))
+}
+
 fn store(repo: &Repo, fresh: &[&Evidence]) -> Result<()> {
     let dir = ledger(repo);
     std::fs::create_dir_all(&dir)?;

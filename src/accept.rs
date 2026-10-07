@@ -8,11 +8,11 @@ use crate::git::{Oid, Repo, CHANGES, CURRENT};
 use crate::resource::Resource;
 use crate::workspace::{self, NewWorkspace, Workspace};
 use crate::{Error, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::process::Stdio;
 
 /// One reason a change is stale against current.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Staleness {
     pub resource: Resource,
     pub kind: ConflictKind,
@@ -20,7 +20,7 @@ pub struct Staleness {
     pub by: Option<Oid>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", tag = "reason", content = "detail")]
 pub enum Invalid {
     /// It read or wrote something current has since changed.
@@ -33,7 +33,7 @@ pub enum Invalid {
     Error(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", tag = "status")]
 pub enum Status {
     /// Recorded; evidence incomplete.
@@ -175,7 +175,7 @@ fn try_evaluate(repo: &Repo, change: &Change, current: &Oid) -> Result<Status> {
         return Ok(Status::Current);
     }
     let base = repo.merge_base(&change.id, current)?.ok_or_else(|| no_shared_history(&change.id))?;
-    if base == change.id || landed_linearly(repo, &change.id, &base, current)? {
+    if base == change.id || (base != *current && landed_linearly(repo, &change.id, &base, current)?) {
         return Ok(Status::Accepted);
     }
     if base != *current {
@@ -220,6 +220,7 @@ pub struct Policy {
 }
 
 /// The commit on current's first-parent line that landed `change` linearly, if any.
+/// Callers skip the call when `base` is current: the range is empty.
 fn landed_linearly(repo: &Repo, change: &Oid, base: &Oid, current: &Oid) -> Result<bool> {
     let grep = format!("--grep=^Zit-Change: {change}$");
     let found = repo.git(&["log", "--first-parent", "-1", "--format=%H", &grep, &format!("{base}..{current}")])?;
@@ -236,7 +237,7 @@ pub fn accept_with(repo: &Repo, change: &Oid, policy: &Policy) -> Result<Outcome
             return Ok(Outcome::AlreadyAccepted);
         };
         let base = repo.merge_base(change, &current)?.ok_or_else(|| no_shared_history(change))?;
-        if base == *change || landed_linearly(repo, change, &base, &current)? {
+        if base == *change || (base != current && landed_linearly(repo, change, &base, &current)?) {
             return Ok(Outcome::AlreadyAccepted);
         }
 
