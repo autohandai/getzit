@@ -135,7 +135,7 @@ fn compute(repo: &Repo, base: &Oid, tip: &Oid, declared: Option<&[Resource]>) ->
         None => "trailers".to_string(),
         Some(reads) => crate::hash(reads.iter().map(|r| format!("{r}\n")).collect::<String>().as_bytes()),
     };
-    let cache = repo.home().join("cache/footprint-v2").join(format!("{base}-{tip}-{declared_key}.json"));
+    let cache = repo.home().join("cache/footprint-v3").join(format!("{base}-{tip}-{declared_key}.json"));
     if let Ok(bytes) = std::fs::read(&cache) {
         if let Ok(fp) = serde_json::from_slice(&bytes) {
             return Ok(fp);
