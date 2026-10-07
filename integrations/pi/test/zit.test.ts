@@ -96,7 +96,7 @@ function makeCtx(cwd: string, entries: any[] = []) {
 			sessionManager: {
 				getEntries: () => entries,
 				getBranch: () => entries,
-				getSessionFile: () => undefined,
+				getSessionFile: (): string | undefined => undefined,
 				getSessionDir: () => "",
 				getSessionId: () => "test-session",
 			},
@@ -308,6 +308,29 @@ describe("session lifecycle", () => {
 			delete process.env.ZIT_SUMMARY_FILE;
 			await runZit(["dispose", ws.id], { cwd: repo });
 		}
+	});
+});
+
+describe("/zit command", () => {
+	test("cancelling the intent prompt creates no workspace and switches no session", async () => {
+		const before = zitJson(["status"]).workspaces.length;
+		const ext = loadExtension();
+		const { ctx, notes } = makeCtx(repo);
+		let switched = 0;
+		Object.assign(ctx, {
+			hasUI: true,
+			waitForIdle: async () => {},
+			switchSession: async () => {
+				switched++;
+				return { cancelled: false };
+			},
+		});
+		Object.assign(ctx.ui, { confirm: async () => true, input: async () => undefined });
+		ctx.sessionManager.getSessionFile = () => join(root, "session.jsonl");
+		ctx.sessionManager.getSessionDir = () => join(root, "sessions");
+		await ext.commands.get("zit").handler("", ctx);
+		assert.equal(switched, 0, `no session switch: ${notes.join(" | ")}`);
+		assert.equal(zitJson(["status"]).workspaces.length, before, `no workspace created: ${notes.join(" | ")}`);
 	});
 });
 

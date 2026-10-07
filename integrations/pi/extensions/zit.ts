@@ -235,7 +235,12 @@ export default function zitExtension(pi: ExtensionAPI) {
 					await runZitOk(["init"], { cwd: repo });
 				}
 				let intent = args.trim();
-				if (!intent && ctx.hasUI) intent = ((await ctx.ui.input("What is this session for?", "intent")) ?? "").trim();
+				if (!intent && ctx.hasUI) {
+					const typed = await ctx.ui.input("What is this session for?", "intent");
+					// Dismissing the prompt means "not now", not "no intent".
+					if (typed === undefined) return;
+					intent = typed.trim();
+				}
 
 				await ctx.waitForIdle();
 				const created = await materialise(repo, intent, { session: ctx.sessionManager.getSessionId() });
