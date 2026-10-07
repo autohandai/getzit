@@ -260,8 +260,16 @@ pub fn unparsed_code(path: &str) -> bool {
 /// Index `src`. `None` when the language is unsupported or the file is not
 /// UTF-8; callers then treat the file as one indivisible resource.
 pub fn index(path: &str, src: &[u8]) -> Option<FileIndex> {
-    if matches!(path.rsplit_once('.').map(|(_, ext)| ext), Some("md" | "mdx" | "markdown")) {
-        return std::str::from_utf8(src).ok().map(index_markdown);
+    match path.rsplit_once('.').map(|(_, ext)| ext) {
+        Some("md" | "mdx" | "markdown") => return std::str::from_utf8(src).ok().map(index_markdown),
+        Some("toml") => return index_manifest(toml::from_str::<toml::Table>(std::str::from_utf8(src).ok()?).ok()?),
+        Some("json") => {
+            return index_manifest(match serde_json::from_slice::<serde_json::Value>(src).ok()? {
+                serde_json::Value::Object(map) => map,
+                other => return Some(FileIndex { top: content_unit(&other.to_string()), ..FileIndex::default() }),
+            })
+        }
+        _ => {}
     }
     let (lang, grammar) = language(path)?;
     let text = std::str::from_utf8(src).ok()?;
@@ -353,6 +361,24 @@ pub fn index(path: &str, src: &[u8]) -> Option<FileIndex> {
             }
             None => ix.top = unit,
         }
+    }
+    Some(ix)
+}
+
+/// A unit whose interface is its whole content: prose and data.
+fn content_unit(body: &str) -> Unit {
+    let hash = crate::hash(body.as_bytes());
+    Unit { sig: hash.clone(), hash, refs: BTreeSet::new() }
+}
+
+/// A manifest (TOML, JSON): each top-level table or key is a unit named after
+/// it, hashed by its parsed content, so formatting and comments do not count
+/// and only the section whose content changed is written. Nothing is read
+/// from a manifest, and one that does not parse is one resource.
+fn index_manifest<V: std::fmt::Display>(top: impl IntoIterator<Item = (String, V)>) -> Option<FileIndex> {
+    let mut ix = FileIndex::default();
+    for (key, value) in top {
+        ix.symbols.insert(key, content_unit(&value.to_string()));
     }
     Some(ix)
 }
@@ -886,8 +912,35 @@ mod tests {
     }
 
     #[test]
+    fn toml_tables_and_json_keys_are_units() {
+        let cargo = "[package]\nname = \"a\"\n\n[dependencies]\nserde = \"1\"\n\n[profile.release]\nlto = true\n";
+        let a = index("Cargo.toml", cargo.as_bytes()).unwrap();
+        assert_eq!(names(&a), ["dependencies", "package", "profile"]);
+        let b = index("Cargo.toml", cargo.replace("serde = \"1\"\n", "serde = \"1\"\nanyhow = \"1\"\n").as_bytes())
+            .unwrap();
+        assert_eq!(a.symbols["package"], b.symbols["package"]);
+        assert_eq!(a.symbols["profile"], b.symbols["profile"]);
+        assert_ne!(a.symbols["dependencies"], b.symbols["dependencies"]);
+        let formatted =
+            "# Build.\n[package]\nname='a'\n[dependencies]\nserde = \"1\"\n[profile]\nrelease = { lto = true }\n";
+        let c = index("Cargo.toml", formatted.as_bytes()).unwrap();
+        assert_eq!(a, c, "formatting and comments are not content");
+        assert!(a.symbols["dependencies"].refs.is_empty(), "no reads are inferred from a manifest");
+        assert!(index("Cargo.toml", b"[package\n").is_none(), "a manifest that does not parse is one resource");
+
+        let p = index("package.json", b"{\"name\": \"a\", \"scripts\": {\"test\": \"jest\"}}").unwrap();
+        assert_eq!(names(&p), ["name", "scripts"]);
+        let q = index("package.json", b"{\n  \"scripts\": {\"test\": \"vitest\"},\n  \"name\": \"a\"\n}\n").unwrap();
+        assert_eq!(p.symbols["name"], q.symbols["name"]);
+        assert_ne!(p.symbols["scripts"], q.symbols["scripts"]);
+        let list = index("a.json", b"[1, 2]").unwrap();
+        assert!(list.symbols.is_empty() && list.top != Unit::default(), "a non-object document is module-level");
+        assert!(index("a.json", b"{not json").is_none());
+    }
+
+    #[test]
     fn unsupported_or_binary_files_have_no_index() {
-        assert!(index("a.json", b"{}").is_none());
+        assert!(index("a.csv", b"a,b").is_none());
         assert!(index("Makefile", b"all:").is_none());
         assert!(unparsed_code("Shop.kt") && !unparsed_code("Shop.java") && !unparsed_code("a.rs"));
         assert!(!unparsed_code("shop.rb") && !unparsed_code("Shop.cs"));
