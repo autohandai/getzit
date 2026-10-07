@@ -116,8 +116,15 @@ fn text<'a>(args: &'a Value, name: &str) -> Result<&'a str> {
     args[name].as_str().ok_or_else(|| Error::msg(format!("missing required argument: {name}")))
 }
 
-fn resources(args: &Value, name: &str) -> Vec<Resource> {
-    args[name].as_array().into_iter().flatten().filter_map(Value::as_str).map(Resource::parse).collect()
+/// Absent means none; anything but a list of strings is refused rather than
+/// silently read as none (a claim of nothing is "granted").
+fn resources(args: &Value, name: &str) -> Result<Vec<Resource>> {
+    let bad = || Error::msg(format!("{name} must be a list of strings"));
+    match &args[name] {
+        Value::Null => Ok(vec![]),
+        Value::Array(items) => items.iter().map(|v| v.as_str().map(Resource::parse).ok_or_else(bad)).collect(),
+        _ => Err(bad()),
+    }
 }
 
 /// `None` when the tool does not exist.
@@ -136,9 +143,9 @@ fn call(cwd: &Path, client: &str, integrator: bool, name: &str, args: &Value) ->
                 };
                 json!(workspace::materialise(&repo, &new)?)
             }
-            "zit_claim" => json!(crate::claim::claim(&repo, text(args, "workspace")?, &resources(args, "resources"))?),
+            "zit_claim" => json!(crate::claim::claim(&repo, text(args, "workspace")?, &resources(args, "resources")?)?),
             "zit_read" => {
-                let reads = resources(args, "resources");
+                let reads = resources(args, "resources")?;
                 workspace::declare_reads(&repo, text(args, "workspace")?, &reads)?;
                 json!({"declared": reads})
             }
@@ -146,7 +153,7 @@ fn call(cwd: &Path, client: &str, integrator: bool, name: &str, args: &Value) ->
                 let opts = Record {
                     intent: args["intent"].as_str().map(str::to_string),
                     summary: args["summary"].as_str().map(str::to_string),
-                    reads: resources(args, "reads"),
+                    reads: resources(args, "reads")?,
                     usage: None,
                 };
                 let dispose = args["dispose"].as_bool().unwrap_or(false);

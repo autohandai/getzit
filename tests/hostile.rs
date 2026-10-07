@@ -4,8 +4,61 @@
 mod common;
 
 use common::{write, Cli};
+use serde_json::{json, Value};
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::Stdio;
+use std::process::{Child, ChildStdin, ChildStdout, Stdio};
+
+/// A `zit mcp` process on pipes.
+struct Mcp {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+}
+
+impl Mcp {
+    fn start(cli: &Cli, flags: &[&str]) -> Mcp {
+        let mut child =
+            cli.command(&cli.root).arg("mcp").args(flags).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let stdout = BufReader::new(child.stdout.take().unwrap());
+        Mcp { child, stdin, stdout }
+    }
+
+    fn send(&mut self, raw: &[u8]) {
+        self.stdin.write_all(raw).unwrap();
+        self.stdin.write_all(b"\n").unwrap();
+        self.stdin.flush().unwrap();
+    }
+
+    fn read(&mut self) -> Value {
+        let mut line = String::new();
+        self.stdout.read_line(&mut line).unwrap();
+        serde_json::from_str(&line).unwrap_or_else(|e| panic!("not json ({e}): {line}"))
+    }
+
+    fn request(&mut self, id: u64, method: &str, params: Value) -> Value {
+        self.send(json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}).to_string().as_bytes());
+        let reply = self.read();
+        assert_eq!(reply["id"], id, "{reply}");
+        reply
+    }
+
+    /// Call a tool; returns (is_error, payload).
+    fn call(&mut self, tool: &str, args: Value) -> (bool, Value) {
+        let reply = self.request(99, "tools/call", json!({"name": tool, "arguments": args}));
+        let result = &reply["result"];
+        let text = result["content"][0]["text"].as_str().unwrap_or_else(|| panic!("no content: {reply}"));
+        (result["isError"] == true, serde_json::from_str(text).unwrap_or(Value::String(text.to_string())))
+    }
+}
+
+impl Drop for Mcp {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
 
 fn cli(dir: &Path) -> Cli {
     let cli = Cli::new(dir, &[("src/lib.rs", "pub fn price(x: u32) -> u32 { x }\n"), ("a.txt", "a\n")]);
@@ -96,4 +149,26 @@ fn discarding_what_is_not_speculative_is_an_error() {
     cli.run(&["discard", &a]).ok();
     let ran = cli.run(&["discard", &a]);
     assert_eq!(ran.code, 2, "{}", ran.stdout);
+}
+
+/// `resources: "a.txt"` (a string, not a list) must be refused, not silently treated as an
+/// empty list that is then "granted".
+#[test]
+fn mcp_rejects_resources_that_are_not_a_list_of_strings() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = cli(dir.path());
+    let mut mcp = Mcp::start(&cli, &[]);
+    let (err, ws) = mcp.call("zit_materialise", json!({"intent": "x"}));
+    assert!(!err, "{ws}");
+    for bad in [json!("a.txt"), json!(["a.txt", 7]), json!({"path": "a.txt"})] {
+        let (err, msg) = mcp.call("zit_claim", json!({"workspace": ws["id"], "resources": bad}));
+        assert!(err, "{msg}");
+        assert!(msg.as_str().unwrap().contains("resources"), "{msg}");
+        let (err, msg) = mcp.call("zit_read", json!({"workspace": ws["id"], "resources": bad}));
+        assert!(err, "{msg}");
+        let (err, msg) = mcp.call("zit_record", json!({"workspace": ws["id"], "reads": bad}));
+        assert!(err, "{msg}");
+    }
+    let (_, status) = mcp.call("zit_status", json!({}));
+    assert_eq!(status["workspaces"][0]["claims"], json!([]));
 }
