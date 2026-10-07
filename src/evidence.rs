@@ -149,7 +149,7 @@ fn parse_config(text: &[u8]) -> Result<Config> {
 }
 
 fn config(repo: &Repo, rev: &Oid) -> Result<Config> {
-    match repo.objects()?.read(&format!("{rev}:zit.toml"))? {
+    match repo.read_immutable(&format!("{rev}:zit.toml"))? {
         Some(text) => parse_config(&text),
         None => Ok(Config::default()),
     }
@@ -274,14 +274,12 @@ fn normalise(input: &str) -> Result<String> {
 /// `governing` is a trusted revision (current, at accept) whose checks apply too,
 /// so a change cannot remove or weaken the gate it is judged by.
 fn lookup_keyed(repo: &Repo, state: &Oid, governing: Option<&Oid>) -> Result<Vec<(Check, String, Option<Evidence>)>> {
-    let mut objects = repo.objects()?;
     let mut checks = Vec::new();
-    for rev in governing.into_iter().chain([state]) {
-        if let Some(text) = objects.read(&format!("{rev}:zit.toml"))? {
-            for check in parse_config(&text)?.check {
-                if !checks.contains(&check) {
-                    checks.push(check);
-                }
+    let names: Vec<String> = governing.into_iter().chain([state]).map(|rev| format!("{rev}:zit.toml")).collect();
+    for text in repo.read_immutable_all(&names)?.into_iter().flatten() {
+        for check in parse_config(&text)?.check {
+            if !checks.contains(&check) {
+                checks.push(check);
             }
         }
     }
@@ -290,6 +288,8 @@ fn lookup_keyed(repo: &Repo, state: &Oid, governing: Option<&Oid>) -> Result<Vec
     }
     let keys = keys(repo, state, &checks)?;
     let trust_fetched = repo.git(&["config", "--bool", "zit.trustFetchedEvidence"]).is_ok_and(|v| v.trim() == "true");
+    // Evidence refs move, so they are read fresh, in one session.
+    let mut objects = repo.objects()?;
     checks
         .into_iter()
         .zip(keys)
@@ -329,7 +329,29 @@ fn produced_here(repo: &Repo, key: &str) -> bool {
     ledger(repo).join(key).exists()
 }
 
-fn store(repo: &Repo, fresh: &[&Evidence]) -> Result<()> {
+/// Everything `lookup` depends on besides the state itself, as one hash: the
+/// evidence refs, this clone's ledger and whether fetched evidence is
+/// trusted. Two lookups under the same fingerprint give the same answer.
+pub(crate) fn fingerprint(repo: &Repo) -> Result<String> {
+    let refs = repo.git(&["for-each-ref", "--format=%(refname) %(objectname)", EVIDENCE])?;
+    let mut produced: Vec<String> = std::fs::read_dir(ledger(repo))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    produced.sort_unstable();
+    let trusted = repo.git(&["config", "--bool", "zit.trustFetchedEvidence"]).unwrap_or_default();
+    Ok(crate::hash(format!("{refs}\n\n{}\n\n{trusted}", produced.join("\n")).as_bytes()))
+}
+
+/// Write fresh evidence to the ledger and the object store. The ref updates
+/// that publish it are returned for the caller to `keep`, alone or inside a
+/// larger transaction.
+fn store(repo: &Repo, fresh: &[&Evidence]) -> Result<Vec<String>> {
+    if fresh.is_empty() {
+        return Ok(vec![]);
+    }
     let dir = ledger(repo);
     std::fs::create_dir_all(&dir)?;
     for evidence in fresh {
@@ -348,7 +370,12 @@ fn store(repo: &Repo, fresh: &[&Evidence]) -> Result<()> {
         let blob = repo.git_stdin(&["hash-object", "-w", "--stdin"], &[], &serde_json::to_string(evidence)?)?;
         updates.push(format!("update {EVIDENCE}/{} {blob}", evidence.key));
     }
-    if !updates.is_empty() && !repo.transaction(&updates)? {
+    Ok(updates)
+}
+
+/// Apply the ref updates `verify_state` left for the caller.
+pub(crate) fn keep(repo: &Repo, updates: &[String]) -> Result<()> {
+    if !updates.is_empty() && !repo.transaction(updates)? {
         return Err(Error::msg("could not store evidence"));
     }
     Ok(())
@@ -426,9 +453,15 @@ pub fn verify(repo: &Repo, change: &Oid, rerun: bool) -> Result<Vec<Verdict>> {
 /// As `verify`, for the checks named in `only` (all of them when empty).
 /// A name no check has is an error, and nothing runs.
 pub fn verify_only(repo: &Repo, change: &Oid, rerun: bool, only: &[String]) -> Result<Vec<Verdict>> {
-    verify_state(repo, change, &repo.tree_of(change)?, None, rerun, only)
+    let (verdicts, updates) = verify_state(repo, change, &repo.tree_of(change)?, None, rerun, only)?;
+    keep(repo, &updates)?;
+    Ok(verdicts)
 }
 
+/// The verdicts, and the ref updates that publish the fresh ones: the
+/// caller applies those with `keep`, possibly in the same transaction as
+/// a move of current. They are applied here only when verification failed
+/// part-way, so that whatever was learned survives the error.
 pub(crate) fn verify_state(
     repo: &Repo,
     change: &Oid,
@@ -436,7 +469,7 @@ pub(crate) fn verify_state(
     governing: Option<&Oid>,
     rerun: bool,
     only: &[String],
-) -> Result<Vec<Verdict>> {
+) -> Result<(Vec<Verdict>, Vec<String>)> {
     let mut keyed = lookup_keyed(repo, state, governing)?;
     if !only.is_empty() {
         let declared: Vec<&str> = keyed.iter().map(|(c, _, _)| c.name.as_str()).collect();
@@ -467,9 +500,13 @@ pub(crate) fn verify_state(
     let fresh: Vec<_> =
         verdicts.iter().flatten().filter(|v| !v.cached && v.evidence.exit_code != -1).map(|v| &v.evidence).collect();
     let stored = store(repo, &fresh);
+    if outcome.is_err() {
+        if let Ok(updates) = &stored {
+            keep(repo, updates)?;
+        }
+    }
     outcome?;
-    stored?;
-    Ok(verdicts.into_iter().flatten().collect())
+    Ok((verdicts.into_iter().flatten().collect(), stored?))
 }
 
 /// Run `pending` checks in one view, up to `jobs` at once, in declared order.

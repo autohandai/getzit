@@ -3,7 +3,7 @@
 # being edited. Usage: bench/awareness.sh SCRATCH [N]
 set -euo pipefail
 dir="$1"; n="${2:-30}"
-zit="$(cd "$(dirname "$0")/.." && pwd)/target/release/zit"
+zit="${ZIT_BIN:-$(cd "$(dirname "$0")/.." && pwd)/target/release/zit}"
 export ZIT_HOME="$dir/home" ZIT_GIT="$(xcrun -f git 2>/dev/null || command -v git)"
 rm -rf "${dir:?}/repo" "${dir:?}/home"
 mkdir -p "$dir/repo" && cd "$dir/repo"

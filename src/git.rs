@@ -4,10 +4,12 @@
 use crate::workspace::Strategy;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 
 pub const CURRENT: &str = "refs/zit/current";
 pub const CHANGES: &str = "refs/zit/changes";
@@ -49,14 +51,31 @@ pub struct Repo {
     pub(crate) strategy: Strategy,
     /// Extra objects to read, written somewhere other than the repository.
     alternate: Option<PathBuf>,
+    /// Content of `<id>:<path>` names read so far: an id's tree never
+    /// changes, so each is read from git once per process.
+    remembered: Arc<Mutex<HashMap<String, Option<Vec<u8>>>>>,
 }
+
+/// How many remembered objects to keep before starting over (a long-lived
+/// `zit mcp` sees many ids; each entry is one small file).
+const REMEMBER_LIMIT: usize = 4096;
 
 /// The oldest git Zit works with: `merge-tree --write-tree` arrived in 2.38.
 pub const MIN_GIT: (u32, u32) = (2, 38);
 
 /// Fail early, naming the version needed, when git is older than [`MIN_GIT`].
+/// A binary found new enough is remembered under Zit's home by its path, size
+/// and modification time, so later commands do not start git to ask again.
 pub fn require_git() -> Result<()> {
-    let out = git_command().arg("--version").output().map_err(|e| {
+    require_git_at(&git_binary(), home_root().ok().as_deref())
+}
+
+fn require_git_at(binary: &OsStr, home: Option<&Path>) -> Result<()> {
+    let marker = home.zip(binary_identity(binary)).map(|(home, id)| home.join("git-ok").join(id));
+    if marker.as_ref().is_some_and(|m| m.exists()) {
+        return Ok(());
+    }
+    let out = git_command_at(binary).arg("--version").output().map_err(|e| {
         let program = match std::env::var_os("ZIT_GIT") {
             Some(given) => format!("{} ($ZIT_GIT)", Path::new(&given).display()),
             None => "git (set $ZIT_GIT to a git 2.38+ binary that is not on PATH)".to_string(),
@@ -75,13 +94,49 @@ pub fn require_git() -> Result<()> {
             text.trim()
         )));
     }
+    if let Some(marker) = marker {
+        if let Some(dir) = marker.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(marker, text.trim());
+    }
     Ok(())
+}
+
+/// What identifies a git binary's content: its resolved path, size and
+/// modification time, hashed. `None` when it cannot be found without running it.
+fn binary_identity(binary: &OsStr) -> Option<String> {
+    let path = Path::new(binary);
+    let resolved = if path.components().count() > 1 {
+        path.to_path_buf()
+    } else {
+        std::env::split_paths(&std::env::var_os("PATH")?).map(|dir| dir.join(path)).find(|p| p.is_file())?
+    };
+    let meta = std::fs::metadata(&resolved).ok()?;
+    let modified = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?;
+    Some(crate::hash(format!("{}\0{}\0{}", resolved.display(), meta.len(), modified.as_nanos()).as_bytes()))
+}
+
+/// Where Zit keeps local state: `$ZIT_HOME`, default `~/.zit`.
+fn home_root() -> Result<PathBuf> {
+    match std::env::var_os("ZIT_HOME").filter(|h| !h.is_empty()) {
+        Some(h) => Ok(PathBuf::from(h)),
+        None => Ok(PathBuf::from(std::env::var_os("HOME").ok_or_else(|| Error::msg("HOME is not set"))?).join(".zit")),
+    }
+}
+
+fn git_binary() -> std::ffi::OsString {
+    std::env::var_os("ZIT_GIT").unwrap_or_else(|| "git".into())
 }
 
 /// A `git` invocation (binary overridable with `$ZIT_GIT`) isolated from
 /// any ambient repository environment.
 pub(crate) fn git_command() -> Command {
-    let mut cmd = Command::new(std::env::var_os("ZIT_GIT").unwrap_or_else(|| "git".into()));
+    git_command_at(&git_binary())
+}
+
+fn git_command_at(binary: &OsStr) -> Command {
+    let mut cmd = Command::new(binary);
     for var in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_PREFIX"] {
         cmd.env_remove(var);
     }
@@ -125,6 +180,11 @@ fn shown_args(cmd: &Command) -> String {
         }
     }
     shown.join(" ")
+}
+
+/// A full object id, which names its content forever.
+fn is_id(rev: &str) -> bool {
+    rev.len() == 40 && rev.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// Run to completion; trimmed stdout on success.
@@ -171,11 +231,7 @@ impl Repo {
     /// Open the repository containing `cwd`; local state lives under
     /// `$ZIT_HOME` (default `~/.zit`).
     pub fn discover(cwd: &Path) -> Result<Repo> {
-        let home = match std::env::var_os("ZIT_HOME").filter(|h| !h.is_empty()) {
-            Some(h) => PathBuf::from(h),
-            None => PathBuf::from(std::env::var_os("HOME").ok_or_else(|| Error::msg("HOME is not set"))?).join(".zit"),
-        };
-        let mut repo = Repo::open(cwd, &home)?;
+        let mut repo = Repo::open(cwd, &home_root()?)?;
         if std::env::var("ZIT_MATERIALISE").as_deref() == Ok("checkout") {
             repo.strategy = Strategy::Checkout;
         }
@@ -201,7 +257,13 @@ impl Repo {
         // Workspaces point git at files under home by path; commands then run from other directories.
         let home_root =
             if home_root.is_absolute() { home_root.to_path_buf() } else { std::env::current_dir()?.join(home_root) };
-        Ok(Repo { git_dir, home: home_root.join(key), strategy: Strategy::Clone, alternate: None })
+        Ok(Repo {
+            git_dir,
+            home: home_root.join(key),
+            strategy: Strategy::Clone,
+            alternate: None,
+            remembered: Arc::default(),
+        })
     }
 
     pub fn with_strategy(mut self, strategy: Strategy) -> Repo {
@@ -237,15 +299,17 @@ impl Repo {
         cmd
     }
 
-    /// The same repository, also reading objects from `objects`.
+    /// The same repository, also reading objects from `objects`. What it
+    /// reads from there is not remembered: those objects may be discarded.
     pub(crate) fn reading_also(&self, objects: &Path) -> Repo {
-        Repo { alternate: Some(objects.to_path_buf()), ..self.clone() }
+        Repo { alternate: Some(objects.to_path_buf()), remembered: Arc::default(), ..self.clone() }
     }
 
     /// The object store: where git writes objects for this repository.
+    /// `git_dir` is the common directory already (`open` resolves it), so no
+    /// git process is needed to find it.
     pub(crate) fn object_dir(&self) -> Result<PathBuf> {
-        let common = self.git(&["rev-parse", "--git-common-dir"])?;
-        Ok(self.git_dir.join(common.trim()).join("objects"))
+        Ok(self.git_dir.join("objects"))
     }
 
     pub(crate) fn git<S: AsRef<OsStr>>(&self, args: &[S]) -> Result<String> {
@@ -293,7 +357,7 @@ impl Repo {
     /// Resolve any revision (id prefix, ref, `HEAD`, `current`) to a change.
     pub fn resolve(&self, rev: &str) -> Result<Oid> {
         // A full id needs no lookup; a wrong one fails where it is used.
-        if rev.len() == 40 && rev.bytes().all(|b| b.is_ascii_hexdigit()) {
+        if is_id(rev) {
             return Ok(Oid::new(rev));
         }
         if rev.starts_with('-') {
@@ -364,6 +428,48 @@ impl Repo {
         Ok(child.wait()?.success())
     }
 
+    /// The content of `name`, read once per process when `name` is
+    /// `<id>:<path>` (immutable); a name through a ref is read every time.
+    pub(crate) fn read_immutable(&self, name: &str) -> Result<Option<Vec<u8>>> {
+        Ok(self.read_immutable_all(std::slice::from_ref(&name.to_string()))?.pop().expect("one answer per name"))
+    }
+
+    /// As `read_immutable` for several names, in their order, with at most
+    /// one `cat-file` session for all the names not remembered yet.
+    pub(crate) fn read_immutable_all(&self, names: &[String]) -> Result<Vec<Option<Vec<u8>>>> {
+        let mut found: Vec<Option<Option<Vec<u8>>>> = vec![None; names.len()];
+        {
+            let remembered = self.remembered.lock().expect("not poisoned");
+            for (name, slot) in names.iter().zip(&mut found) {
+                if let Some(known) = remembered.get(name) {
+                    *slot = Some(known.clone());
+                }
+            }
+        }
+        if found.iter().any(Option::is_none) {
+            let mut objects = self.objects()?;
+            let mut remembered = self.remembered.lock().expect("not poisoned");
+            for (name, slot) in names.iter().zip(&mut found) {
+                if slot.is_none() {
+                    let content = objects.read(name)?;
+                    if name.split_once(':').is_some_and(|(rev, _)| is_id(rev)) {
+                        if remembered.len() >= REMEMBER_LIMIT {
+                            remembered.clear();
+                        }
+                        remembered.insert(name.clone(), content.clone());
+                    }
+                    *slot = Some(content);
+                }
+            }
+        }
+        Ok(found.into_iter().map(|slot| slot.expect("filled above")).collect())
+    }
+
+    #[cfg(test)]
+    fn remembered(&self) -> usize {
+        self.remembered.lock().expect("not poisoned").len()
+    }
+
     /// Open a session for reading many objects with one process.
     pub(crate) fn objects(&self) -> Result<Objects> {
         let mut child =
@@ -420,6 +526,71 @@ impl Drop for Objects {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sh(cwd: &Path, script: &str) {
+        assert!(Command::new("sh").current_dir(cwd).args(["-c", script]).status().unwrap().success());
+    }
+
+    #[test]
+    fn only_content_named_by_an_id_is_remembered() {
+        let dir = tempfile::tempdir().unwrap();
+        sh(
+            dir.path(),
+            "git init -q -b main . && echo one > f && git add f && git -c user.name=t -c user.email=t@t commit -qm one",
+        );
+        let repo = Repo::open(dir.path(), &dir.path().join("home")).unwrap();
+        let first = repo.resolve("HEAD").unwrap();
+        assert_eq!(repo.read_immutable(&format!("{first}:f")).unwrap().as_deref(), Some(&b"one\n"[..]));
+        assert_eq!(repo.read_immutable("HEAD:f").unwrap().as_deref(), Some(&b"one\n"[..]));
+        sh(dir.path(), "echo two > f && git -c user.name=t -c user.email=t@t commit -qam two");
+        assert_eq!(repo.read_immutable("HEAD:f").unwrap().as_deref(), Some(&b"two\n"[..]), "a ref moves");
+        assert_eq!(repo.read_immutable(&format!("{first}:f")).unwrap().as_deref(), Some(&b"one\n"[..]));
+        assert_eq!(repo.read_immutable(&format!("{first}:missing")).unwrap(), None);
+        assert_eq!(repo.remembered(), 2, "the two names under an id; nothing under HEAD");
+    }
+
+    /// The version check is remembered per binary content, never per name:
+    /// a replaced binary at the same path is checked again.
+    #[test]
+    fn a_git_found_new_enough_is_not_asked_again_until_it_changes() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let (fake, home) = (dir.path().join("git"), dir.path().join("home"));
+        let install = |version: &str| {
+            std::fs::write(&fake, format!("#!/bin/sh\necho 'git version {version}'\n")).unwrap();
+            std::fs::set_permissions(&fake, PermissionsExt::from_mode(0o755)).unwrap();
+        };
+        install("2.30.1");
+        assert!(require_git_at(fake.as_os_str(), Some(&home)).is_err());
+        assert!(!home.join("git-ok").exists(), "an old git is not remembered");
+        install("2.48.1 (new)");
+        require_git_at(fake.as_os_str(), Some(&home)).unwrap();
+        let markers = || std::fs::read_dir(home.join("git-ok")).unwrap().count();
+        assert_eq!(markers(), 1);
+        install("2.30.1 (older, same path)");
+        assert!(require_git_at(fake.as_os_str(), Some(&home)).is_err(), "the binary changed: asked again");
+        install("2.48.1 (new)");
+        std::fs::write(&fake, "#!/bin/sh\nexit 1\n").unwrap();
+        let _ = std::fs::write(home.join("git-ok").join(binary_identity(fake.as_os_str()).unwrap()), "");
+        require_git_at(fake.as_os_str(), Some(&home)).unwrap_or_else(|_| panic!("remembered: git is not run"));
+    }
+
+    /// A repository opened from inside a linked worktree still writes its
+    /// objects to the main repository's store.
+    #[test]
+    fn the_object_store_is_the_common_one_wherever_the_repo_was_opened() {
+        let dir = tempfile::tempdir().unwrap();
+        sh(dir.path(), "git init -q -b main main && cd main && echo a > a && git add a && git -c user.name=t -c user.email=t@t commit -qm a && git worktree add -q --detach ../linked");
+        let main = Repo::open(&dir.path().join("main"), &dir.path().join("home")).unwrap();
+        let linked = Repo::open(&dir.path().join("linked"), &dir.path().join("home")).unwrap();
+        let expected = dir.path().join("main/.git/objects").canonicalize().unwrap();
+        assert_eq!(main.object_dir().unwrap(), expected);
+        assert_eq!(linked.object_dir().unwrap(), expected);
+        assert_eq!(
+            main.object_dir().unwrap(),
+            PathBuf::from(main.git(&["rev-parse", "--git-path", "objects"]).unwrap())
+        );
+    }
 
     #[test]
     fn a_dead_batch_process_is_an_error_not_a_missing_object() {

@@ -7,6 +7,7 @@ use crate::resource::Resource;
 use crate::{symbols, Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Footprint {
@@ -139,16 +140,36 @@ const MAX_PARSE_BYTES: usize = 1 << 20;
 
 const NULL_OID: &str = "0000000000000000000000000000000000000000";
 
-fn index_blob(blobs: &mut Objects, path: &str, mode: &str, oid: &str) -> Result<Option<symbols::FileIndex>> {
+/// One side of a changed path, as read from the object store.
+enum Blob {
+    /// The path does not exist on this side.
+    Absent,
+    /// A symlink, a submodule or a file too large to parse: one resource.
+    Opaque,
+    Text(Vec<u8>),
+}
+
+fn read_blob(blobs: &mut Objects, mode: &str, oid: &str) -> Result<Blob> {
     if oid == NULL_OID {
-        return Ok(Some(symbols::FileIndex::default()));
+        return Ok(Blob::Absent);
     }
     if !mode.starts_with("100") {
-        return Ok(None); // symlink or submodule
+        return Ok(Blob::Opaque);
     }
     let body = blobs.read(oid)?.ok_or_else(|| Error::msg(format!("git object {oid} is missing")))?;
-    Ok(if body.len() > MAX_PARSE_BYTES { None } else { symbols::index(path, &body) })
+    Ok(if body.len() > MAX_PARSE_BYTES { Blob::Opaque } else { Blob::Text(body) })
 }
+
+fn index_blob(path: &str, blob: &Blob) -> Option<symbols::FileIndex> {
+    match blob {
+        Blob::Absent => Some(symbols::FileIndex::default()),
+        Blob::Opaque => None,
+        Blob::Text(body) => symbols::index(path, body),
+    }
+}
+
+/// Changes touching at least this many files are parsed on several threads.
+const PARALLEL_PARSE_FROM: usize = 8;
 
 /// The footprint of `base..tip`. Pure in its arguments, so cached.
 pub fn between(repo: &Repo, base: &Oid, tip: &Oid) -> Result<Footprint> {
@@ -165,22 +186,60 @@ pub(crate) fn between_states(repo: &Repo, base: &Oid, state: &Oid, reads: &[Reso
     compute(repo, base, state, Some(reads))
 }
 
-fn compute(repo: &Repo, base: &Oid, tip: &Oid, declared: Option<&[Resource]>) -> Result<Footprint> {
-    // Versioned by what is extracted; keyed by the declared reads too.
-    let declared_key = match declared {
-        None => "trailers".to_string(),
-        Some(reads) => crate::hash(reads.iter().map(|r| format!("{r}\n")).collect::<String>().as_bytes()),
-    };
-    let cache = repo.home().join("cache/footprint-v3").join(format!("{base}-{tip}-{declared_key}.json"));
-    if let Ok(bytes) = std::fs::read(&cache) {
-        if let Ok(fp) = serde_json::from_slice(&bytes) {
-            return Ok(fp);
-        }
-    }
+/// The cached part of a footprint: what the diff of two trees says, which
+/// every caller shares whatever reads it declares. Versioned by what is extracted.
+fn diff_cache(repo: &Repo, base: &Oid, tip: &Oid) -> std::path::PathBuf {
+    repo.home().join("cache/footprint-v3").join(format!("{base}-{tip}.json"))
+}
 
+fn read_cached<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
+    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+}
+
+fn write_cached<T: Serialize>(path: &Path, value: &T) {
+    if let (Some(dir), Ok(bytes)) = (path.parent(), serde_json::to_vec(value)) {
+        let _ = std::fs::create_dir_all(dir);
+        let _ = std::fs::write(path, bytes);
+    }
+}
+
+fn compute(repo: &Repo, base: &Oid, tip: &Oid, declared: Option<&[Resource]>) -> Result<Footprint> {
+    let cache = diff_cache(repo, base, tip);
+    let mut fp = match read_cached::<Footprint>(&cache) {
+        Some(fp) => fp,
+        None => {
+            let fp = diff(repo, base, tip)?;
+            write_cached(&cache, &fp);
+            fp
+        }
+    };
+    fp.reads = match declared {
+        Some(reads) => reads.iter().cloned().collect(),
+        None => {
+            // The commits of base..tip never change either.
+            let cache = cache.with_extension("reads.json");
+            match read_cached(&cache) {
+                Some(reads) => reads,
+                None => {
+                    let log = repo.git(&["log", "--format=%B", &format!("{base}..{tip}")])?;
+                    let reads: BTreeSet<Resource> =
+                        log.lines().filter_map(|l| l.strip_prefix("Zit-Read: ")).map(Resource::parse).collect();
+                    write_cached(&cache, &reads);
+                    reads
+                }
+            }
+        }
+    };
+    Ok(fp)
+}
+
+/// Writes, refs and signatures of `base..tip`, with no reads: what the two trees say.
+fn diff(repo: &Repo, base: &Oid, tip: &Oid) -> Result<Footprint> {
     let mut fp = Footprint::default();
     let diff = repo.git(&["diff-tree", "-r", "-z", "-M", base.as_str(), tip.as_str()])?;
+    // Read every blob through one session, then parse them all at once.
     let mut blobs = repo.objects()?;
+    let mut changed: Vec<(&str, &str, Blob, Blob)> = Vec::new();
     let mut fields = diff.split('\0');
     while let (Some(meta), Some(path)) = (fields.next(), fields.next()) {
         let meta: Vec<&str> = meta.trim_start_matches(':').split(' ').collect();
@@ -198,8 +257,22 @@ fn compute(repo: &Repo, base: &Oid, tip: &Oid, declared: Option<&[Resource]>) ->
                 continue;
             }
         }
-        let old = index_blob(&mut blobs, old_path, old_mode, old_oid)?;
-        let new = index_blob(&mut blobs, path, new_mode, new_oid)?;
+        changed.push((
+            old_path,
+            path,
+            read_blob(&mut blobs, old_mode, old_oid)?,
+            read_blob(&mut blobs, new_mode, new_oid)?,
+        ));
+    }
+    drop(blobs);
+    let index =
+        |(old_path, path, old, new): &(&str, &str, Blob, Blob)| (index_blob(old_path, old), index_blob(path, new));
+    let indexed = match changed.len() >= PARALLEL_PARSE_FROM {
+        true => crate::api::parallel(&changed, index),
+        false => changed.iter().map(index).collect(),
+    };
+    for ((old_path, path, _, _), (old, new)) in changed.iter().zip(indexed) {
+        let (old_path, path) = (*old_path, *path);
         let (Some(old), Some(new)) = (old, new) else {
             fp.writes.insert(Resource::File(path.to_string()));
             continue;
@@ -221,18 +294,49 @@ fn compute(repo: &Repo, base: &Oid, tip: &Oid, declared: Option<&[Resource]>) ->
             fp.refs.extend(new.top.refs.iter().cloned());
         }
     }
-
-    fp.reads = match declared {
-        Some(reads) => reads.iter().cloned().collect(),
-        None => {
-            let log = repo.git(&["log", "--format=%B", &format!("{base}..{tip}")])?;
-            log.lines().filter_map(|l| l.strip_prefix("Zit-Read: ")).map(Resource::parse).collect()
-        }
-    };
-
-    if let Some(dir) = cache.parent() {
-        let _ = std::fs::create_dir_all(dir);
-        let _ = std::fs::write(&cache, serde_json::to_vec(&fp)?);
-    }
     Ok(fp)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    fn sh(cwd: &Path, script: &str) {
+        assert!(Command::new("sh").current_dir(cwd).args(["-c", script]).status().unwrap().success());
+    }
+
+    /// `of_change` (reads known) and `between` (reads from the trailers)
+    /// share one cached diff; the reads are each caller's own.
+    #[test]
+    fn the_diff_of_a_span_is_shared_but_its_reads_are_not() {
+        let dir = tempfile::tempdir().unwrap();
+        sh(dir.path(), "git init -q -b main . && printf 'fn a() {}\\n' > a.rs && git add a.rs && git -c user.name=t -c user.email=t@t commit -qm one && printf 'fn a() { 1 }\\n' > a.rs && git -c user.name=t -c user.email=t@t commit -qam 'two\n\nZit-Read: b.rs'");
+        let repo = Repo::open(dir.path(), &dir.path().join("home")).unwrap();
+        let (base, tip) = (repo.resolve("HEAD~1").unwrap(), repo.resolve("HEAD").unwrap());
+        let declared = of_change(&repo, &base, &tip, &[Resource::File("c.rs".into())]).unwrap();
+        assert!(diff_cache(&repo, &base, &tip).is_file());
+        let trailers = between(&repo, &base, &tip).unwrap();
+        assert_eq!(declared.writes, trailers.writes);
+        assert_eq!(declared.reads, [Resource::File("c.rs".into())].into_iter().collect());
+        assert_eq!(trailers.reads, [Resource::File("b.rs".into())].into_iter().collect());
+        assert_eq!(between(&repo, &base, &tip).unwrap(), trailers, "the same from the cache");
+    }
+
+    /// Files of a large change are parsed on several threads; every symbol
+    /// of every file is still accounted for, whichever thread saw it.
+    #[test]
+    fn a_change_to_many_files_is_indexed_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let many = |body: &str| (1..=40).map(|i| format!("printf '{body}' > m{i}.py")).collect::<Vec<_>>().join(" && ");
+        sh(dir.path(), &format!("git init -q -b main . && {} && git add -A && git -c user.name=t -c user.email=t@t commit -qm one && {} && git -c user.name=t -c user.email=t@t commit -qam two", many("def a():\\n    return 1\\n\\ndef b():\\n    return 2\\n"), many("def a():\\n    return helper(1)\\n\\ndef b():\\n    return 2\\n\\ndef c():\\n    return 3\\n")));
+        let repo = Repo::open(dir.path(), &dir.path().join("home")).unwrap();
+        let (base, tip) = (repo.resolve("HEAD~1").unwrap(), repo.resolve("HEAD").unwrap());
+        let fp = between(&repo, &base, &tip).unwrap();
+        let expected: BTreeSet<Resource> =
+            (1..=40).flat_map(|i| ["a", "c"].map(|s| Resource::Symbol(format!("m{i}.py"), s.to_string()))).collect();
+        assert_eq!(fp.writes, expected);
+        assert_eq!(fp.refs, ["helper".to_string()].into_iter().collect());
+        assert_eq!(fp.signatures.len(), 40, "one new symbol per file");
+    }
 }

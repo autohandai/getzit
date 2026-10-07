@@ -9,7 +9,7 @@ use crate::git::{Oid, Repo};
 use crate::resource::Resource;
 use crate::workspace::{self, Workspace};
 use crate::Result;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Serialize)]
@@ -65,11 +65,53 @@ pub struct Overview {
     pub workspaces: Vec<WorkspaceRow>,
 }
 
+/// A status derived earlier, with everything it was derived from. Status is
+/// a pure function of (change, current, evidence), so under the same key the
+/// answer is the same; a different key is simply not an answer.
+#[derive(Serialize, Deserialize)]
+struct Memo {
+    current: Oid,
+    evidence: String,
+    status: Status,
+}
+
+/// The status of `change` against `current`, reusing the memo of an earlier
+/// listing when it was derived from the same current and evidence.
+fn memoised_status(repo: &Repo, change: &Change, current: &Oid, evidence: &str) -> Status {
+    let path = repo.home().join("cache/status").join(change.id.as_str());
+    if let Ok(memo) = std::fs::read(&path).and_then(|bytes| Ok(serde_json::from_slice::<Memo>(&bytes)?)) {
+        if memo.current == *current && memo.evidence == evidence {
+            return memo.status;
+        }
+    }
+    let status = accept::evaluate(repo, change, current);
+    // A failure to evaluate may be transient (a lock, git dying); ask again next time.
+    if !matches!(status, Status::Invalid(accept::Invalid::Error(_))) {
+        let memo = Memo { current: current.clone(), evidence: evidence.to_string(), status: status.clone() };
+        if let (Some(dir), Ok(bytes)) = (path.parent(), serde_json::to_vec(&memo)) {
+            // Written whole, then renamed: a concurrent listing never reads half a memo.
+            let tmp = dir.join(format!("{}.{}", change.id, workspace::fresh_id()));
+            if std::fs::create_dir_all(dir).is_ok() && std::fs::write(&tmp, bytes).is_ok() {
+                let _ = std::fs::rename(&tmp, &path);
+            }
+        }
+    }
+    status
+}
+
 pub fn overview(repo: &Repo) -> Result<Overview> {
-    let current = change::load(repo, &repo.current()?)?;
+    // One git call: the ref resolves and loads at once, or is not there.
+    let current = change::load_revs(repo, &[crate::git::CURRENT])
+        .ok()
+        .and_then(|mut found| found.pop())
+        .ok_or(crate::Error::NotInitialised)?;
     accept::prune_accepted(repo)?;
     let speculative = change::speculative(repo)?;
-    let statuses = parallel(&speculative, |c| accept::evaluate(repo, c, &current.id));
+    let evidence = match speculative.is_empty() {
+        true => String::new(),
+        false => evidence::fingerprint(repo)?,
+    };
+    let statuses = parallel(&speculative, |c| memoised_status(repo, c, &current.id, &evidence));
     let changes: Vec<ChangeRow> =
         speculative.into_iter().zip(statuses).map(|(change, status)| ChangeRow { change, status }).collect();
 
