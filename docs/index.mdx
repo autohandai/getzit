@@ -27,7 +27,7 @@ The design is called CPSG, the Causal Program State Graph: states are git trees,
 
 ## Install
 
-The current version is <ZitVersion />. Zit needs git 2.38 or newer, on macOS or Linux.
+The latest release is <ZitVersion /> ([changelog](/changelog)). Zit needs git 2.38 or newer, on macOS or Linux.
 
 ```sh
 cargo install zit --locked        # from crates.io; needs Rust 1.88+. Installs zit and git-zit
@@ -37,9 +37,9 @@ Prebuilt binaries for macOS (arm64, x86_64) and Linux (x86_64, arm64) are on the
 
 ```sh
 # macOS on Apple silicon; for others use x86_64-apple-darwin, x86_64-unknown-linux-gnu or aarch64-unknown-linux-gnu
-gh release download v0.1.1 -R autohandai/getzit -p 'zit-v0.1.1-aarch64-apple-darwin.tar.gz*'
-shasum -a 256 -c zit-v0.1.1-aarch64-apple-darwin.tar.gz.sha256
-tar xzf zit-v0.1.1-aarch64-apple-darwin.tar.gz && mv zit-v0.1.1-aarch64-apple-darwin/{zit,git-zit} ~/.local/bin/
+gh release download -R autohandai/getzit -p '*-aarch64-apple-darwin.tar.gz*'      # the latest release
+shasum -a 256 -c zit-v*-aarch64-apple-darwin.tar.gz.sha256
+tar xzf zit-v*-aarch64-apple-darwin.tar.gz && mv zit-v*-aarch64-apple-darwin/{zit,git-zit} ~/.local/bin/
 ```
 
 ## Quick start

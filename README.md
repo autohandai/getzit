@@ -6,7 +6,7 @@
 
 [![crates.io](https://img.shields.io/crates/v/zit.svg)](https://crates.io/crates/zit) [![npm: pi-zit](https://img.shields.io/npm/v/pi-zit.svg?label=pi-zit)](https://www.npmjs.com/package/pi-zit) [![License: GPL-2.0-only](https://img.shields.io/badge/license-GPL--2.0--only-blue.svg)](LICENSE) [![Docs](https://img.shields.io/badge/docs-getzit.org-black.svg)](https://getzit.org)
 
-[Documentation](https://getzit.org) · [Quickstart](https://getzit.org/quickstart) · [Benchmarks](https://getzit.org/benchmarks) · [Limits](https://getzit.org/limits) · [Roadmap](https://getzit.org/roadmap)
+[Documentation](https://getzit.org) · [Quickstart](https://getzit.org/quickstart) · [Benchmarks](https://getzit.org/benchmarks) · [Limits](https://getzit.org/limits) · [Roadmap](https://getzit.org/roadmap) · [Changelog](CHANGELOG.md)
 
 </div>
 

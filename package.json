@@ -3,11 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "blume dev",
-    "build": "blume build",
+    "dev": "GITHUB_TOKEN=${GITHUB_TOKEN:-$(gh auth token)} blume dev",
+    "build": "GITHUB_TOKEN=${GITHUB_TOKEN:-$(gh auth token)} blume build",
     "doctor": "blume doctor",
     "validate": "blume validate",
-    "deploy": "rm -rf dist && blume build && wrangler deploy"
+    "deploy": "rm -rf dist && GITHUB_TOKEN=${GITHUB_TOKEN:-$(gh auth token)} blume build && wrangler deploy"
   },
   "dependencies": {
     "blume": "^2.1.1"

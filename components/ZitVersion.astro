@@ -1,7 +1,6 @@
 ---
-// The version in Cargo.toml, read at build time so the site always shows the one it was built from.
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-const version = /^version\s*=\s*"([^"]+)"/m.exec(readFileSync(join(process.cwd(), "Cargo.toml"), "utf8"))?.[1] ?? "unknown";
+// The latest released version, from GitHub (see zit-version.ts).
+import { zitVersion } from "./zit-version";
+const version = await zitVersion();
 ---
 <span>{version}</span>
