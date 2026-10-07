@@ -49,6 +49,16 @@ fn clean_refuses_to_delete_unrecorded_work() {
     assert!(!ws.path().exists());
 }
 
+/// A view someone deleted by hand has no unrecorded edits to protect.
+#[test]
+fn clean_does_not_mistake_a_hand_deleted_view_for_unrecorded_edits() {
+    let fx = Fixture::new(&[("a.txt", "a\n")]);
+    let ws = fx.workspace("claude");
+    std::fs::remove_dir_all(ws.path()).unwrap();
+    assert_eq!(zit::clean::clean(&fx.repo, false).unwrap().workspaces, 1);
+    assert!(workspace::list(&fx.repo).unwrap().is_empty());
+}
+
 #[test]
 fn clean_refuses_to_pull_a_workspace_from_under_a_running_agent() {
     let fx = Fixture::new(&[("a.txt", "a\n")]);
