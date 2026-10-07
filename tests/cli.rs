@@ -250,6 +250,17 @@ fn init_before_the_first_commit_says_what_is_missing() {
     assert!(ran.stderr.contains("no commits"), "{}", ran.stderr);
 }
 
+/// A git error names the command and git's reason, not the store's plumbing arguments.
+#[test]
+fn a_git_error_does_not_print_the_git_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = cli(dir.path());
+    let ran = cli.run(&["export", "--branch", "bad name"]);
+    assert_eq!(ran.code, 2);
+    assert!(ran.stderr.contains("update-ref") && ran.stderr.contains("bad name"), "{}", ran.stderr);
+    assert!(!ran.stderr.contains("--git-dir"), "{}", ran.stderr);
+}
+
 /// `$ZIT_HOME` may be relative to where zit is run (and contain spaces): git is pointed at
 /// files under it by path, from the repository's git directory and from workspaces.
 #[test]

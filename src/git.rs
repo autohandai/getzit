@@ -111,13 +111,29 @@ impl Drop for Trace {
     }
 }
 
+/// A failed command's arguments as a user reads them: the store's plumbing
+/// (`--git-dir`, `--work-tree`, `-c key=value`) left out.
+fn shown_args(cmd: &Command) -> String {
+    let mut args = cmd.get_args().map(|a| a.to_string_lossy());
+    let mut shown = Vec::new();
+    while let Some(arg) = args.next() {
+        match arg.as_ref() {
+            "--git-dir" | "--work-tree" | "-c" => {
+                args.next();
+            }
+            _ => shown.push(arg.into_owned()),
+        }
+    }
+    shown.join(" ")
+}
+
 /// Run to completion; trimmed stdout on success.
 pub(crate) fn run(cmd: &mut Command) -> Result<String> {
     let _trace = Trace::start(cmd);
     let out = cmd.stdin(Stdio::null()).output()?;
     if !out.status.success() {
         return Err(Error::Git {
-            args: cmd.get_args().map(|a| a.to_string_lossy()).collect::<Vec<_>>().join(" "),
+            args: shown_args(cmd),
             stderr: String::from_utf8_lossy(&out.stderr).trim().to_string(),
         });
     }
@@ -247,7 +263,7 @@ impl Repo {
         let out = child.wait_with_output()?;
         if !out.status.success() {
             return Err(Error::Git {
-                args: cmd.get_args().map(|a| a.to_string_lossy()).collect::<Vec<_>>().join(" "),
+                args: shown_args(&cmd),
                 stderr: String::from_utf8_lossy(&out.stderr).trim().to_string(),
             });
         }
