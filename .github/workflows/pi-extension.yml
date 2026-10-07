@@ -1,0 +1,72 @@
+name: pi-extension
+
+# The Pi extension in integrations/pi: test it when it changes, publish it to
+# npm when a pi-zit-v<version> tag is pushed.
+on:
+  push:
+    branches: [main]
+    paths: ["integrations/pi/**", ".github/workflows/pi-extension.yml"]
+    tags: ["pi-zit-v*"]
+  pull_request:
+    paths: ["integrations/pi/**", ".github/workflows/pi-extension.yml"]
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: integrations/pi
+
+jobs:
+  test:
+    name: Test pi-zit
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88
+      - uses: Swatinem/rust-cache@v2
+      # The extension's tests drive the real zit binary.
+      - name: Build zit
+        working-directory: .
+        run: cargo build --release --locked
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: integrations/pi/package-lock.json
+      - run: npm ci
+      - name: Typecheck
+        run: npm run check
+      - name: Test
+        env:
+          ZIT_BIN: ${{ github.workspace }}/target/release/zit
+        run: |
+          git config --global user.name ci
+          git config --global user.email ci@example.com
+          npm test
+      - name: The package contents
+        run: npm pack --dry-run
+
+  publish:
+    name: Publish to npm
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/pi-zit-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Tag is the package version
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          test "pi-zit-v$version" = "$GITHUB_REF_NAME" || { echo "::error::tag $GITHUB_REF_NAME but package.json says $version"; exit 1; }
+      - run: npm ci
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then echo "::error::No NPM_TOKEN secret"; exit 1; fi
+          if npm view "pi-zit@$(node -p 'require("./package.json").version')" version >/dev/null 2>&1; then
+            echo "this version is already on npm"; exit 0
+          fi
+          npm publish --access public

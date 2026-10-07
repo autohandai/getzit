@@ -56,4 +56,10 @@ Maintainers release from `main`:
 2. Commit (`Release x.y.z`), then tag and push: `git tag -s vx.y.z -m "Zit x.y.z" && git push origin main vx.y.z`.
 3. The [release workflow](.github/workflows/release.yml) checks that the tag matches Cargo.toml, runs the tests, builds binaries for macOS (arm64, x86_64) and Linux (x86_64, arm64) with SHA-256 checksums, creates the GitHub release with the changelog section as notes, and publishes the crate to crates.io (using the `CARGO_REGISTRY_TOKEN` repository secret).
 
+The Pi extension in `integrations/pi` is released on its own, as the npm package `pi-zit`:
+
+1. Bump `version` in `integrations/pi/package.json` (`npm version patch --no-git-tag-version` in that folder).
+2. Commit, then tag and push: `git tag pi-zit-v<version> && git push origin main pi-zit-v<version>`.
+3. The [pi-extension workflow](.github/workflows/pi-extension.yml) builds `zit`, typechecks and tests the extension, checks that the tag matches `package.json`, and publishes to npm (using the `NPM_TOKEN` repository secret). Changes under `integrations/pi/` are tested on every push and pull request.
+
 Versions follow [Semantic Versioning](https://semver.org/). Until 1.0, a minor version may change the CLI or the `refs/zit/*` layout; the changelog says how to migrate.
