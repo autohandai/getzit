@@ -7,7 +7,7 @@ use crate::footprint;
 use crate::git::{Oid, Repo};
 use crate::resource::Resource;
 use crate::workspace;
-use crate::Result;
+use crate::{Error, Result};
 use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -71,12 +71,40 @@ fn claims_held(repo: &Repo) -> Result<Vec<Held>> {
     Ok(all)
 }
 
+/// The path of `resource` as the workspace's git names it: relative to the
+/// workspace root, no `.` or `..`, no trailing slash. Agents pass absolute
+/// paths and `./a`; one file must be one claim however it is spelt.
+fn normalise(ws: &workspace::Workspace, resource: &Resource) -> Result<Resource> {
+    use std::path::{Component, Path};
+    let given = Path::new(resource.path());
+    let relative = given.strip_prefix(ws.path()).unwrap_or(given);
+    let mut parts: Vec<&str> = Vec::new();
+    for component in relative.components() {
+        match component {
+            Component::Normal(name) => parts.push(name.to_str().unwrap_or_default()),
+            Component::CurDir => {}
+            Component::ParentDir if parts.pop().is_some() => {}
+            _ => return Err(Error::msg(format!("`{resource}` is not a path inside the workspace"))),
+        }
+    }
+    if parts.is_empty() {
+        return Err(Error::msg(format!("`{resource}` names no file")));
+    }
+    let path = parts.join("/");
+    Ok(match resource {
+        Resource::File(_) => Resource::File(path),
+        Resource::Top(_) => Resource::Top(path),
+        Resource::Symbol(_, name) => Resource::Symbol(path, name.clone()),
+    })
+}
+
 /// Claim `resources` for `workspace`, all or nothing. A claim lapses when
 /// its workspace is disposed; nothing has to release it.
 pub fn claim(repo: &Repo, workspace: &str, resources: &[Resource]) -> Result<Claimed> {
     use std::io::Write;
     use std::os::fd::AsRawFd;
     let ws = workspace::get(repo, workspace)?;
+    let resources: Vec<Resource> = resources.iter().map(|r| normalise(&ws, r)).collect::<Result<_>>()?;
     // The slow part happens before the lock; only claims are re-read under it.
     let mut held = work_held(repo)?;
     // One claimant at a time decides, across processes.
@@ -100,7 +128,7 @@ pub fn claim(repo: &Repo, workspace: &str, resources: &[Resource]) -> Result<Cla
         return Ok(Claimed::Refused(taken));
     }
     let mut file = std::fs::OpenOptions::new().create(true).append(true).open(ws.claims_file())?;
-    for resource in resources {
+    for resource in &resources {
         writeln!(file, "{resource}")?;
     }
     Ok(Claimed::Granted)
