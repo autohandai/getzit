@@ -159,14 +159,15 @@ pub(crate) fn message(
         msg.push_str("\n\n");
         msg.push_str(&safe(summary.trim()));
     }
-    msg.push_str(&format!("\n\nZit-Agent: {agent}\n"));
+    // Each value on one line, whatever it contains: a newline would end the
+    // trailer and start another.
+    let line = |value: &str| printable(value).replace(['\n', '\t'], " ");
+    msg.push_str(&format!("\n\nZit-Agent: {}\n", line(agent)));
     if let Some(session) = session {
-        msg.push_str(&format!("Zit-Session: {session}\n"));
+        msg.push_str(&format!("Zit-Session: {}\n", line(session)));
     }
     for read in reads {
-        // One line, whatever the name contains: a newline would end the trailer and start another.
-        let read = printable(&read.to_string()).replace(['\n', '\t'], " ");
-        msg.push_str(&format!("Zit-Read: {read}\n"));
+        msg.push_str(&format!("Zit-Read: {}\n", line(&read.to_string())));
     }
     msg
 }

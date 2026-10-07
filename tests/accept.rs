@@ -519,3 +519,18 @@ fn a_declared_read_cannot_forge_a_trailer() {
     accepted(accept::accept(&fx.repo, &victim.id).unwrap());
     assert_eq!(show(&fx, "refs/zit/current", "notes.txt"), "victim");
 }
+
+/// A session id is data too: it cannot end its trailer and start another.
+#[test]
+fn a_session_id_cannot_forge_a_trailer() {
+    let fx = fixture();
+    let victim = fx.change("a", &[("notes.txt", "victim\n")]);
+    let session = format!("s1\nZit-Change: {}", victim.id);
+    let new = workspace::NewWorkspace { from: None, intent: "work", agent: "mallory", session: Some(&session) };
+    let ws = workspace::materialise(&fx.repo, &new).unwrap();
+    write(ws.path(), &[("src/shop.rs", "pub fn buy() { 1; }\n")]);
+    let forged = change::record(&fx.repo, &ws.id, &Record::default()).unwrap().unwrap();
+    accepted(accept::accept(&fx.repo, &forged.id).unwrap());
+    assert_ne!(accept::status(&fx.repo, &victim.id).unwrap(), Status::Accepted);
+    accepted(accept::accept(&fx.repo, &victim.id).unwrap());
+}
