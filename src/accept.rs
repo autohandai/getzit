@@ -60,6 +60,9 @@ pub enum Outcome {
     Rejected(Invalid),
 }
 
+/// A step of acceptance that can refuse the change (`Err(Invalid)`) as well as fail.
+type Checked<T> = Result<std::result::Result<T, Invalid>>;
+
 /// Text-level three-way composition of two changes.
 struct Merged {
     state: Oid,
@@ -139,6 +142,80 @@ fn staleness(repo: &Repo, base: &Oid, change: &Oid, current: &Oid) -> Result<Vec
             Staleness { resource: c.resource, kind: c.kind, by: by.map(|(_, id)| id.clone()) }
         })
         .collect())
+}
+
+/// Files both sides changed since `base` that parsed on each side and do not
+/// parse in `merged`: errors the composition itself introduced.
+fn unparsable(repo: &Repo, base: &Oid, ours: &Oid, theirs: &Oid, merged: &Oid) -> Result<Vec<String>> {
+    let changed = |tip: &Oid| -> Result<std::collections::BTreeSet<String>> {
+        let out = repo.git(&["diff-tree", "-r", "--name-only", "--no-renames", base.as_str(), tip.as_str()])?;
+        Ok(out.lines().map(str::to_string).collect())
+    };
+    let both: Vec<String> = changed(ours)?.intersection(&changed(theirs)?).cloned().collect();
+    let mut objects = repo.objects()?;
+    let mut bad = Vec::new();
+    for path in both {
+        let mut errors = |rev: &Oid| -> Result<Option<bool>> {
+            Ok(objects.read(&format!("{rev}:{path}"))?.and_then(|src| crate::symbols::has_syntax_errors(&path, &src)))
+        };
+        if errors(merged)? == Some(true) && errors(ours)? == Some(false) && errors(theirs)? == Some(false) {
+            bad.push(path);
+        }
+    }
+    Ok(bad)
+}
+
+/// Compose `change` onto `current` without writing anything: staleness, the
+/// text merge, and the parse check (unless current's zit.toml turns it off).
+fn validate(repo: &Repo, change: &Oid, base: &Oid, current: &Oid, policy: &Policy) -> Checked<Merged> {
+    if !policy.allow_stale {
+        let stale = staleness(repo, base, change, current)?;
+        if !stale.is_empty() {
+            return Ok(Err(Invalid::Stale(stale)));
+        }
+    }
+    let merged = merge(repo, current, change)?;
+    if !merged.conflicts.is_empty() {
+        return Ok(Err(Invalid::Conflict(merged.conflicts)));
+    }
+    if evidence::accept_rules(repo, current)?.parse_check {
+        let bad = unparsable(repo, base, current, change, &merged.state)?;
+        if !bad.is_empty() {
+            return Ok(Err(Invalid::Error(format!("does not parse after composing: {}", bad.join(", ")))));
+        }
+    }
+    Ok(Ok(merged))
+}
+
+/// Write the compose change for a validated merge and regenerate its
+/// generated files: the candidate and its state.
+fn land(repo: &Repo, source: &Change, current: &Oid, merged: &Merged, policy: &Policy) -> Checked<(Oid, Oid)> {
+    let change = &source.id;
+    let subject = source.intent.lines().next().unwrap_or_default();
+    let linear = policy.linear || evidence::accept_rules(repo, current)?.linear;
+    let mut msg = change::message(
+        &match linear {
+            true => subject.to_string(),
+            false => format!("Compose {}: {subject}", change.short()),
+        },
+        source.summary.as_deref(),
+        &source.agent,
+        None,
+        &[],
+    );
+    if linear {
+        msg.push_str(&format!("Zit-Change: {change}\n"));
+    }
+    let parents: Vec<&Oid> = if linear { vec![current] } else { vec![current, change] };
+    let id = change::commit(repo, &merged.state, &parents, &source.agent, &msg, workspace::now())?;
+    let rules = evidence::derived(repo, &id)?;
+    if rules.is_empty() {
+        return Ok(Ok((id, merged.state.clone())));
+    }
+    Ok(match evidence::regenerate(repo, &id, &merged.state, &rules)? {
+        Ok(state) => Ok((change::commit(repo, &state, &parents, &source.agent, &msg, workspace::now())?, state)),
+        Err(failed) => Err(Invalid::Failed(vec![failed])),
+    })
 }
 
 fn no_shared_history(change: &Oid) -> Error {
@@ -242,43 +319,13 @@ pub fn accept_with(repo: &Repo, change: &Oid, policy: &Policy) -> Result<Outcome
 
         let composed = base != current;
         let (candidate, state) = if composed {
-            if !policy.allow_stale {
-                let stale = staleness(repo, &base, change, &current)?;
-                if !stale.is_empty() {
-                    return Ok(Outcome::Rejected(Invalid::Stale(stale)));
-                }
-            }
-            let merged = merge(repo, &current, change)?;
-            if !merged.conflicts.is_empty() {
-                return Ok(Outcome::Rejected(Invalid::Conflict(merged.conflicts)));
-            }
-            let subject = source.intent.lines().next().unwrap_or_default();
-            let linear = policy.linear || evidence::linear(repo, &current)?;
-            let mut msg = change::message(
-                &match linear {
-                    true => subject.to_string(),
-                    false => format!("Compose {}: {subject}", change.short()),
-                },
-                source.summary.as_deref(),
-                &source.agent,
-                None,
-                &[],
-            );
-            if linear {
-                msg.push_str(&format!("Zit-Change: {change}\n"));
-            }
-            let parents: Vec<&Oid> = if linear { vec![&current] } else { vec![&current, change] };
-            let id = change::commit(repo, &merged.state, &parents, &source.agent, &msg, workspace::now())?;
-            let rules = evidence::derived(repo, &id)?;
-            if rules.is_empty() {
-                (id, merged.state)
-            } else {
-                match evidence::regenerate(repo, &id, &merged.state, &rules)? {
-                    Ok(state) => {
-                        (change::commit(repo, &state, &parents, &source.agent, &msg, workspace::now())?, state)
-                    }
-                    Err(failed) => return Ok(Outcome::Rejected(Invalid::Failed(vec![failed]))),
-                }
+            let merged = match validate(repo, change, &base, &current, policy)? {
+                Ok(merged) => merged,
+                Err(invalid) => return Ok(Outcome::Rejected(invalid)),
+            };
+            match land(repo, &source, &current, &merged, policy)? {
+                Ok(landed) => landed,
+                Err(invalid) => return Ok(Outcome::Rejected(invalid)),
             }
         } else {
             (change.clone(), source.state.clone())

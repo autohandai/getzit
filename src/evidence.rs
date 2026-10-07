@@ -64,18 +64,39 @@ pub(crate) struct Config {
     accept: AcceptRules,
 }
 
-/// `[accept]` in zit.toml: rules for how changes land.
-#[derive(Deserialize, Default)]
+/// `[accept]` in zit.toml: rules for how changes land. Read from current,
+/// so they apply to everyone who accepts.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-struct AcceptRules {
+pub struct AcceptRules {
     /// Compose onto current as one commit, never a merge commit.
     #[serde(default)]
-    linear: bool,
+    pub linear: bool,
+    /// Refuse a composed state whose files no longer parse (default on).
+    #[serde(default = "yes")]
+    pub parse_check: bool,
+    /// How many checks of one verification may run at once (default 1).
+    #[serde(default = "one")]
+    pub jobs: usize,
 }
 
-/// Whether the state at `rev` asks for linear history.
-pub fn linear(repo: &Repo, rev: &Oid) -> Result<bool> {
-    Ok(config(repo, rev)?.accept.linear)
+fn yes() -> bool {
+    true
+}
+
+fn one() -> usize {
+    1
+}
+
+impl Default for AcceptRules {
+    fn default() -> AcceptRules {
+        AcceptRules { linear: false, parse_check: true, jobs: 1 }
+    }
+}
+
+/// The `[accept]` rules of the state at `rev`.
+pub fn accept_rules(repo: &Repo, rev: &Oid) -> Result<AcceptRules> {
+    Ok(config(repo, rev)?.accept)
 }
 
 /// How to install dependencies into a fresh checkout (`npm ci`, `uv sync`,

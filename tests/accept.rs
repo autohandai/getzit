@@ -447,6 +447,72 @@ fn edits_to_different_methods_of_one_type_compose() {
     }
 }
 
+const GO: &str = "package m\n\nfunc f() {\n\ta()\n\tb()\n\tc()\n\td()\n\te()\n}\n";
+
+/// One side wraps the body in a block, the other splits the function: each
+/// parses, git merges the text, and the result is a function inside a function.
+fn wrap_and_split(fx: &Fixture) -> (zit::change::Change, zit::change::Change) {
+    let wrap =
+        fx.change("a", &[("m.go", &GO.replace("\ta()\n", "\tif x {\n\t\ta()\n").replace("\te()\n", "\te()\n\t}\n"))]);
+    let split = fx.change("b", &[("m.go", &GO.replace("\tc()\n", "\tc()\n}\n\nfunc g() {\n"))]);
+    (wrap, split)
+}
+
+#[test]
+fn a_composed_state_that_does_not_parse_is_rejected_even_when_stale_is_allowed() {
+    let fx = Fixture::new(&[("m.go", GO)]);
+    let (wrap, split) = wrap_and_split(&fx);
+    accepted(accept::accept(&fx.repo, &wrap.id).unwrap());
+    let policy = accept::Policy { allow_stale: true, ..Default::default() };
+    let Outcome::Rejected(Invalid::Error(why)) = accept::accept_with(&fx.repo, &split.id, &policy).unwrap() else {
+        panic!("expected a parse rejection");
+    };
+    assert_eq!(why, "does not parse after composing: m.go");
+    assert_eq!(fx.repo.current().unwrap(), wrap.id);
+    assert_eq!(change::speculative(&fx.repo).unwrap(), vec![split]);
+}
+
+/// Imports are decided by text alone, so two edits there compose without being
+/// stale; the composed file must still parse.
+const COMMENTED_IMPORT: &str = "use a::A;\n/* off:\n// slow\nuse b::B;\n// end\n*/\nuse c::C;\n\npub fn f() {}\n";
+
+fn uncomment_and_annotate(fx: &Fixture) -> (zit::change::Change, zit::change::Change) {
+    let uncomment = fx.change("a", &[("m.rs", &COMMENTED_IMPORT.replace("/* off:\n", "").replace("*/\n", ""))]);
+    let annotate = fx.change("b", &[("m.rs", &COMMENTED_IMPORT.replace("use b::B;", "use b::B (see #12)"))]);
+    (uncomment, annotate)
+}
+
+#[test]
+fn the_parse_check_is_on_by_default_for_text_decided_merges() {
+    let fx = Fixture::new(&[("m.rs", COMMENTED_IMPORT)]);
+    let (uncomment, annotate) = uncomment_and_annotate(&fx);
+    accepted(accept::accept(&fx.repo, &uncomment.id).unwrap());
+    let outcome = accept::accept(&fx.repo, &annotate.id).unwrap();
+    let Outcome::Rejected(Invalid::Error(why)) = outcome else { panic!("expected a parse rejection, got {outcome:?}") };
+    assert_eq!(why, "does not parse after composing: m.rs");
+}
+
+#[test]
+fn the_parse_check_can_be_turned_off_in_zit_toml() {
+    let fx = Fixture::new(&[("m.rs", COMMENTED_IMPORT), ("zit.toml", "[accept]\nparse_check = false\n")]);
+    let (uncomment, annotate) = uncomment_and_annotate(&fx);
+    accepted(accept::accept(&fx.repo, &uncomment.id).unwrap());
+    let (_, composed) = accepted(accept::accept(&fx.repo, &annotate.id).unwrap());
+    assert!(composed);
+}
+
+/// A file that was already broken on one side is left to the checks: the
+/// compose did not introduce the error.
+#[test]
+fn a_file_one_side_could_not_parse_is_not_a_parse_rejection() {
+    let fx = Fixture::new(&[("m.go", GO)]);
+    let broken = fx.change("a", &[("m.go", &GO.replace("\ta()\n", "\ta(\n"))]);
+    let other = fx.change("b", &[("m.go", &GO.replace("\te()\n", "\te()\n\tee()\n"))]);
+    accepted(accept::accept(&fx.repo, &broken.id).unwrap());
+    let policy = accept::Policy { allow_stale: true, ..Default::default() };
+    accepted(accept::accept_with(&fx.repo, &other.id, &policy).unwrap());
+}
+
 /// Changing a method's signature still stales code that uses the type.
 #[test]
 fn a_method_signature_change_stales_users_of_the_type() {
