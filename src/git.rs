@@ -251,7 +251,13 @@ impl Repo {
         if let Ok(cur) = self.current() {
             return Ok(cur);
         }
-        let genesis = self.resolve(rev.unwrap_or("HEAD"))?;
+        let rev = rev.unwrap_or("HEAD");
+        let genesis = match self.resolve(rev) {
+            Err(Error::UnknownRevision(_)) if rev == "HEAD" => {
+                return Err(Error::msg("the repository has no commits yet; make one, then `zit init`"));
+            }
+            genesis => genesis?,
+        };
         self.git(&["update-ref", CURRENT, genesis.as_str(), ""])?;
         self.current()
     }

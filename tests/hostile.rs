@@ -114,6 +114,19 @@ fn errors_are_json_when_json_was_asked_for() {
     assert!(ran.json()["error"].as_str().unwrap().contains("unknown workspace"), "{}", ran.stdout);
 }
 
+/// `zit init` before the first commit says so, instead of "unknown revision: HEAD".
+#[test]
+fn init_with_no_commits_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("repo");
+    std::fs::create_dir(&root).unwrap();
+    common::git(&root, &["init", "-q", "-b", "main"]);
+    let cli = Cli { root, home: dir.path().join("home") };
+    let ran = cli.run(&["init"]);
+    assert_eq!(ran.code, 2);
+    assert!(ran.stderr.contains("no commits"), "{}", ran.stderr);
+}
+
 /// `zit discard A nope` must not discard A: all names are checked before anything is removed.
 #[test]
 fn discard_is_all_or_nothing() {
