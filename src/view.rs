@@ -169,6 +169,9 @@ pub fn detail_text(d: &Detail) -> String {
     for write in &d.writes {
         let _ = writeln!(out, "wrote    {write}");
     }
+    for (from, to) in &d.renames {
+        let _ = writeln!(out, "renamed  {from} -> {to}");
+    }
     for read in &c.reads {
         let _ = writeln!(out, "read     {read}");
     }

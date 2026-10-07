@@ -1,6 +1,7 @@
 mod common;
 
 use common::Fixture;
+use std::collections::BTreeMap;
 use zit::change::{self, Record};
 use zit::footprint::{self, ConflictKind, Footprint};
 use zit::resource::Resource;
@@ -9,7 +10,7 @@ use zit::workspace;
 const LIB: &str = "use std::fmt;\n\npub fn price(x: u32) -> u32 { x }\n\npub fn tax(x: u32) -> u32 { x / 10 }\n";
 
 fn fixture() -> Fixture {
-    Fixture::new(&[("src/lib.rs", LIB), ("src/shop.rs", "pub fn buy() {}\n"), ("data.json", "{}\n")])
+    Fixture::new(&[("src/lib.rs", LIB), ("src/shop.rs", "pub fn buy() {}\n"), ("data.csv", "a,b\n")])
 }
 
 fn res(items: &[&str]) -> Vec<Resource> {
@@ -68,8 +69,42 @@ fn a_deleted_file_writes_each_of_its_symbols() {
 #[test]
 fn files_without_a_grammar_are_written_whole() {
     let fx = fixture();
-    let fp = footprint_of(&fx, &[("data.json", "{\"a\": 1}\n")]);
-    assert_eq!(writes(&fp), res(&["data.json"]));
+    let fp = footprint_of(&fx, &[("data.csv", "a,b\n1,2\n")]);
+    assert_eq!(writes(&fp), res(&["data.csv"]));
+}
+
+const CARGO: &str = "[package]\nname = \"a\"\nversion = \"0.1.0\"\n\n[dependencies]\nserde = \"1\"\n";
+const PACKAGE: &str =
+    "{\n  \"name\": \"a\",\n  \"scripts\": { \"test\": \"jest\" },\n  \"dependencies\": { \"react\": \"19\" }\n}\n";
+
+/// A manifest's top-level tables (TOML) or keys (JSON) are units: only the
+/// section whose content changed is written, so edits to different sections compose.
+#[test]
+fn manifest_sections_are_units() {
+    let fx = Fixture::new(&[("Cargo.toml", CARGO), ("package.json", PACKAGE)]);
+    let deps =
+        footprint_of(&fx, &[("Cargo.toml", &CARGO.replace("serde = \"1\"\n", "serde = \"1\"\nanyhow = \"1\"\n"))]);
+    assert_eq!(writes(&deps), res(&["Cargo.toml#dependencies"]));
+    let version = footprint_of(&fx, &[("Cargo.toml", &CARGO.replace("0.1.0", "0.2.0"))]);
+    assert_eq!(writes(&version), res(&["Cargo.toml#package"]));
+    assert_eq!(kinds(&deps, &version), []);
+    let other_dep =
+        footprint_of(&fx, &[("Cargo.toml", &CARGO.replace("serde = \"1\"\n", "serde = \"1\"\ntoml = \"1\"\n"))]);
+    assert_eq!(kinds(&deps, &other_dep), [("Cargo.toml#dependencies".to_string(), ConflictKind::WriteWrite)]);
+    assert!(deps.refs.is_empty() && version.refs.is_empty(), "no reads are inferred from a manifest");
+
+    let scripts = footprint_of(&fx, &[("package.json", &PACKAGE.replace("jest", "vitest"))]);
+    assert_eq!(writes(&scripts), res(&["package.json#scripts"]));
+    let reformatted = footprint_of(
+        &fx,
+        &[("package.json", "{\"name\":\"a\",\"scripts\":{\"test\":\"jest\"},\"dependencies\":{\"react\":\"19\"}}")],
+    );
+    assert_eq!(writes(&reformatted), [], "formatting is not content");
+    let new_key =
+        footprint_of(&fx, &[("package.json", &PACKAGE.replace("\"name\"", "\"private\": true,\n  \"name\""))]);
+    assert_eq!(writes(&new_key), res(&["package.json#private"]));
+    let broken = footprint_of(&fx, &[("package.json", "{\n")]);
+    assert_eq!(writes(&broken), res(&["package.json"]), "a manifest that does not parse is one resource");
 }
 
 #[test]
@@ -85,13 +120,13 @@ fn declared_reads_of_every_change_in_range_are_included() {
     let fx = fixture();
     let base = fx.repo.current().unwrap();
     let ws = fx.workspace("agent");
-    workspace::declare_reads(&fx.repo, &ws.id, &res(&["data.json"])).unwrap();
+    workspace::declare_reads(&fx.repo, &ws.id, &res(&["data.csv"])).unwrap();
     common::write(ws.path(), &[("src/shop.rs", "pub fn buy() { 1; }\n")]);
     change::record(&fx.repo, &ws.id, &Record::default()).unwrap().unwrap();
     common::write(ws.path(), &[("src/shop.rs", "pub fn buy() { 2; }\n")]);
     let c2 = change::record(&fx.repo, &ws.id, &Record::default()).unwrap().unwrap();
     let fp = footprint::between(&fx.repo, &base, &c2.id).unwrap();
-    assert_eq!(fp.reads.iter().cloned().collect::<Vec<_>>(), res(&["data.json"]));
+    assert_eq!(fp.reads.iter().cloned().collect::<Vec<_>>(), res(&["data.csv"]));
 }
 
 fn kinds(mine: &Footprint, theirs: &Footprint) -> Vec<(String, ConflictKind)> {
@@ -130,6 +165,70 @@ fn a_declared_file_read_conflicts_with_any_write_inside_it() {
     reader.reads.insert(Resource::parse("src/lib.rs"));
     let writer = footprint_of(&fx, &[("src/lib.rs", &LIB.replace("x / 10", "x / 5"))]);
     assert_eq!(kinds(&reader, &writer), [("src/lib.rs#tax".to_string(), ConflictKind::ReadWrite)]);
+}
+
+/// Materialise, move `from` to `to` (rewriting it when `body` is given), record.
+fn rename_in(fx: &Fixture, from: &str, to: &str, body: Option<&str>) -> Footprint {
+    let base = fx.repo.current().unwrap();
+    let ws = fx.workspace("agent");
+    let (src, dst) = (ws.path().join(from), ws.path().join(to));
+    std::fs::create_dir_all(dst.parent().unwrap()).unwrap();
+    std::fs::rename(&src, &dst).unwrap();
+    if let Some(body) = body {
+        std::fs::write(&dst, body).unwrap();
+    }
+    let c = change::record(&fx.repo, &ws.id, &Record::default()).unwrap().unwrap();
+    workspace::dispose(&fx.repo, &ws.id).unwrap();
+    footprint::between(&fx.repo, &base, &c.id).unwrap()
+}
+
+#[test]
+fn a_rename_writes_only_the_units_it_changed() {
+    let fx = fixture();
+    let moved = rename_in(&fx, "src/lib.rs", "src/pricing.rs", None);
+    assert_eq!(writes(&moved), []);
+    assert_eq!(moved.renames, BTreeMap::from([("src/lib.rs".to_string(), "src/pricing.rs".to_string())]));
+    let edited = rename_in(&fx, "src/lib.rs", "src/pricing.rs", Some(&LIB.replace("x / 10", "x / 5")));
+    assert_eq!(writes(&edited), res(&["src/pricing.rs#tax"]), "a changed unit is written at the new path");
+    assert!(edited.signatures.is_empty());
+    let dropped = rename_in(
+        &fx,
+        "src/lib.rs",
+        "src/pricing.rs",
+        Some(&LIB.replace("\n\npub fn tax(x: u32) -> u32 { x / 10 }", "")),
+    );
+    assert_eq!(writes(&dropped), res(&["src/lib.rs#tax"]), "a unit the move dropped is written at the old path");
+    assert_eq!(writes(&rename_in(&fx, "data.csv", "data/all.csv", None)), []);
+    assert_eq!(writes(&rename_in(&fx, "data.csv", "data/all.csv", Some("a,b\n1,2\n"))), res(&["data/all.csv"]));
+}
+
+#[test]
+fn a_reader_of_the_old_path_sees_only_what_the_rename_changed() {
+    let fx = fixture();
+    let mut reader = footprint_of(&fx, &[("src/shop.rs", "pub fn buy() { 1; }\n")]);
+    reader.reads.insert(Resource::parse("src/lib.rs#price"));
+    let moved = rename_in(&fx, "src/lib.rs", "src/pricing.rs", None);
+    let edited =
+        rename_in(&fx, "src/lib.rs", "src/pricing.rs", Some(&LIB.replace("price(x: u32)", "price(x: u32, t: u32)")));
+    assert_eq!(kinds(&reader, &moved), []);
+    assert_eq!(kinds(&moved, &reader), []);
+    assert_eq!(kinds(&reader, &edited), [("src/pricing.rs#price".to_string(), ConflictKind::ReadWrite)]);
+    assert_eq!(kinds(&edited, &reader), [("src/pricing.rs#price".to_string(), ConflictKind::WriteRead)]);
+    reader.reads = [Resource::parse("src/lib.rs")].into();
+    assert_eq!(kinds(&reader, &moved), [], "a whole-file read of the old path");
+    assert_eq!(kinds(&reader, &edited), [("src/pricing.rs#price".to_string(), ConflictKind::ReadWrite)]);
+}
+
+#[test]
+fn a_writer_of_the_old_path_conflicts_only_with_what_the_rename_changed() {
+    let fx = fixture();
+    let writer = footprint_of(&fx, &[("src/lib.rs", &LIB.replace("x / 10", "x / 4"))]);
+    let moved = rename_in(&fx, "src/lib.rs", "src/pricing.rs", None);
+    let edited = rename_in(&fx, "src/lib.rs", "src/pricing.rs", Some(&LIB.replace("x / 10", "x / 5")));
+    assert_eq!(kinds(&writer, &moved), []);
+    assert_eq!(kinds(&moved, &writer), []);
+    assert_eq!(kinds(&writer, &edited), [("src/pricing.rs#tax".to_string(), ConflictKind::WriteWrite)]);
+    assert_eq!(kinds(&edited, &writer), [("src/lib.rs#tax".to_string(), ConflictKind::WriteWrite)]);
 }
 
 /// An attribute or doc comment belongs to the item it annotates, not to module-level code.

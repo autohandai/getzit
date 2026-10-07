@@ -32,6 +32,9 @@ enum Lang {
     Python,
     Js,
     Go,
+    Java,
+    Ruby,
+    CSharp,
 }
 
 fn language(path: &str) -> Option<(Lang, tree_sitter::Language)> {
@@ -43,6 +46,9 @@ fn language(path: &str) -> Option<(Lang, tree_sitter::Language)> {
         "ts" | "mts" | "cts" => (Lang::Js, tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
         "tsx" => (Lang::Js, tree_sitter_typescript::LANGUAGE_TSX.into()),
         "go" => (Lang::Go, tree_sitter_go::LANGUAGE.into()),
+        "java" => (Lang::Java, tree_sitter_java::LANGUAGE.into()),
+        "rb" => (Lang::Ruby, tree_sitter_ruby::LANGUAGE.into()),
+        "cs" => (Lang::CSharp, tree_sitter_c_sharp::LANGUAGE.into()),
         _ => return None,
     })
 }
@@ -56,13 +62,44 @@ fn is_comment(kind: &str) -> bool {
     matches!(kind, "line_comment" | "block_comment" | "comment")
 }
 
-fn is_import(lang: Lang, kind: &str) -> bool {
+fn is_import(lang: Lang, node: tree_sitter::Node, text: &str) -> bool {
+    let kind = node.kind();
     match lang {
         Lang::Rust => matches!(kind, "use_declaration" | "extern_crate_declaration"),
         Lang::Python => matches!(kind, "import_statement" | "import_from_statement" | "future_import_statement"),
         Lang::Js => kind == "import_statement",
         Lang::Go => kind == "import_declaration",
+        Lang::Java => kind == "import_declaration",
+        // `require 'x'` is a call like any other to the grammar.
+        Lang::CSharp => kind == "using_directive",
+        Lang::Ruby => {
+            kind == "call"
+                && node.child_by_field_name("receiver").is_none()
+                && node
+                    .child_by_field_name("method")
+                    .is_some_and(|m| matches!(&text[m.byte_range()], "require" | "require_relative" | "load"))
+        }
     }
+}
+
+/// The nodes that make up the file's top level. C# code lives inside
+/// namespace blocks, which are not units themselves: their declarations are
+/// the top level and the namespace's name is module-level code.
+fn top_level<'t>(lang: Lang, parent: tree_sitter::Node<'t>) -> Vec<tree_sitter::Node<'t>> {
+    let mut out = Vec::new();
+    let mut cursor = parent.walk();
+    for node in parent.children(&mut cursor) {
+        match (lang, node.kind()) {
+            (Lang::CSharp, "namespace_declaration") => {
+                out.extend(node.child_by_field_name("name"));
+                if let Some(body) = node.child_by_field_name("body") {
+                    out.extend(top_level(lang, body).into_iter().filter(|n| n.is_named()));
+                }
+            }
+            _ => out.push(node),
+        }
+    }
+    out
 }
 
 /// Visit `node` and every node below it.
@@ -137,7 +174,31 @@ fn methods<'t>(lang: Lang, node: tree_sitter::Node<'t>, text: &str) -> Vec<(Stri
             return node.child_by_field_name("declaration").map(|d| methods(lang, d, text)).unwrap_or_default()
         }
         (Lang::Js, "class_declaration" | "abstract_class_declaration") => {
-            (name_of(node).map(|(n, _)| n), node.child_by_field_name("body"), &["method_definition"])
+            // TypeScript's abstract methods and overload signatures are methods without a body.
+            (
+                name_of(node).map(|(n, _)| n),
+                node.child_by_field_name("body"),
+                &["method_definition", "abstract_method_signature", "method_signature"],
+            )
+        }
+        (Lang::Java, "class_declaration" | "interface_declaration" | "enum_declaration" | "record_declaration") => {
+            // An enum's methods sit after its constants, in `enum_body_declarations`.
+            let body = node.child_by_field_name("body").map(|b| {
+                let mut c = b.walk();
+                let decls = b.named_children(&mut c).find(|n| n.kind() == "enum_body_declarations");
+                decls.unwrap_or(b)
+            });
+            (name_of(node).map(|(n, _)| n), body, &["method_declaration", "constructor_declaration"])
+        }
+        (Lang::Ruby, "class" | "module") => {
+            (name_of(node).map(|(n, _)| n), node.child_by_field_name("body"), &["method", "singleton_method"])
+        }
+        (Lang::CSharp, "class_declaration" | "interface_declaration" | "struct_declaration" | "record_declaration") => {
+            (
+                name_of(node).map(|(n, _)| n),
+                node.child_by_field_name("body"),
+                &["method_declaration", "constructor_declaration"],
+            )
         }
         _ => return vec![],
     };
@@ -155,17 +216,19 @@ fn methods<'t>(lang: Lang, node: tree_sitter::Node<'t>, text: &str) -> Vec<(Stri
         .collect()
 }
 
-/// The unit's interface: its text without function bodies or comments.
-fn signature(node: tree_sitter::Node, text: &str) -> String {
+/// The unit's interface: its text without function bodies or comments, nor
+/// the ranges in `cut` (the methods that are units of their own).
+fn signature(node: tree_sitter::Node, text: &str, cut: &[std::ops::Range<usize>]) -> String {
     if is_comment(node.kind()) {
         return String::new();
     }
-    let mut cuts: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut cuts: Vec<std::ops::Range<usize>> =
+        cut.iter().filter(|c| c.start >= node.start_byte() && c.end <= node.end_byte()).cloned().collect();
     walk(node, |n| {
         let k = n.kind();
         if is_comment(k) {
             cuts.push(n.byte_range());
-        } else if k.contains("function") || k.contains("method") || k == "func_literal" {
+        } else if k.contains("function") || k.contains("method") || k.contains("constructor") || k == "func_literal" {
             if let Some(body) = n.child_by_field_name("body") {
                 cuts.push(body.byte_range());
             }
@@ -187,9 +250,8 @@ fn signature(node: tree_sitter::Node, text: &str) -> String {
 /// and no reads are inferred from it, so semantic staleness is not detected.
 pub fn unparsed_code(path: &str) -> bool {
     const CODE: &[&str] = &[
-        "java", "kt", "kts", "scala", "cs", "fs", "c", "h", "cc", "cpp", "cxx", "hpp", "hh", "m", "mm", "swift", "rb",
-        "php", "pl", "lua", "dart", "ex", "exs", "erl", "hs", "ml", "clj", "zig", "nim", "jl", "r", "sql", "sh",
-        "bash", "vue", "svelte",
+        "kt", "kts", "scala", "fs", "c", "h", "cc", "cpp", "cxx", "hpp", "hh", "m", "mm", "swift", "php", "pl", "lua",
+        "dart", "ex", "exs", "erl", "hs", "ml", "clj", "zig", "nim", "jl", "r", "sql", "sh", "bash", "vue", "svelte",
     ];
     let ext = path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
     language(path).is_none() && ext.is_some_and(|e| CODE.contains(&e.as_str()))
@@ -208,8 +270,16 @@ pub fn has_syntax_errors(path: &str, src: &[u8]) -> Option<bool> {
 /// Index `src`. `None` when the language is unsupported or the file is not
 /// UTF-8; callers then treat the file as one indivisible resource.
 pub fn index(path: &str, src: &[u8]) -> Option<FileIndex> {
-    if matches!(path.rsplit_once('.').map(|(_, ext)| ext), Some("md" | "mdx" | "markdown")) {
-        return std::str::from_utf8(src).ok().map(index_markdown);
+    match path.rsplit_once('.').map(|(_, ext)| ext) {
+        Some("md" | "mdx" | "markdown") => return std::str::from_utf8(src).ok().map(index_markdown),
+        Some("toml") => return index_manifest(toml::from_str::<toml::Table>(std::str::from_utf8(src).ok()?).ok()?),
+        Some("json") => {
+            return index_manifest(match serde_json::from_slice::<serde_json::Value>(src).ok()? {
+                serde_json::Value::Object(map) => map,
+                other => return Some(FileIndex { top: content_unit(&other.to_string()), ..FileIndex::default() }),
+            })
+        }
+        _ => {}
     }
     let (lang, grammar) = language(path)?;
     let text = std::str::from_utf8(src).ok()?;
@@ -220,24 +290,24 @@ pub fn index(path: &str, src: &[u8]) -> Option<FileIndex> {
     let mut texts: BTreeMap<Option<String>, (String, String, BTreeSet<String>)> = BTreeMap::new();
     let root = tree.root_node();
     let mut imports = BTreeSet::new();
-    let mut cursor = root.walk();
-    for node in root.children(&mut cursor) {
-        if is_import(lang, node.kind()) {
-            imported_names(node, text, &mut imports);
+    let nodes = top_level(lang, root);
+    for node in &nodes {
+        if is_import(lang, *node, text) {
+            imported_names(*node, text, &mut imports);
         }
     }
-    let mut cursor = root.walk();
     // Attributes and comments wait for the next node: they belong to the item they annotate.
     let mut leading: Vec<tree_sitter::Node> = Vec::new();
-    for node in root.children(&mut cursor) {
+    for node in nodes {
         if annotates(node.kind()) {
             leading.push(node);
             continue;
         }
-        let defs = if is_import(lang, node.kind()) { vec![] } else { definitions(lang, node, text) };
+        let import = is_import(lang, node, text);
+        let defs = if import { vec![] } else { definitions(lang, node, text) };
         // The identifier that declares a symbol is not a reference to it.
         let declared: Vec<usize> = defs.iter().filter_map(|d| d.declared_by).collect();
-        let keys: Vec<Option<String>> = match (is_import(lang, node.kind()), defs.is_empty()) {
+        let keys: Vec<Option<String>> = match (import, defs.is_empty()) {
             (true, _) => vec![Some(IMPORTS.to_string())],
             (false, true) => vec![None],
             (false, false) => defs.into_iter().map(|d| Some(d.name)).collect(),
@@ -248,7 +318,7 @@ pub fn index(path: &str, src: &[u8]) -> Option<FileIndex> {
         for (name, method, declared_by) in &methods {
             let (body, sig, refs) = texts.entry(Some(name.clone())).or_default();
             body.push_str(&text[method.byte_range()]);
-            sig.push_str(&signature(*method, text));
+            sig.push_str(&signature(*method, text, &[]));
             collect_identifiers(lang, *method, text, &[*declared_by], &imports, refs);
         }
         for key in keys {
@@ -257,10 +327,7 @@ pub fn index(path: &str, src: &[u8]) -> Option<FileIndex> {
                 let rest = without(*part, text, &cut);
                 body.push_str(&rest);
                 body.push('\n');
-                sig.push_str(&match cut.is_empty() {
-                    true => signature(*part, text),
-                    false => rest,
-                });
+                sig.push_str(&signature(*part, text, &cut));
                 sig.push('\n');
                 let mut found = BTreeSet::new();
                 collect_identifiers(lang, *part, text, &declared, &imports, &mut found);
@@ -272,7 +339,10 @@ pub fn index(path: &str, src: &[u8]) -> Option<FileIndex> {
                     }
                     let mut outside = BTreeSet::new();
                     walk(*part, |n| {
-                        if n.child_count() == 0 && !cut.iter().any(|c| c.contains(&n.start_byte())) {
+                        if n.child_count() == 0
+                            && !declared.contains(&n.id())
+                            && !cut.iter().any(|c| c.contains(&n.start_byte()))
+                        {
                             outside.insert(text[n.byte_range()].to_string());
                         }
                     });
@@ -288,7 +358,7 @@ pub fn index(path: &str, src: &[u8]) -> Option<FileIndex> {
         let (body, sig, refs) = texts.entry(None).or_default();
         body.push_str(&text[part.byte_range()]);
         body.push('\n');
-        sig.push_str(&signature(part, text));
+        sig.push_str(&signature(part, text, &[]));
         collect_identifiers(lang, part, text, &[], &imports, refs);
     }
 
@@ -301,6 +371,24 @@ pub fn index(path: &str, src: &[u8]) -> Option<FileIndex> {
             }
             None => ix.top = unit,
         }
+    }
+    Some(ix)
+}
+
+/// A unit whose interface is its whole content: prose and data.
+fn content_unit(body: &str) -> Unit {
+    let hash = crate::hash(body.as_bytes());
+    Unit { sig: hash.clone(), hash, refs: BTreeSet::new() }
+}
+
+/// A manifest (TOML, JSON): each top-level table or key is a unit named after
+/// it, hashed by its parsed content, so formatting and comments do not count
+/// and only the section whose content changed is written. Nothing is read
+/// from a manifest, and one that does not parse is one resource.
+fn index_manifest<V: std::fmt::Display>(top: impl IntoIterator<Item = (String, V)>) -> Option<FileIndex> {
+    let mut ix = FileIndex::default();
+    for (key, value) in top {
+        ix.symbols.insert(key, content_unit(&value.to_string()));
     }
     Some(ix)
 }
@@ -408,6 +496,22 @@ fn definitions(lang: Lang, node: tree_sitter::Node, text: &str) -> Vec<Def> {
         (Lang::Go, "type_declaration") => specs(node, &["type_spec", "type_alias"]),
         (Lang::Go, "const_declaration") => specs(node, &["const_spec"]),
         (Lang::Go, "var_declaration") => specs(node, &["var_spec"]),
+        (
+            Lang::Java,
+            "class_declaration"
+            | "interface_declaration"
+            | "enum_declaration"
+            | "record_declaration"
+            | "annotation_type_declaration",
+        ) => named(node),
+        (Lang::Ruby, "class" | "module" | "method" | "singleton_method") => named(node),
+        (Lang::Ruby, "assignment") => node
+            .child_by_field_name("left")
+            .filter(|n| n.kind() == "constant")
+            .map(|n| vec![Def::at(n, text)])
+            .unwrap_or_default(),
+        (Lang::CSharp, "file_scoped_namespace_declaration" | "using_directive") => vec![],
+        (Lang::CSharp, k) if k.ends_with("_declaration") => named(node),
         _ => vec![],
     }
 }
@@ -422,7 +526,7 @@ fn collect_identifiers(
 ) {
     walk(node, |n| {
         if n.child_count() == 0
-            && n.kind().ends_with("identifier")
+            && is_identifier(lang, n.kind())
             && !skip.contains(&n.id())
             && !member_of_a_value(lang, n, text, imports)
         {
@@ -431,22 +535,35 @@ fn collect_identifiers(
     });
 }
 
+/// Ruby names classes, modules and constants with `constant`, not an identifier kind.
+fn is_identifier(lang: Lang, kind: &str) -> bool {
+    kind.ends_with("identifier") || (lang == Lang::Ruby && kind == "constant")
+}
+
 /// `cache.get` names a member of a value, not the top-level `get`. A member
 /// of an imported module (`lib.price`, `fmt.Println`) is still a reference.
 fn member_of_a_value(lang: Lang, n: tree_sitter::Node, text: &str, imports: &BTreeSet<String>) -> bool {
     let Some(parent) = n.parent() else { return false };
+    let is_field = |f: &str| parent.child_by_field_name(f).map(|a| a.id()) == Some(n.id());
     let receiver = match (lang, n.kind(), parent.kind()) {
         (Lang::Rust, "field_identifier" | "shorthand_field_identifier", _) => return true,
         (Lang::Go, "field_identifier", "selector_expression") => parent.child_by_field_name("operand"),
         (Lang::Js, "property_identifier", "member_expression") => parent.child_by_field_name("object"),
-        (Lang::Python, "identifier", "attribute")
-            if parent.child_by_field_name("attribute").map(|a| a.id()) == Some(n.id()) =>
-        {
-            parent.child_by_field_name("object")
+        (Lang::Python, "identifier", "attribute") if is_field("attribute") => parent.child_by_field_name("object"),
+        (Lang::Java, "identifier", "field_access") if is_field("field") => parent.child_by_field_name("object"),
+        (Lang::Java, "identifier", "method_invocation") if is_field("name") => parent.child_by_field_name("object"),
+        (Lang::Ruby, "identifier", "call") if is_field("method") => parent.child_by_field_name("receiver"),
+        (Lang::CSharp, "identifier", "member_access_expression") if is_field("name") => {
+            parent.child_by_field_name("expression")
         }
         _ => return false,
     };
-    !receiver.is_some_and(|r| r.kind().ends_with("identifier") && imports.contains(&text[r.byte_range()]))
+    // An unqualified call (`price()`) names the top-level symbol.
+    let Some(r) = receiver else { return false };
+    // A Ruby constant receiver (`Lib.price`) is a class or module, not a value.
+    let module = matches!(r.kind(), "constant" | "scope_resolution")
+        || (r.kind().ends_with("identifier") && imports.contains(&text[r.byte_range()]));
+    !module
 }
 
 #[cfg(test)]
@@ -455,6 +572,136 @@ mod tests {
 
     fn names(ix: &FileIndex) -> Vec<&str> {
         ix.symbols.keys().map(String::as_str).collect()
+    }
+
+    #[test]
+    fn java_types_methods_and_imports_are_units() {
+        let ix = index(
+            "Shop.java",
+            b"package shop;\nimport java.util.List;\nimport shop.Util;\n/** Doc. */\n@Entity\npublic class Shop extends Base {\n  private int n = 1;\n  public Shop() { n = 2; }\n  public int price(Item it) { return lib.tax(it.cost) + Util.max(1, 2) + n; }\n  static class Inner { void f() {} }\n}\ninterface I { int price(Item it); }\nenum E { A; int f() { return 1; } }\nrecord R(int a) { int g() { return a; } }\n@interface Ann {}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            names(&ix),
+            [IMPORTS, "Ann", "E", "E::f", "I", "I::price", "R", "R::g", "Shop", "Shop::Shop", "Shop::price"]
+        );
+        let refs = &ix.symbols["Shop::price"].refs;
+        assert!(refs.contains("Util") && refs.contains("max"), "a member of an imported class: {refs:?}");
+        assert!(refs.contains("Item") && !refs.contains("cost") && !refs.contains("tax"), "{refs:?}");
+        assert!(ix.symbols["Shop"].refs.contains("Base") && ix.symbols["Shop"].refs.contains("Entity"));
+        assert!(!ix.symbols["Shop"].refs.contains("Shop"), "declaring is not referencing");
+        assert!(ix.symbols[IMPORTS].refs.contains("List"));
+        assert!(ix.top.hash != ix.symbols["Shop"].hash, "the package line is module-level code");
+    }
+
+    #[test]
+    fn ruby_classes_modules_methods_and_requires_are_units() {
+        let ix = index(
+            "shop.rb",
+            b"require 'json'\nrequire_relative 'lib'\n# The shop.\nclass Shop < Base\n  include Comparable\n  attr_reader :n\n  def initialize(n)\n    @n = n\n  end\n  def price(item)\n    Lib.tax(item.cost) + helper(n)\n  end\n  def self.build\n    new(1)\n  end\nend\nmodule Util\n  LIMIT = 3\n  def self.max(a, b); a; end\nend\ndef free(x)\n  x\nend\nLIMIT = 2\nputs 1\n",
+        )
+        .unwrap();
+        assert_eq!(
+            names(&ix),
+            [IMPORTS, "LIMIT", "Shop", "Shop::build", "Shop::initialize", "Shop::price", "Util", "Util::max", "free"]
+        );
+        let refs = &ix.symbols["Shop::price"].refs;
+        assert!(refs.contains("Lib") && refs.contains("tax"), "a module's method is a reference: {refs:?}");
+        assert!(refs.contains("helper") && !refs.contains("cost"), "a value's member is not: {refs:?}");
+        let refs = &ix.symbols["Shop"].refs;
+        assert!(refs.contains("Base") && refs.contains("Comparable") && !refs.contains("Shop"), "{refs:?}");
+        assert!(ix.top.refs.contains("puts"));
+        let a = index("shop.rb", b"require 'json'\ndef f\n  1\nend\n").unwrap();
+        let b = index("shop.rb", b"require 'yaml'\ndef f\n  1\nend\n").unwrap();
+        assert_ne!(a.symbols[IMPORTS], b.symbols[IMPORTS]);
+        assert_eq!(a.symbols["f"], b.symbols["f"]);
+    }
+
+    #[test]
+    fn ruby_interface_is_the_text_without_bodies_and_comments() {
+        let src = "# Doc.\nclass Shop\n  attr_reader :n\n  # Price.\n  def price(item)\n    n\n  end\nend\n";
+        let a = index("shop.rb", src.as_bytes()).unwrap();
+        let body = index("shop.rb", src.replace("    n\n", "    n + 1\n").as_bytes()).unwrap();
+        let docs = index("shop.rb", src.replace("Doc.", "Docs.").replace("Price.", "The price.").as_bytes()).unwrap();
+        let param = index("shop.rb", src.replace("(item)", "(item, q)").as_bytes()).unwrap();
+        let attr = index("shop.rb", src.replace(":n", ":m").as_bytes()).unwrap();
+        assert_ne!(a.symbols["Shop::price"].hash, body.symbols["Shop::price"].hash);
+        assert_eq!(a.symbols["Shop::price"].sig, body.symbols["Shop::price"].sig);
+        assert_eq!(a.symbols["Shop"], body.symbols["Shop"]);
+        assert_eq!(a.symbols["Shop"].sig, docs.symbols["Shop"].sig);
+        assert_eq!(a.symbols["Shop::price"].sig, docs.symbols["Shop::price"].sig);
+        assert_ne!(a.symbols["Shop::price"].sig, param.symbols["Shop::price"].sig);
+        assert_ne!(a.symbols["Shop"].sig, attr.symbols["Shop"].sig);
+    }
+
+    #[test]
+    fn csharp_types_methods_and_usings_are_units() {
+        let ix = index(
+            "Shop.cs",
+            b"using System;\nusing Shop.Util;\nnamespace Shop.Core\n{\n  /// <summary>Doc.</summary>\n  [Serializable]\n  public class Shop : Base, I\n  {\n    private int n = 1;\n    public int Count { get; set; }\n    public Shop() { n = 2; }\n    public int Price(Item it) => lib.Tax(it.Cost) + Util.Max(1, 2) + n;\n    public void Run() { Console.WriteLine(n); }\n  }\n  public interface I { int Price(Item it); }\n  public enum E { A, B }\n  public struct S { public int X; public int Y() => X; }\n  public record R(int A);\n  public delegate int D(int x);\n}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            names(&ix),
+            [IMPORTS, "D", "E", "I", "I::Price", "R", "S", "S::Y", "Shop", "Shop::Price", "Shop::Run", "Shop::Shop"]
+        );
+        let refs = &ix.symbols["Shop::Price"].refs;
+        assert!(refs.contains("Util") && refs.contains("Max"), "a member of a used namespace: {refs:?}");
+        assert!(refs.contains("Item") && !refs.contains("Cost") && !refs.contains("Tax"), "{refs:?}");
+        assert!(!ix.symbols["Shop::Run"].refs.contains("WriteLine"));
+        let refs = &ix.symbols["Shop"].refs;
+        assert!(refs.contains("Base") && refs.contains("Serializable") && !refs.contains("Shop"), "{refs:?}");
+        let file_scoped =
+            index("Shop.cs", b"namespace Shop.Core;\npublic class Shop { public int Price() => 1; }\n").unwrap();
+        assert_eq!(names(&file_scoped), ["Shop", "Shop::Price"]);
+        let renamed =
+            index("Shop.cs", b"namespace Shop.Next;\npublic class Shop { public int Price() => 1; }\n").unwrap();
+        assert_ne!(file_scoped.top.hash, renamed.top.hash, "the namespace is module-level code");
+        assert_eq!(file_scoped.symbols, renamed.symbols);
+    }
+
+    #[test]
+    fn csharp_interface_is_the_text_without_bodies_and_comments() {
+        let src = "namespace N {\n  /// Doc.\n  class Shop {\n    int n = 1;\n    Shop() { n = 2; }\n    /// Price.\n    int Price(Item it) { return n; }\n    int Twice(int x) => x * 2;\n  }\n}\n";
+        let a = index("Shop.cs", src.as_bytes()).unwrap();
+        let body = index("Shop.cs", src.replace("return n;", "return n + 1;").as_bytes()).unwrap();
+        let arrow = index("Shop.cs", src.replace("x * 2", "x + x").as_bytes()).unwrap();
+        let ctor = index("Shop.cs", src.replace("n = 2;", "n = 3;").as_bytes()).unwrap();
+        let docs = index("Shop.cs", src.replace("Doc.", "Docs.").replace("Price.", "The price.").as_bytes()).unwrap();
+        let param = index("Shop.cs", src.replace("Item it", "Item it, int q").as_bytes()).unwrap();
+        let field = index("Shop.cs", src.replace("int n = 1;", "long n = 1;").as_bytes()).unwrap();
+        assert_ne!(a.symbols["Shop::Price"].hash, body.symbols["Shop::Price"].hash);
+        assert_eq!(a.symbols["Shop::Price"].sig, body.symbols["Shop::Price"].sig);
+        assert_eq!(a.symbols["Shop"], body.symbols["Shop"]);
+        assert_ne!(a.symbols["Shop::Twice"].hash, arrow.symbols["Shop::Twice"].hash);
+        assert_eq!(a.symbols["Shop::Twice"].sig, arrow.symbols["Shop::Twice"].sig, "an expression body is a body");
+        assert_ne!(a.symbols["Shop::Shop"].hash, ctor.symbols["Shop::Shop"].hash);
+        assert_eq!(a.symbols["Shop::Shop"].sig, ctor.symbols["Shop::Shop"].sig);
+        assert_eq!(a.symbols["Shop"].sig, docs.symbols["Shop"].sig);
+        assert_eq!(a.symbols["Shop::Price"].sig, docs.symbols["Shop::Price"].sig);
+        assert_ne!(a.symbols["Shop::Price"].sig, param.symbols["Shop::Price"].sig);
+        assert_ne!(a.symbols["Shop"].sig, field.symbols["Shop"].sig);
+    }
+
+    #[test]
+    fn java_interface_is_the_text_without_bodies_and_comments() {
+        let src = "/** Doc. */\nclass Shop {\n  int n = 1;\n  Shop() { n = 2; }\n  /** Price. */\n  int price(Item it) { return n; }\n}\n";
+        let a = index("Shop.java", src.as_bytes()).unwrap();
+        let body = index("Shop.java", src.replace("return n;", "return n + 1;").as_bytes()).unwrap();
+        let ctor = index("Shop.java", src.replace("n = 2;", "n = 3;").as_bytes()).unwrap();
+        let docs = index("Shop.java", src.replace("Doc.", "Docs.").replace("Price.", "The price.").as_bytes()).unwrap();
+        let param = index("Shop.java", src.replace("Item it", "Item it, int q").as_bytes()).unwrap();
+        let field = index("Shop.java", src.replace("int n = 1;", "long n = 1;").as_bytes()).unwrap();
+        assert_ne!(a.symbols["Shop::price"].hash, body.symbols["Shop::price"].hash);
+        assert_eq!(a.symbols["Shop::price"].sig, body.symbols["Shop::price"].sig);
+        assert_eq!(a.symbols["Shop"], body.symbols["Shop"], "a method body is not part of its type");
+        assert_ne!(a.symbols["Shop::Shop"].hash, ctor.symbols["Shop::Shop"].hash);
+        assert_eq!(a.symbols["Shop::Shop"].sig, ctor.symbols["Shop::Shop"].sig);
+        assert_eq!(a.symbols["Shop"].sig, docs.symbols["Shop"].sig, "comments are not the interface");
+        assert_eq!(a.symbols["Shop::price"].sig, docs.symbols["Shop::price"].sig);
+        assert_ne!(a.symbols["Shop::price"].sig, param.symbols["Shop::price"].sig);
+        assert_ne!(a.symbols["Shop"].sig, field.symbols["Shop"].sig, "a field's type is interface");
+        assert_eq!(a.symbols["Shop::price"], field.symbols["Shop::price"]);
     }
 
     #[test]
@@ -593,6 +840,49 @@ mod tests {
         assert!(ix.symbols["f"].refs.contains("g"));
     }
 
+    /// Every language with classes names their methods `Class::method`.
+    #[test]
+    fn class_methods_are_units_of_their_class_in_every_language() {
+        let ix = index(
+            "a.ts",
+            b"export class Shop {\n  n = 1;\n  constructor(n: number) { this.n = n }\n  price(it: Item): number { return lib.tax(it.cost) }\n  static build() { return new Shop(1) }\n  get count() { return this.n }\n  async run() {}\n}\nexport abstract class Base { abstract run(): void; go() {} }\nexport default class Def { m() {} }\n",
+        )
+        .unwrap();
+        assert_eq!(
+            names(&ix),
+            [
+                "Base",
+                "Base::go",
+                "Base::run",
+                "Def",
+                "Def::m",
+                "Shop",
+                "Shop::build",
+                "Shop::constructor",
+                "Shop::count",
+                "Shop::price",
+                "Shop::run",
+            ]
+        );
+        assert!(ix.symbols["Shop::price"].refs.contains("Item"));
+        assert!(!ix.symbols["Shop"].refs.contains("Item"), "a method's references are the method's");
+        let ix = index(
+            "a.js",
+            b"class Shop {\n  price(it) { return it.cost }\n  static build() {}\n}\nmodule.exports = Shop;\n",
+        )
+        .unwrap();
+        assert_eq!(names(&ix), ["Shop", "Shop::build", "Shop::price"]);
+        let ix = index(
+            "a.py",
+            b"class Shop(Base):\n    n = 1\n    def __init__(self, n):\n        self.n = n\n    @staticmethod\n    def build():\n        return Shop(1)\n    async def run(self):\n        pass\n",
+        )
+        .unwrap();
+        assert_eq!(names(&ix), ["Shop", "Shop::__init__", "Shop::build", "Shop::run"]);
+        let ix = index("a.go", b"package a\ntype Shop struct{ n int }\nfunc (s Shop) Price() int { return s.n }\nfunc (s *Shop) Run() {}\n")
+            .unwrap();
+        assert_eq!(names(&ix), ["Shop", "Shop::Price", "Shop::Run"]);
+    }
+
     #[test]
     fn tsx_and_javascript_symbols() {
         let ix = index("a.tsx", b"export function App() { return <Btn/> }\n").unwrap();
@@ -632,9 +922,38 @@ mod tests {
     }
 
     #[test]
+    fn toml_tables_and_json_keys_are_units() {
+        let cargo = "[package]\nname = \"a\"\n\n[dependencies]\nserde = \"1\"\n\n[profile.release]\nlto = true\n";
+        let a = index("Cargo.toml", cargo.as_bytes()).unwrap();
+        assert_eq!(names(&a), ["dependencies", "package", "profile"]);
+        let b = index("Cargo.toml", cargo.replace("serde = \"1\"\n", "serde = \"1\"\nanyhow = \"1\"\n").as_bytes())
+            .unwrap();
+        assert_eq!(a.symbols["package"], b.symbols["package"]);
+        assert_eq!(a.symbols["profile"], b.symbols["profile"]);
+        assert_ne!(a.symbols["dependencies"], b.symbols["dependencies"]);
+        let formatted =
+            "# Build.\n[package]\nname='a'\n[dependencies]\nserde = \"1\"\n[profile]\nrelease = { lto = true }\n";
+        let c = index("Cargo.toml", formatted.as_bytes()).unwrap();
+        assert_eq!(a, c, "formatting and comments are not content");
+        assert!(a.symbols["dependencies"].refs.is_empty(), "no reads are inferred from a manifest");
+        assert!(index("Cargo.toml", b"[package\n").is_none(), "a manifest that does not parse is one resource");
+
+        let p = index("package.json", b"{\"name\": \"a\", \"scripts\": {\"test\": \"jest\"}}").unwrap();
+        assert_eq!(names(&p), ["name", "scripts"]);
+        let q = index("package.json", b"{\n  \"scripts\": {\"test\": \"vitest\"},\n  \"name\": \"a\"\n}\n").unwrap();
+        assert_eq!(p.symbols["name"], q.symbols["name"]);
+        assert_ne!(p.symbols["scripts"], q.symbols["scripts"]);
+        let list = index("a.json", b"[1, 2]").unwrap();
+        assert!(list.symbols.is_empty() && list.top != Unit::default(), "a non-object document is module-level");
+        assert!(index("a.json", b"{not json").is_none());
+    }
+
+    #[test]
     fn unsupported_or_binary_files_have_no_index() {
-        assert!(index("a.json", b"{}").is_none());
+        assert!(index("a.csv", b"a,b").is_none());
         assert!(index("Makefile", b"all:").is_none());
+        assert!(unparsed_code("Shop.kt") && !unparsed_code("Shop.java") && !unparsed_code("a.rs"));
+        assert!(!unparsed_code("shop.rb") && !unparsed_code("Shop.cs"));
         assert!(index("a.rs", &[0xff, 0xfe, 0x00]).is_none());
     }
 }
