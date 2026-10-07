@@ -146,9 +146,32 @@ pub fn materialise(repo: &Repo, new: &NewWorkspace) -> Result<Workspace> {
     materialise_at(repo, base, tree, new)
 }
 
+/// Whether workspaces of `base` live in reusable slots: `[workspace]
+/// stable_paths = true` in its `zit.toml`, or `zit.stablePaths` in git config.
+///
+/// A fresh directory per workspace means a compiled project is rebuilt by
+/// every agent, and a build directory keyed on absolute paths fills with
+/// output for paths that no longer exist. With stable paths, a workspace is
+/// `ws/slot-N`, the lowest slot not in use; when it is disposed the slot keeps
+/// its ignored files (build output, installed dependencies) and the next
+/// workspace is made there like a verification view: tracked files reset,
+/// untracked files removed, ignored files kept. The trade-off is that
+/// agents inherit each other's ignored files, stale caches included, and that
+/// the number of slots on disk grows to the largest number of workspaces ever
+/// open at once.
+pub fn stable_paths(repo: &Repo, base: &Oid) -> Result<bool> {
+    if repo.git(&["config", "--type=bool", "zit.stablePaths"]).is_ok_and(|v| v.trim() == "true") {
+        return Ok(true);
+    }
+    crate::evidence::stable_paths(repo, base)
+}
+
 /// As `materialise`, for a change whose state is already known.
 pub(crate) fn materialise_at(repo: &Repo, base: Oid, tree: Oid, new: &NewWorkspace) -> Result<Workspace> {
     fs::create_dir_all(root(repo))?;
+    if stable_paths(repo, &base)? {
+        return materialise_slot(repo, base, tree, new);
+    }
     let (id, dir) = loop {
         let id = fresh_id();
         let dir = root(repo).join(&id);
@@ -197,6 +220,87 @@ pub(crate) fn materialise_in(
 /// Load the workspace that lives in `dir`.
 pub(crate) fn open(dir: &Path) -> Result<Workspace> {
     Ok(serde_json::from_slice(&fs::read(dir.join("meta.json"))?)?)
+}
+
+/// Workspace ids of slots; a slot's directory outlives the workspace in it.
+const SLOT: &str = "slot-";
+
+/// What a disposed slot keeps of its last workspace, so the next one can
+/// move the files in place instead of starting over.
+const RETIRED: &str = "retired.json";
+
+/// Materialise in the lowest free slot, moving a retired slot's files to the
+/// state in place where it can.
+fn materialise_slot(repo: &Repo, base: Oid, tree: Oid, new: &NewWorkspace) -> Result<Workspace> {
+    use std::os::fd::AsRawFd;
+    for n in 0.. {
+        let id = format!("{SLOT}{n}");
+        let dir = root(repo).join(&id);
+        // Held while the slot is being built: a reader that finds no meta.json
+        // and cannot take the lock knows another process is making one here.
+        let lock = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(root(repo).join(format!(".{id}.lock")))?;
+        // SAFETY: `lock` is an open descriptor we own for the duration of the call.
+        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            continue;
+        }
+        if dir.join("meta.json").exists() {
+            continue;
+        }
+        if let Some(ws) = reuse_slot(repo, &dir, &base, &tree, new) {
+            return Ok(ws);
+        }
+        let _ = fs::remove_dir_all(&dir);
+        return materialise_in(repo, &dir, id, base, tree, new, new.from.is_none());
+    }
+    unreachable!("slots are unbounded")
+}
+
+/// Move a retired slot to `tree` in place: tracked files reset, untracked
+/// files removed, ignored files kept. `None` when there is no retired slot,
+/// it is damaged, or it was prepared with different dependencies.
+fn reuse_slot(repo: &Repo, dir: &Path, base: &Oid, tree: &Oid, new: &NewWorkspace) -> Option<Workspace> {
+    let retired: Workspace = serde_json::from_slice(&fs::read(dir.join(RETIRED)).ok()?).ok()?;
+    let installed = |state: &Oid| -> Option<Option<String>> {
+        crate::evidence::prepare(repo, state)
+            .ok()?
+            .map(|step| crate::evidence::prepare_key(repo, state, &step).ok())
+            .map_or(Some(None), |k| k.map(Some))
+    };
+    if installed(&retired.base_state)? != installed(tree)? {
+        return None;
+    }
+    let ws = Workspace {
+        base: base.clone(),
+        base_state: tree.clone(),
+        merge_parent: None,
+        intent: new.intent.to_string(),
+        agent: new.agent.to_string(),
+        session: new.session.map(str::to_string),
+        created: now(),
+        pid: None,
+        ..retired
+    };
+    fs::write(dir.join("git/zit-ignore"), excludes(repo, base).ok()?).ok()?;
+    run(ws.git().args(["reset", "--hard", "--quiet", base.as_str()])).ok()?;
+    run(ws.git().args(["clean", "-fd", "--quiet"])).ok()?;
+    ws.save().ok()?;
+    let _ = fs::remove_file(dir.join(RETIRED));
+    Some(ws)
+}
+
+/// Retire a slot: the workspace is gone, its files stay for the next one.
+fn retire_slot(ws: &Workspace) -> Result<()> {
+    let dir = ws.dir();
+    fs::rename(dir.join("meta.json"), dir.join(RETIRED))?;
+    for leftover in ["reads", "claims", "inflight.json", "summary.txt", "git/index.lock"] {
+        let _ = fs::remove_file(dir.join(leftover));
+    }
+    let _ = fs::remove_dir_all(dir.join("tmp"));
+    Ok(())
 }
 
 fn build(repo: &Repo, ws: &Workspace, cache_it: bool) -> Result<()> {
@@ -572,7 +676,7 @@ mod cache {
 
 pub fn get(repo: &Repo, id: &str) -> Result<Workspace> {
     // Ids are generated here; anything else (a path, say) names no workspace.
-    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_alphanumeric()) {
+    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
         return Err(Error::UnknownWorkspace(id.to_string()));
     }
     let meta = fs::read(root(repo).join(id).join("meta.json")).map_err(|_| Error::UnknownWorkspace(id.to_string()))?;
@@ -598,9 +702,13 @@ pub fn containing(repo: &Repo, cwd: &Path) -> Option<Workspace> {
     get(repo, rel.components().next()?.as_os_str().to_str()?).ok()
 }
 
-/// Delete the view. Recorded changes are unaffected.
+/// Delete the view. Recorded changes are unaffected. A slot keeps its
+/// files for the next workspace made there (see [`stable_paths`]).
 pub fn dispose(repo: &Repo, id: &str) -> Result<()> {
     let ws = get(repo, id)?;
+    if id.starts_with(SLOT) {
+        return retire_slot(&ws);
+    }
     fs::remove_dir_all(ws.dir())?;
     Ok(())
 }

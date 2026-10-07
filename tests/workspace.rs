@@ -214,6 +214,70 @@ fn ignoring_never_hides_a_tracked_file() {
     assert!(change::record(&fx.repo, &ws.id, &Record::default()).unwrap().is_some());
 }
 
+const STABLE: &[(&str, &str)] =
+    &[("zit.toml", "[workspace]\nstable_paths = true\n"), (".gitignore", "target/\n"), ("src/a.rs", "fn a() {}\n")];
+
+/// With stable paths, a disposed workspace's slot is reused at the same path:
+/// ignored files (a build directory) survive, tracked files are reset,
+/// untracked leftovers are removed.
+#[test]
+fn stable_paths_reuse_a_slot_and_keep_its_ignored_files() {
+    both_with(STABLE, |fx| {
+        let first = fx.workspace("claude");
+        let path = first.path().to_path_buf();
+        assert!(path.ends_with("ws/slot-0/tree"), "{}", path.display());
+        assert_eq!(first.id, "slot-0");
+        write(&path, &[("target/out.bin", "built"), ("src/a.rs", "fn edited() {}\n"), ("junk.txt", "x")]);
+        workspace::dispose(&fx.repo, &first.id).unwrap();
+        assert!(workspace::list(&fx.repo).unwrap().is_empty(), "a disposed slot is not a workspace");
+
+        let second = fx.workspace("codex");
+        assert_eq!(second.path(), path, "the slot is reused");
+        assert_eq!(fs::read_to_string(path.join("target/out.bin")).unwrap(), "built", "ignored files survive");
+        assert_eq!(fs::read_to_string(path.join("src/a.rs")).unwrap(), "fn a() {}\n", "tracked files are reset");
+        assert!(!path.join("junk.txt").exists(), "untracked leftovers are removed");
+        assert_eq!(git(&path, &["status", "--porcelain"]), "");
+        assert!(!workspace::is_dirty(&fx.repo, &second).unwrap());
+        assert_eq!(second.agent, "codex");
+
+        // A live slot is never reused; the next one is taken.
+        let third = fx.workspace("pi");
+        assert!(third.path().ends_with("ws/slot-1/tree"), "{}", third.path().display());
+        let listed: Vec<String> = workspace::list(&fx.repo).unwrap().into_iter().map(|w| w.id).collect();
+        assert_eq!(listed, ["slot-0", "slot-1"]);
+        assert_eq!(workspace::get(&fx.repo, "slot-0").unwrap().agent, "codex");
+    });
+}
+
+/// A reused slot moves to the state asked for, including a different change.
+#[test]
+fn a_reused_slot_holds_the_state_asked_for() {
+    let fx = Fixture::new(STABLE);
+    let c = fx.change("claude", &[("src/new.rs", "fn n() {}\n")]);
+    let ws = fx.workspace_from(Some(&c.id), "codex");
+    assert_eq!(ws.id, "slot-0", "the slot a recorded change freed");
+    assert_eq!(ws.base, c.id);
+    assert_eq!(fs::read_to_string(ws.path().join("src/new.rs")).unwrap(), "fn n() {}\n");
+    write(ws.path(), &[("src/a.rs", "fn b() {}\n")]);
+    let c2 = change::record(&fx.repo, &ws.id, &Record::default()).unwrap().unwrap();
+    assert_eq!(c2.parents, vec![c.id]);
+}
+
+/// The git setting `zit.stablePaths` turns stable paths on without touching the project.
+#[test]
+fn stable_paths_can_be_set_in_git_config() {
+    let fx = Fixture::new(FILES);
+    git(&fx.root(), &["config", "zit.stablePaths", "true"]);
+    let ws = fx.workspace("claude");
+    assert_eq!(ws.id, "slot-0");
+    assert!(ws.path().ends_with("ws/slot-0/tree"), "{}", ws.path().display());
+}
+
+fn both_with(files: &[(&str, &str)], test: impl Fn(Fixture)) {
+    test(Fixture::with_strategy(files, Strategy::Clone));
+    test(Fixture::with_strategy(files, Strategy::Checkout));
+}
+
 /// Coding agents keep session state in the project; it is the agent's, not the work.
 #[test]
 fn agents_session_state_is_never_recorded() {

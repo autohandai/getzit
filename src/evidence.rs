@@ -62,6 +62,23 @@ pub(crate) struct Config {
     prepare: Option<Prepare>,
     #[serde(default)]
     accept: AcceptRules,
+    #[serde(default)]
+    workspace: WorkspaceRules,
+}
+
+/// `[workspace]` in zit.toml: how workspaces are laid out.
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceRules {
+    /// Materialise into reusable numbered slots (`ws/slot-N`) instead of
+    /// fresh directories; see [`crate::workspace::stable_paths`].
+    #[serde(default)]
+    stable_paths: bool,
+}
+
+/// Whether the state at `rev` asks for stable workspace paths.
+pub(crate) fn stable_paths(repo: &Repo, rev: &Oid) -> Result<bool> {
+    Ok(config(repo, rev)?.workspace.stable_paths)
 }
 
 /// `[accept]` in zit.toml: rules for how changes land.
