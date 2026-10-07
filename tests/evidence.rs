@@ -203,6 +203,68 @@ fn a_check_that_hangs_fails_at_its_timeout() {
     assert!(!again[0].cached, "a timed-out result was remembered as the state's verdict");
 }
 
+/// Two one-second checks: `[accept] jobs = 2` runs them side by side.
+#[test]
+fn checks_run_concurrently_up_to_jobs() {
+    let two_sleeps = "[[check]]\nname = \"a\"\nrun = \"sleep 1\"\n\n[[check]]\nname = \"b\"\nrun = \"sleep 1\"\n";
+    let timed = |config: &str| {
+        let fx = Fixture::new(&[("zit.toml", config), ("a.txt", "a\n")]);
+        let started = std::time::Instant::now();
+        let verdicts = evidence::verify(&fx.repo, &fx.repo.current().unwrap(), false).unwrap();
+        assert!(verdicts.iter().all(|v| v.evidence.passed && !v.cached));
+        started.elapsed()
+    };
+    let sequential = timed(two_sleeps);
+    let parallel = timed(&format!("[accept]\njobs = 2\n\n{two_sleeps}"));
+    eprintln!("two 1s checks: sequential {sequential:?}, jobs = 2 {parallel:?}");
+    assert!(sequential >= std::time::Duration::from_secs(2), "{sequential:?}");
+    assert!(parallel < std::time::Duration::from_millis(1900), "{parallel:?}");
+}
+
+/// `serial = true` on a check keeps it alone: nothing else runs while it does.
+#[test]
+fn a_serial_check_never_runs_alongside_another() {
+    let scratch = tempfile::tempdir().unwrap().keep();
+    let log = scratch.join("log");
+    let check = |name: &str, serial: bool| {
+        format!(
+            "[[check]]\nname = \"{name}\"\nrun = \"echo start {name} >> {log}; sleep 0.5; echo end {name} >> {log}\"\nserial = {serial}\n\n",
+            log = log.display()
+        )
+    };
+    let config = format!("[accept]\njobs = 3\n\n{}{}{}", check("a", false), check("s", true), check("b", false));
+    let fx = Fixture::new(&[("zit.toml", &config), ("a.txt", "a\n")]);
+    let verdicts = evidence::verify(&fx.repo, &fx.repo.current().unwrap(), false).unwrap();
+    let names: Vec<&str> = verdicts.iter().map(|v| v.evidence.check.as_str()).collect();
+    assert_eq!(names, ["a", "s", "b"], "verdicts keep the declared order");
+    let lines = runs(&log);
+    let at = |line: &str| lines.iter().position(|l| l == line).unwrap();
+    assert_eq!(at("start s") + 1, at("end s"), "nothing ran while the serial check did: {lines:?}");
+    assert!(at("end s") < at("start b") && at("end a") < at("start s"), "{lines:?}");
+}
+
+/// What a parallel verification stores is what a sequential one would look up.
+#[test]
+fn parallel_evidence_is_the_same_evidence() {
+    let checks = "[[check]]\nname = \"one\"\nrun = \"cat a/x\"\ninputs = [\"a\"]\n\n[[check]]\nname = \"two\"\nrun = \"test -f a/missing\"\ninputs = [\"a\"]\n";
+    let fx = Fixture::new(&[("zit.toml", &format!("[accept]\njobs = 2\n\n{checks}")), ("a/x", "from a\n")]);
+    let parallel = evidence::verify(&fx.repo, &fx.repo.current().unwrap(), false).unwrap();
+    assert!(parallel.iter().all(|v| !v.cached));
+
+    // The same checks and inputs, sequential: every key is already known.
+    let sequential_state = fx.change("agent", &[("zit.toml", checks)]);
+    let sequential = evidence::verify(&fx.repo, &sequential_state.id, false).unwrap();
+    assert!(sequential.iter().all(|v| v.cached), "{sequential:?}");
+    let essentials = |vs: &[evidence::Verdict]| {
+        vs.iter()
+            .map(|v| (v.evidence.check.clone(), v.evidence.key.clone(), v.evidence.passed, v.evidence.exit_code))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(essentials(&parallel), essentials(&sequential));
+    assert_eq!(essentials(&parallel)[0].2, true);
+    assert_eq!(essentials(&parallel)[1].2, false);
+}
+
 /// A misplaced or misspelt key in zit.toml is an error, not silently ignored.
 #[test]
 fn an_unknown_key_in_zit_toml_is_an_error() {
