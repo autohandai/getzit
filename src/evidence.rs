@@ -378,7 +378,7 @@ pub(crate) fn verify_state(
     governing: Option<&Oid>,
     rerun: bool,
 ) -> Result<Vec<Verdict>> {
-    let mut view = None;
+    let mut view: Option<View> = None;
     let mut verdicts = Vec::new();
     let mut run_all = || -> Result<()> {
         for (check, key, found) in lookup_keyed(repo, state, governing)? {
@@ -386,8 +386,10 @@ pub(crate) fn verify_state(
                 verdicts.push(Verdict { evidence, cached: true });
                 continue;
             }
-            if view.is_none() {
-                view = Some(View::acquire(repo, change, state)?);
+            match &view {
+                // A check may have edited the view; the next one sees the state.
+                Some(view) => view.restore()?,
+                None => view = Some(View::acquire(repo, change, state)?),
             }
             let workspace = &view.as_ref().expect("acquired above").workspace;
             verdicts.push(Verdict { evidence: execute(repo, &check, key, state, change, workspace)?, cached: false });
@@ -457,6 +459,13 @@ impl View {
             return Ok(View { workspace, _lock: lock });
         }
         unreachable!("the last view is waited for")
+    }
+
+    /// Put the view back at its state: tracked edits and untracked files go, ignored files stay.
+    fn restore(&self) -> Result<()> {
+        crate::git::run(self.workspace.git().args(["reset", "--hard", "--quiet"]))?;
+        crate::git::run(self.workspace.git().args(["clean", "-fd", "--quiet"]))?;
+        Ok(())
     }
 
     /// Move an existing view to `change` in place; `None` if there is none or it is damaged.

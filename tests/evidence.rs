@@ -142,6 +142,18 @@ fn verification_reuses_one_view_keeping_ignored_build_output_and_nothing_else() 
     assert!(workspace::list(&fx.repo).unwrap().is_empty(), "the view is not a workspace anyone has to manage");
 }
 
+/// Evidence says what the state does, so every check sees the state, not
+/// what an earlier check (a formatter, a code generator) left in the view.
+#[test]
+fn a_check_sees_the_state_not_what_an_earlier_check_wrote() {
+    let config = "[[check]]\nname = \"fmt\"\nrun = \"echo formatted > a.txt && echo junk > b.txt\"\n\n\
+                  [[check]]\nname = \"test\"\nrun = \"test ! -e b.txt && grep -q one a.txt\"\n";
+    let fx = Fixture::new(&[("zit.toml", config), ("a.txt", "one\n")]);
+    let verdicts = evidence::verify(&fx.repo, &fx.repo.current().unwrap(), false).unwrap();
+    assert!(verdicts[0].evidence.passed);
+    assert!(verdicts[1].evidence.passed, "{}", verdicts[1].evidence.output);
+}
+
 #[test]
 fn concurrent_verifications_do_not_share_a_view() {
     let scratch = tempfile::tempdir().unwrap().keep();
