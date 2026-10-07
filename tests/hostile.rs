@@ -127,6 +127,28 @@ fn init_with_no_commits_says_so() {
     assert!(ran.stderr.contains("no commits"), "{}", ran.stderr);
 }
 
+/// A prefix shared by several objects is reported as ambiguous, not unknown.
+#[test]
+fn an_ambiguous_prefix_is_reported_as_such() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = cli(dir.path());
+    // Enough blobs for two to share a 4-hex-digit prefix (p > 0.9999).
+    let files: Vec<(String, String)> = (0..1500).map(|i| (format!("blob/{i}"), format!("blob {i}\n"))).collect();
+    let files: Vec<(&str, &str)> = files.iter().map(|(p, b)| (p.as_str(), b.as_str())).collect();
+    write(&cli.root, &files);
+    common::git(&cli.root, &["add", "-A"]);
+    let ids = common::git(&cli.root, &["ls-files", "-s"]);
+    let mut seen = std::collections::HashSet::new();
+    let prefix = ids
+        .lines()
+        .map(|l| &l.split_whitespace().nth(1).unwrap()[..4])
+        .find(|p| !seen.insert(*p))
+        .expect("a shared prefix");
+    let ran = cli.run(&["show", prefix, "--json"]);
+    assert_eq!(ran.code, 2);
+    assert!(ran.json()["error"].as_str().unwrap().contains("ambiguous"), "{}", ran.stdout);
+}
+
 /// `zit discard A nope` must not discard A: all names are checked before anything is removed.
 #[test]
 fn discard_is_all_or_nothing() {
