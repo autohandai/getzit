@@ -26,10 +26,11 @@ sequenceDiagram
 
 ## Install
 
-From a checkout of this repository:
+From npm, or from a checkout of this repository:
 
 ```sh
-pi install /path/to/getzit/integrations/pi      # all projects (~/.pi/agent/settings.json)
+pi install npm:pi-zit                           # all projects (~/.pi/agent/settings.json)
+pi install /path/to/getzit/integrations/pi      # or from a checkout
 pi -e /path/to/getzit/integrations/pi           # this run only
 ```
 

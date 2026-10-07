@@ -3,15 +3,15 @@ title: Roadmap
 description: What is planned for Zit, why, and what each item depends on. Plans, not promises; no dates.
 ---
 
-Each item below is a known gap: it is listed on [Limits](/limits) or came out of the review in `feedback/review-01.md`. Status is as of 0.1.0. Nothing here is built until it says so, and the order is the current priority, not a schedule.
+Each item below is a known gap: it is listed on [Limits](/limits) or came out of the review in `feedback/review-01.md`. Status is as of <ZitVersion />. Nothing here is built until it says so, and the order is the current priority, not a schedule.
 
 ## Distribution
 
 | Item | Why | Status |
 |---|---|---|
-| Publish the crate, so `cargo install zit` works | The repository is private; today Zit installs from a release binary or from git with access | Ready (`cargo publish --dry-run` passes); needs a crates.io token |
-| Release Autohand Code with `autohand --zit` | Built and run end to end on Autohand Code's `zit-sessions` branch | Waiting on Autohand Code's release |
-| Publish the Pi extension (`pi install npm:pi-zit`) | Installs from a local path today | Package ready; needs npm publishing, and a live model turn to verify the tools |
+| Publish the crate, so `cargo install zit` works | Install without access to the repository | Done: `zit` 0.1.1 is on [crates.io](https://crates.io/crates/zit); `cargo install zit --locked` installs it |
+| Publish the Pi extension (`pi install npm:pi-zit`) | Install without a local checkout | Done: `pi-zit` 0.1.0 is on [npm](https://www.npmjs.com/package/pi-zit). Still to do: a turn with a live model |
+| Release Autohand Code with `autohand --zit` | A whole Autohand Code session in a Zit workspace | Built and run end to end; ships in the next Autohand Code release |
 | Windows | Claude Code and Cursor run there; Zit is Unix-only (signals, `libc`) | Not started |
 
 ## Correctness

@@ -1,5 +1,7 @@
 # Zit
 
+[![crates.io](https://img.shields.io/crates/v/zit.svg)](https://crates.io/crates/zit) [![npm: pi-zit](https://img.shields.io/npm/v/pi-zit.svg?label=pi-zit)](https://www.npmjs.com/package/pi-zit) [![License: GPL-2.0-only](https://img.shields.io/badge/license-GPL--2.0--only-blue.svg)](LICENSE) [![Docs](https://img.shields.io/badge/docs-getzit.org-black.svg)](https://getzit.org)
+
 **A git extension for repositories that many developers and coding agents change at the same time.**
 
 You start an agent on a bug, another on a feature, a third on the docs, and your teammates do the same in the same repository. Zit gives each of them a disposable copy of the code that does not copy your files on disk, shows them what the others are changing, lands their work one change at a time after checking it against what landed meanwhile (and against your checks, if you declare any), and keeps each author's account of what they did and why when one is given.
@@ -7,7 +9,7 @@ You start an agent on a bug, another on a feature, a third on the docs, and your
 Your branches, history and remotes stay plain git. Teammates who never install Zit keep working as before.
 
 ```sh
-# from a release binary (see Install), or from a checkout: cargo install --path . --locked
+cargo install zit --locked     # or a release binary, see Install
 cd your-repo && git zit init
 
 git zit run --agent autohand --intent "Add a discount function to src/lib.rs" &
@@ -44,16 +46,20 @@ What it is not: a version control system, a code-review tool, a CRDT or a sandbo
 
 ## Install
 
-Take a prebuilt binary for macOS (arm64, x86_64) or Linux (x86_64, arm64) from [Releases](https://github.com/autohandai/getzit/releases), each with a SHA-256 checksum, or build from a checkout with `cargo install --path . --locked`. The crate is not on crates.io yet.
+```sh
+cargo install zit --locked     # from crates.io: installs zit and git-zit
+```
+
+Or take a prebuilt binary for macOS (arm64, x86_64) or Linux (x86_64, arm64) from [Releases](https://github.com/autohandai/getzit/releases), each with a SHA-256 checksum, or build from a checkout with `cargo install --path . --locked`. The documentation is at [getzit.org](https://getzit.org).
 
 ## Agents
 
 | Agent | How |
 |---|---|
-| Autohand Code | `git zit run --agent autohand`; `autohand --zit`, a whole session in a Zit workspace, is built on an Autohand Code branch and not released yet |
+| Autohand Code | `git zit run --agent autohand`; `autohand --zit`, a whole session in a Zit workspace, is built and ships in the next Autohand Code release |
 | Claude Code | `git zit run --agent claude`, or `zit mcp` as an MCP server |
 | Codex | `git zit run --agent codex`, or `zit mcp` |
-| Pi | `git zit run --agent pi`, or the Pi extension in [`integrations/pi`](integrations/pi) (commands tested in Pi 0.84.4; no live model turn yet) |
+| Pi | `git zit run --agent pi`, or the Pi extension: `pi install npm:pi-zit` ([`integrations/pi`](integrations/pi); commands tested in Pi 0.84.4, no live model turn yet) |
 | Anything else | `git zit run -- <command>` |
 
 ## Measured
@@ -69,7 +75,7 @@ All measured on one machine. How each number was produced, and what is not measu
 
 ## Documentation
 
-The manual is a [Blume](https://useblume.dev) site in [`docs/`](docs/) (from the repository root: `npm install && npm run dev`); start with [Zit 101](docs/tutorial.mdx). Design decisions are in [`adr/`](adr/), real-world findings in [`lessons_learnt/`](lessons_learnt/), and hostile reviews with what they changed in [`feedback/`](feedback/). Library documentation: `cargo doc --open`.
+The manual is at [getzit.org](https://getzit.org), built with [Blume](https://useblume.dev) from [`docs/`](docs/) (from the repository root: `npm install && npm run dev`); start with [Zit 101](docs/tutorial.mdx). Design decisions are in [`adr/`](adr/), real-world findings in [`lessons_learnt/`](lessons_learnt/), and hostile reviews with what they changed in [`feedback/`](feedback/). Library documentation: `cargo doc --open`.
 
 ## Contributing
 
@@ -78,3 +84,5 @@ Issues, ideas and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) 
 ## License
 
 Zit is licensed under the **GNU General Public License, version 2 only** (`GPL-2.0-only`), the same license as git. See [LICENSE](LICENSE). The Autohand Sans and Autohand Mono fonts embedded in the web view are under the SIL Open Font License 1.1 ([src/web/fonts/OFL.txt](src/web/fonts/OFL.txt)).
+
+Zit is developed and sponsored by [Autohand AI](https://autohand.ai).

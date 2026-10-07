@@ -5,6 +5,8 @@ description: Zit next to Zed's Delta (DeltaDB), Entire, GitHub merge queue, GitL
 
 Every cell below comes from the tool's own documentation, read on 5 and 6 October 2026, or from Zit's docs and tests. "Not documented" means the docs are silent, not that the feature is missing.
 
+<div className="zit-compare">
+
 | | Isolation, disk | Sees others' work in progress | Catches a semantic conflict before checks | Tests the combined result before main moves | Batching | Keeps the agent's reason | Runs without a server |
 |---|---|---|---|---|---|---|---|
 | **Zit** | Copy-on-write clone of a cached checkout (APFS; btrfs or XFS with reflink); with `[prepare]`, dependencies shared too; a checkout elsewhere | Yes, agents on one machine: claims and live write sets | Yes, by symbol and name, five languages | Yes: current's checks and the change's own | No: one at a time | Yes: the agent's final message is the commit body | Yes |
@@ -17,6 +19,8 @@ Every cell below comes from the tool's own documentation, read on 5 and 6 Octobe
 | **Claude Code worktrees** [5] | A git worktree per session: a fresh checkout, dependencies installed per worktree | Text messages between sessions | No | No | No | A one-line summary from a separate model | Yes |
 | **Cursor worktrees** [6] | A separate checkout per agent, setup such as `npm ci`; 25 per machine by default | Not documented | Not documented | No: changes are applied back into the main checkout | No | Not documented | Worktrees local; cloud agents in VMs |
 | **`git worktree` + CI** [7] | A full working tree per worktree, shared object store | No | No | Only if CI runs on the merge result | No | The commit message | Yes |
+
+</div>
 
 ## Two other takes on agents and version control
 

@@ -1,0 +1,12 @@
+/* Compared: eight columns of prose. Give each a readable width and scroll sideways,
+   with the tool names kept in view. */
+.zit-compare table { table-layout: auto; }
+.zit-compare th, .zit-compare td { min-width: 15rem; vertical-align: top; }
+.zit-compare th:first-child, .zit-compare td:first-child {
+  min-width: 9rem;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--blume-background);
+}
+.zit-compare thead th:first-child { background: var(--blume-muted); }

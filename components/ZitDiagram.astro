@@ -1,0 +1,223 @@
+---
+// An animated diagram of one round of Zit: workspaces, claims, accept, a stale refusal.
+// Inline SVG so it follows the site theme; steps advance on a timer, which stops for
+// reduced motion and can be paused or stepped by hand.
+const steps = [
+  "refs/zit/current points at S0, a git tree. Zit keeps a cached checkout of it.",
+  "Each session gets a workspace: a copy-on-write clone of that checkout (clonefile on APFS, FICLONE on btrfs and XFS). Files stay shared on disk until one is edited.",
+  "Before writing, a session claims what it will change: a file, a function or type, or a Markdown section.",
+  "A claim on something another open workspace holds is refused, naming the holder. Codex takes other work instead.",
+  "Autohand Code records its change. zit accept composes it onto current with git merge-tree, checks it against what landed since S0, and runs the checks.",
+  "Everything passed, so refs/zit/current moves from S0 to S1 by compare-and-swap.",
+  "Claude Code's change also started at S0. It composes onto S1, passes, and current moves to S2.",
+  "Codex's change calls price(), whose signature changed in S1. Git would merge it; Zit refuses it as stale before any check runs.",
+  "zit retry gives Codex a workspace on S2 with its edits applied. It fixes the call and records again.",
+];
+const ws = [
+  { y: 20, agent: "Autohand Code", n: 1 },
+  { y: 110, agent: "Claude Code", n: 2 },
+  { y: 200, agent: "Codex", n: 3 },
+];
+const gate = [
+  "merge-tree: text composes",
+  "not stale since its base",
+  "checks in zit.toml pass",
+  "CAS refs/zit/current",
+];
+const gy = (i: number) => 84 + i * 46;
+---
+<figure class="zd not-prose" data-step="0" aria-label="Animated diagram: how Zit lands concurrent changes">
+  <div class="zd-scroll">
+    <svg viewBox="0 0 760 380" role="img" aria-labelledby="zd-title">
+      <title id="zd-title">Three agents in copy-on-write workspaces claim work; zit accept lands two changes and refuses a stale one</title>
+      <defs>
+        <marker id="zd-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 8 4 0 8z" fill="currentColor" />
+        </marker>
+      </defs>
+
+      <!-- The current state and its cached checkout -->
+      <g class="zd-box">
+        <rect x="12" y="120" width="150" height="76" rx="8" />
+        <text x="26" y="145" class="zd-h">refs/zit/current</text>
+        <text x="26" y="166" class="zd-m">S0: a git tree</text>
+        <text x="26" y="184" class="zd-m zd-dim">cached checkout</text>
+      </g>
+      <text x="26" y="216" class="zd-s zd-dim zd-in" data-s="1">clone: disk blocks shared</text>
+
+      <!-- Workspaces: copy-on-write clones -->
+      {ws.map((w) => (
+        <g class="zd-in" data-s="1">
+          <path class="zd-link" d={`M162 158 C 182 158, 180 ${w.y + 37}, 198 ${w.y + 37}`} marker-end="url(#zd-arrow)" />
+          <g class="zd-box">
+            <rect x="200" y={w.y} width="240" height="76" rx="8" />
+            <text x="214" y={w.y + 22} class="zd-h">{w.agent}</text>
+            <text x="426" y={w.y + 22} class="zd-s zd-dim" text-anchor="end">workspace {w.n}</text>
+            <text x="214" y={w.y + 42} class="zd-m zd-dim">copy-on-write clone of S0</text>
+          </g>
+        </g>
+      ))}
+
+      <!-- Claims -->
+      <text x="214" y="82" class="zd-m zd-ok zd-in" data-s="2">✓ claim src/lib.rs#price</text>
+      <text x="214" y="172" class="zd-m zd-ok zd-in" data-s="2">✓ claim README.md#Usage</text>
+      <text x="214" y="262" class="zd-m zd-no zd-in" data-s="2" data-until="2">✗ lib.rs#price: workspace 1 holds it</text>
+      <text x="214" y="262" class="zd-m zd-ok zd-in" data-s="3">✓ claim src/cli.rs#main</text>
+
+      <!-- The accept gate -->
+      <g class="zd-box">
+        <rect x="478" y="20" width="270" height="256" rx="8" />
+        <text x="494" y="44" class="zd-h">zit accept</text>
+        <text x="734" y="44" class="zd-s zd-dim" text-anchor="end">one change at a time</text>
+        {gate.map((g, i) => <text x="516" y={gy(i)} class="zd-m">{g}</text>)}
+      </g>
+      <!-- Gate results, per step -->
+      <g class="zd-in" data-s="4" data-until="4">{[0, 1, 2].map((i) => <text x="496" y={gy(i)} class="zd-m zd-ok zd-tick" style={`animation-delay:${0.9 + i * 0.5}s`}>✓</text>)}</g>
+      <g class="zd-in" data-s="5" data-until="5">{[0, 1, 2, 3].map((i) => <text x="496" y={gy(i)} class="zd-m zd-ok">✓</text>)}</g>
+      <g class="zd-in" data-s="6" data-until="6">{[0, 1, 2, 3].map((i) => <text x="496" y={gy(i)} class="zd-m zd-ok zd-tick" style={`animation-delay:${0.9 + i * 0.4}s`}>✓</text>)}</g>
+      <g class="zd-in" data-s="7" data-until="7">
+        <text x="496" y={gy(0)} class="zd-m zd-ok zd-tick" style="animation-delay:.9s">✓</text>
+        <text x="496" y={gy(1)} class="zd-m zd-no zd-tick" style="animation-delay:1.4s">✗</text>
+        <text x="516" y={gy(1) + 18} class="zd-s zd-no zd-tick" style="animation-delay:1.4s">price() signature changed in S1</text>
+        <text x="496" y={gy(2)} class="zd-m zd-dim zd-tick" style="animation-delay:1.4s">–</text>
+        <text x="496" y={gy(3)} class="zd-m zd-dim zd-tick" style="animation-delay:1.4s">–</text>
+      </g>
+
+      <!-- Changes travelling to the gate -->
+      <g class="zd-packet zd-p1" data-only="4"><rect x="372" y="48" width="60" height="22" rx="11" /><text x="402" y="63" text-anchor="middle">change</text></g>
+      <g class="zd-packet zd-p2" data-only="6"><rect x="372" y="138" width="60" height="22" rx="11" /><text x="402" y="153" text-anchor="middle">change</text></g>
+      <g class="zd-packet zd-p3" data-only="7"><rect x="372" y="228" width="60" height="22" rx="11" /><text x="402" y="243" text-anchor="middle">change</text></g>
+      <path class="zd-link zd-in" data-s="8" d="M500 276 C 490 300, 460 290, 442 262" marker-end="url(#zd-arrow)" />
+      <text x="510" y="300" class="zd-m zd-in" data-s="8">zit retry: on S2, edits kept</text>
+
+      <!-- The accepted line -->
+      <path class="zd-line" d="M24 342 H 300" />
+      <circle cx="40" cy="342" r="7" class="zd-node" /><text x="40" y="366" class="zd-m" text-anchor="middle">S0</text>
+      <g class="zd-in" data-s="5"><circle cx="160" cy="342" r="7" class="zd-node" /><text x="160" y="366" class="zd-m" text-anchor="middle">S1</text></g>
+      <g class="zd-in zd-late" data-s="6"><circle cx="280" cy="342" r="7" class="zd-node" /><text x="280" y="366" class="zd-m" text-anchor="middle">S2</text></g>
+      <g class="zd-ptr"><text x="40" y="322" class="zd-m zd-acc" text-anchor="middle">current ▾</text></g>
+      <text x="318" y="346" class="zd-s zd-dim">accepted states, plain git commits</text>
+    </svg>
+  </div>
+  <figcaption>
+    <p class="zd-caption" aria-live="polite">{steps[0]}</p>
+    <div class="zd-controls">
+      <button type="button" data-act="prev" aria-label="Previous step">‹</button>
+      <button type="button" data-act="play" aria-label="Pause">Pause</button>
+      <button type="button" data-act="next" aria-label="Next step">›</button>
+      <span class="zd-count">1 / {steps.length}</span>
+      <span class="zd-note">An illustration of the mechanism, not a recording.</span>
+    </div>
+  </figcaption>
+  <script type="application/json" class="zd-steps" set:html={JSON.stringify(steps)} />
+</figure>
+
+<style>
+  .zd { margin: 1.5rem 0 2rem; color: var(--blume-foreground); }
+  .zd-scroll { overflow-x: auto; border: 1px solid var(--blume-border); border-radius: var(--blume-radius); background: var(--blume-muted); }
+  .zd svg { display: block; width: 100%; min-width: 600px; height: auto; }
+  .zd text { fill: currentColor; font-family: var(--blume-font-mono); font-size: 12.5px; }
+  .zd .zd-h { font-family: var(--blume-font-body); font-weight: 600; font-size: 14px; }
+  .zd .zd-s { font-size: 11px; }
+  .zd .zd-dim { opacity: 0.6; }
+  .zd .zd-ok, .zd .zd-acc { fill: var(--blume-accent); }
+  .zd .zd-no { fill: oklch(0.62 0.2 27); }
+  .zd-box rect { fill: var(--blume-background); stroke: var(--blume-border); stroke-width: 1.5; }
+  .zd-link, .zd-line { fill: none; stroke: currentColor; stroke-opacity: 0.45; stroke-width: 1.5; }
+  .zd-line { stroke-opacity: 0.3; stroke-width: 2; }
+  .zd-node { fill: var(--blume-accent); }
+  .zd-packet rect { fill: var(--blume-accent); }
+  .zd-packet text { fill: var(--blume-accent-foreground); font-size: 11px; }
+
+  /* Visibility by step: the script sets .on and .off */
+  .zd-in, .zd-packet { opacity: 0; transition: opacity 0.5s ease; }
+  .zd-in.on { opacity: 1; }
+  .zd-in.on.off { opacity: 0; }
+  .zd-late.on { transition-delay: 2.6s; }
+  .zd-tick { opacity: 0; animation: zd-fade 0.4s ease forwards; }
+  .zd-packet.on { opacity: 1; animation: zd-travel 1s ease-in-out forwards; }
+  .zd-ptr { transition: transform 0.8s ease; }
+  .zd[data-step="5"] .zd-ptr { transform: translateX(120px); }
+  .zd[data-step="6"] .zd-ptr, .zd[data-step="7"] .zd-ptr, .zd[data-step="8"] .zd-ptr { transform: translateX(240px); }
+  .zd[data-step="6"] .zd-ptr { transition-delay: 2.6s; }
+  @keyframes zd-travel { from { transform: translate(0, 0); } to { transform: translate(120px, var(--zd-dy, 0)); opacity: 0.0; } }
+  .zd-p1 { --zd-dy: 30px; }
+  .zd-p2 { --zd-dy: 0px; }
+  .zd-p3 { --zd-dy: -60px; }
+  @keyframes zd-fade { to { opacity: 1; } }
+
+  figcaption { margin-top: 0.75rem; }
+  .zd-caption { margin: 0; min-height: 3.2em; color: var(--blume-foreground); }
+  .zd-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 0.5rem; font-size: 0.85rem; color: var(--blume-muted-foreground); }
+  .zd-controls button { min-width: 2.25rem; padding: 0.2rem 0.6rem; border: 1px solid var(--blume-border); border-radius: var(--blume-radius); background: var(--blume-background); color: var(--blume-foreground); cursor: pointer; }
+  .zd-controls button:hover { background: var(--blume-muted); }
+  .zd-controls button:focus-visible { outline: 2px solid var(--blume-accent); outline-offset: 2px; }
+  .zd-count { font-variant-numeric: tabular-nums; }
+  .zd-note { margin-left: auto; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .zd-in, .zd-packet, .zd-ptr { transition: none; }
+    .zd-late.on, .zd[data-step="6"] .zd-ptr { transition-delay: 0s; }
+    .zd-tick { animation: none; opacity: 1; }
+    .zd-packet.on { animation: none; opacity: 0; }
+  }
+</style>
+
+<script>
+  const STEP_MS = 4200;
+  const init = () => {
+    for (const fig of document.querySelectorAll<HTMLElement>(".zd")) {
+      if (fig.dataset.ready) continue;
+      fig.dataset.ready = "1";
+      const steps: string[] = JSON.parse(fig.querySelector(".zd-steps")?.textContent ?? "[]");
+      const caption = fig.querySelector<HTMLElement>(".zd-caption")!;
+      const count = fig.querySelector<HTMLElement>(".zd-count")!;
+      const play = fig.querySelector<HTMLButtonElement>('[data-act="play"]')!;
+      const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+      let step = 0;
+      let timer: number | undefined;
+      let playing = !reduce;
+      let visible = false;
+
+      const show = (n: number) => {
+        step = (n + steps.length) % steps.length;
+        fig.dataset.step = String(step);
+        for (const el of fig.querySelectorAll<SVGElement>("[data-s]")) {
+          const from = Number(el.dataset.s);
+          const until = el.dataset.until === undefined ? Infinity : Number(el.dataset.until);
+          el.classList.toggle("on", step >= from);
+          el.classList.toggle("off", step > until);
+          // Restart tick animations when their group comes back.
+          if (step === from) for (const t of el.querySelectorAll<SVGElement>(".zd-tick")) { t.style.animationName = "none"; void t.getBoundingClientRect(); t.style.animationName = ""; }
+        }
+        for (const el of fig.querySelectorAll<SVGElement>("[data-only]")) {
+          el.classList.remove("on");
+          void el.getBoundingClientRect();
+          el.classList.toggle("on", step === Number(el.dataset.only));
+        }
+        caption.textContent = steps[step];
+        count.textContent = `${step + 1} / ${steps.length}`;
+      };
+      const schedule = () => {
+        clearTimeout(timer);
+        if (playing && visible) timer = window.setTimeout(() => { show(step + 1); schedule(); }, step === steps.length - 1 ? STEP_MS * 1.5 : STEP_MS);
+      };
+      const setPlaying = (p: boolean) => {
+        playing = p;
+        play.textContent = p ? "Pause" : "Play";
+        play.setAttribute("aria-label", p ? "Pause" : "Play");
+        schedule();
+      };
+      fig.addEventListener("click", (e) => {
+        const act = (e.target as HTMLElement).closest<HTMLElement>("[data-act]")?.dataset.act;
+        if (act === "play") setPlaying(!playing);
+        if (act === "next" || act === "prev") { show(step + (act === "next" ? 1 : -1)); setPlaying(false); }
+      });
+      new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; schedule(); }, { threshold: 0.3 }).observe(fig);
+      setPlaying(playing);
+      show(0);
+    }
+  };
+  init();
+  document.addEventListener("astro:page-load", init);
+</script>

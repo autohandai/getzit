@@ -5,6 +5,8 @@ description: Run Autohand Code, Claude Code, Codex, Pi or any other agent CLI ag
 
 Two ways in. `zit run` was run against the real CLIs on the machine this was built on: autohand 0.9.9-alpha, Claude Code 2.1.288, codex-cli 0.159.2. The Pi preset (pi 0.84.4) is tested for its command line; its live run stopped at Pi's own provider login ("API key expired"), so it has not yet recorded a change end to end.
 
+<AgentLogos />
+
 | | `zit run` | `zit mcp` |
 |---|---|---|
 | The agent needs to know about Zit | no | yes, through tools |
@@ -127,7 +129,7 @@ autohand --zit -p "Add a short Usage section to README.md" --yes
 
 It runs `zit init` if the repository has none, materialises a workspace, and works there. Before each write, its file tools ask Zit what the edit would change (`zit claim --edit`) and claim only that: the functions, types, methods or Markdown sections the edit touches, or the whole file for a new file. If another agent holds any of it, the tool writes nothing and tells the model who holds it, so the model picks other work or stops. Edits made through the shell are covered only by the instruction to run `zit claim` first; sub-agents that start their own runtime, and writes outside the workspace, are not claimed. When the session ends (normally, on Ctrl-C, or after an error) records the workspace as a change with the model's final message as its reason. `--zit` cannot be combined with `--worktree` or `--tmux`. It finds `zit` on `PATH` or through `ZIT_BIN`.
 
-Run end to end with a compiled build: a real model turn recorded a change with its reason, and the original checkout was untouched. With two sessions started on the same file, the second was refused at its write tool, wrote nothing and stopped. It is on Autohand Code's `zit-sessions` branch and not in a released version yet.
+Run end to end with a compiled build: a real model turn recorded a change with its reason, and the original checkout was untouched. With two sessions started on the same file, the second was refused at its write tool, wrote nothing and stopped. It ships in the next Autohand Code release; Autohand Code 0.9.9-alpha, the latest build checked, does not have `--zit`.
 
 ## Give the agent tools: `zit mcp`
 
@@ -176,7 +178,7 @@ Verified with the same keys passed as `-c` overrides to `codex exec`. Without th
 The Pi extension in [`integrations/pi`](https://github.com/autohandai/getzit/tree/main/integrations/pi) gives Pi the same workflow natively: `/zit <intent>` (or `pi --zit "<intent>"`) moves the session into a fresh workspace, the model gets `zit_claim`, `zit_status` and `zit_record` tools and the claim rules in its system prompt, and quitting records the work with Pi's last reply as its reason.
 
 ```sh
-pi install /path/to/getzit/integrations/pi      # npm:pi-zit once it is published
+pi install npm:pi-zit          # or a local checkout: pi install /path/to/getzit/integrations/pi
 ```
 
 Tested with Pi 0.84.4 and the real `zit` binary (17 tests, and the commands driven through Pi's RPC mode); a turn with a live model has not been run yet.
