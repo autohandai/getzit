@@ -327,6 +327,7 @@ fn execute(repo: &Repo, check: &Check, key: String, state: &Oid, change: &Oid, v
         .env("TMPDIR", view.temp_dir()?)
         .env("ZIT_CHANGE", change.as_str())
         .env("ZIT_STATE", state.as_str())
+        .envs(view.port.map(|p| ("ZIT_PORT", p.to_string())))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .process_group(0)

@@ -236,6 +236,33 @@ fn each_run_has_a_private_temp_directory_that_goes_with_the_workspace() {
     assert_eq!(status(&cli)["changes"], serde_json::json!([]), "temp files are not part of the change");
 }
 
+/// Every workspace has a TCP port of its own, so agents and checks on one machine
+/// can each start a server without colliding.
+#[test]
+fn each_workspace_has_a_port_the_agent_and_the_checks_see() {
+    let dir = tempfile::tempdir().unwrap();
+    let seen = dir.path().join("seen");
+    let config = format!(
+        "[[check]]\nname = \"port\"\nrun = \"test -n \\\"$ZIT_PORT\\\" && echo $ZIT_PORT >> {}\"\n",
+        seen.display()
+    );
+    let cli = Cli::new(dir.path(), &[("zit.toml", &config), ("a.txt", "a\n")]);
+    cli.run(&["init"]).ok();
+    let script = format!("echo $ZIT_PORT >> {}; echo b > b.txt", seen.display());
+    let ran = cli.run(&["run", "--accept", "--keep", "--json", "--", "sh", "-c", &script]).ok().json();
+    assert_eq!(ran["outcome"]["outcome"], "accepted");
+    let seen = std::fs::read_to_string(&seen).unwrap();
+    let ports: Vec<u16> = seen.lines().map(|l| l.trim().parse().expect(l)).collect();
+    assert_eq!(ports.len(), 2, "the agent and the check both saw a port: {seen:?}");
+    let s = status(&cli);
+    let ws = &s["workspaces"][0];
+    assert_eq!(ws["port"], ports[0], "{ws}");
+    assert_ne!(ports[0], ports[1], "the verification view has a port of its own");
+    let other = cli.run(&["materialise", "--json"]).ok().json();
+    assert!(other["port"].is_number());
+    assert_ne!(other["port"], ws["port"], "live workspaces never share a port");
+}
+
 /// Processes the agent left behind (a dev server, a watcher) must not keep writing while its work is recorded.
 #[test]
 fn processes_the_agent_started_are_stopped_with_it() {

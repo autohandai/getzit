@@ -36,6 +36,11 @@ pub struct Workspace {
     pub created: u64,
     /// Process that owns the view, if any (`zit run`).
     pub pid: Option<u32>,
+    /// A TCP port free when the view was made and held by no other live
+    /// workspace, exported as `$ZIT_PORT` to agents and checks. Nothing
+    /// reserves it: a program outside Zit may take it in the meantime.
+    #[serde(default)]
+    pub port: Option<u16>,
     path: PathBuf,
 }
 
@@ -133,6 +138,20 @@ pub(crate) fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
+/// A TCP port the kernel reports free, and no live workspace (or
+/// verification view) of this repository holds. `None` when none can be bound.
+fn free_port(repo: &Repo) -> Option<u16> {
+    let taken: Vec<u16> = ["ws", "verify"]
+        .iter()
+        .flat_map(|sub| fs::read_dir(repo.home().join(sub)).into_iter().flatten().flatten())
+        .filter_map(|e| open(&e.path()).ok()?.port)
+        .collect();
+    (0..16).find_map(|_| {
+        let port = std::net::TcpListener::bind(("127.0.0.1", 0)).ok()?.local_addr().ok()?.port();
+        (!taken.contains(&port)).then_some(port)
+    })
+}
+
 pub(crate) fn fresh_id() -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
@@ -207,6 +226,7 @@ pub(crate) fn materialise_in(
         session: new.session.map(str::to_string),
         created: now(),
         pid: None,
+        port: free_port(repo),
         path: dir.join("tree"),
     };
     let built = build(repo, &ws, cache_it);
@@ -282,6 +302,7 @@ fn reuse_slot(repo: &Repo, dir: &Path, base: &Oid, tree: &Oid, new: &NewWorkspac
         session: new.session.map(str::to_string),
         created: now(),
         pid: None,
+        port: free_port(repo),
         ..retired
     };
     fs::write(dir.join("git/zit-ignore"), excludes(repo, base).ok()?).ok()?;

@@ -138,6 +138,9 @@ pub fn run(repo: &Repo, opts: &Run) -> Result<Report> {
         .env("ZIT_CACHE_DIR", repo.cache_dir()?)
         .env("TMPDIR", ws.temp_dir()?)
         .stdout(Stdio::piped());
+    if let Some(port) = ws.port {
+        cmd.env("ZIT_PORT", port.to_string());
+    }
     // Headless, the agent leads its own process group, so whatever it starts is stopped with it.
     // Interactive, it must stay in the terminal's foreground group to read the terminal.
     let own_group = !interactive();
