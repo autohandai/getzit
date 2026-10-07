@@ -106,8 +106,12 @@ fn merge_text(repo: &Repo, ours: &Oid, theirs: &Oid) -> Result<Merged> {
 
 /// Why `change` cannot be composed onto `current`, given their merge base,
 /// with the accepted change responsible for each reason.
-fn staleness(repo: &Repo, base: &Oid, change: &Oid, current: &Oid) -> Result<Vec<Staleness>> {
-    let mine = footprint::between(repo, base, change)?;
+fn staleness(repo: &Repo, base: &Oid, change: &Change, current: &Oid) -> Result<Vec<Staleness>> {
+    // A change built straight on the base is the whole span: its reads are at hand.
+    let mine = match change.parents.as_slice() {
+        [parent] if parent == base => footprint::of_change(repo, base, &change.id, &change.reads)?,
+        _ => footprint::between(repo, base, &change.id)?,
+    };
     let generated = generated_paths(repo, current)?;
     let mut conflicts = mine.conflicts(&footprint::between(repo, base, current)?);
     conflicts.retain(|c| {
@@ -179,7 +183,7 @@ fn try_evaluate(repo: &Repo, change: &Change, current: &Oid) -> Result<Status> {
         return Ok(Status::Accepted);
     }
     if base != *current {
-        let stale = staleness(repo, &base, &change.id, current)?;
+        let stale = staleness(repo, &base, change, current)?;
         if !stale.is_empty() {
             return Ok(Status::Invalid(Invalid::Stale(stale)));
         }
@@ -244,7 +248,7 @@ pub fn accept_with(repo: &Repo, change: &Oid, policy: &Policy) -> Result<Outcome
         let composed = base != current;
         let (candidate, state) = if composed {
             if !policy.allow_stale {
-                let stale = staleness(repo, &base, change, &current)?;
+                let stale = staleness(repo, &base, &source, &current)?;
                 if !stale.is_empty() {
                     return Ok(Outcome::Rejected(Invalid::Stale(stale)));
                 }
@@ -270,7 +274,8 @@ pub fn accept_with(repo: &Repo, change: &Oid, policy: &Policy) -> Result<Outcome
             }
             let parents: Vec<&Oid> = if linear { vec![&current] } else { vec![&current, change] };
             let id = change::commit(repo, &merged.state, &parents, &source.agent, &msg, workspace::now())?;
-            let rules = evidence::derived(repo, &id)?;
+            // By its tree, which `merge` has read already: the same zit.toml.
+            let rules = evidence::derived(repo, &merged.state)?;
             if rules.is_empty() {
                 (id, merged.state)
             } else {
@@ -285,19 +290,23 @@ pub fn accept_with(repo: &Repo, change: &Oid, policy: &Policy) -> Result<Outcome
             (change.clone(), source.state.clone())
         };
 
-        let verdicts = evidence::verify_state(repo, &candidate, &state, Some(&current), policy.rerun)?;
+        let (verdicts, fresh) = evidence::verify_state(repo, &candidate, &state, Some(&current), policy.rerun)?;
         let failed: Vec<String> =
             verdicts.iter().filter(|v| !v.evidence.passed).map(|v| v.evidence.check.clone()).collect();
         if !failed.is_empty() {
+            evidence::keep(repo, &fresh)?;
             return Ok(Outcome::Rejected(Invalid::Failed(failed)));
         }
 
-        // Advance current and retire the speculative ref in one atomic step.
-        let landed = repo
-            .transaction(&[format!("update {CURRENT} {candidate} {current}"), format!("delete {CHANGES}/{change}")])?;
-        if landed {
+        // Advance current, retire the speculative ref and publish the fresh
+        // evidence in one atomic step.
+        let mut commands = fresh.clone();
+        commands.extend([format!("update {CURRENT} {candidate} {current}"), format!("delete {CHANGES}/{change}")]);
+        if repo.transaction(&commands)? {
             return Ok(Outcome::Accepted { current: candidate, composed, verdicts });
         }
+        // The verdicts stand whatever happened to current.
+        evidence::keep(repo, &fresh)?;
         // Someone else advanced current first: re-evaluate against the new one.
         // If current did not move, the update itself is failing (a stale
         // lock, permissions); do not spin on it.

@@ -7,6 +7,7 @@ use crate::resource::Resource;
 use crate::{symbols, Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+use std::path::Path;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Footprint {
@@ -129,19 +130,55 @@ pub(crate) fn between_states(repo: &Repo, base: &Oid, state: &Oid, reads: &[Reso
     compute(repo, base, state, Some(reads))
 }
 
-fn compute(repo: &Repo, base: &Oid, tip: &Oid, declared: Option<&[Resource]>) -> Result<Footprint> {
-    // Versioned by what is extracted; keyed by the declared reads too.
-    let declared_key = match declared {
-        None => "trailers".to_string(),
-        Some(reads) => crate::hash(reads.iter().map(|r| format!("{r}\n")).collect::<String>().as_bytes()),
-    };
-    let cache = repo.home().join("cache/footprint-v2").join(format!("{base}-{tip}-{declared_key}.json"));
-    if let Ok(bytes) = std::fs::read(&cache) {
-        if let Ok(fp) = serde_json::from_slice(&bytes) {
-            return Ok(fp);
-        }
-    }
+/// The cached part of a footprint: what the diff of two trees says, which
+/// every caller shares whatever reads it declares. Versioned by what is extracted.
+fn diff_cache(repo: &Repo, base: &Oid, tip: &Oid) -> std::path::PathBuf {
+    repo.home().join("cache/footprint-v3").join(format!("{base}-{tip}.json"))
+}
 
+fn read_cached<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
+    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+}
+
+fn write_cached<T: Serialize>(path: &Path, value: &T) {
+    if let (Some(dir), Ok(bytes)) = (path.parent(), serde_json::to_vec(value)) {
+        let _ = std::fs::create_dir_all(dir);
+        let _ = std::fs::write(path, bytes);
+    }
+}
+
+fn compute(repo: &Repo, base: &Oid, tip: &Oid, declared: Option<&[Resource]>) -> Result<Footprint> {
+    let cache = diff_cache(repo, base, tip);
+    let mut fp = match read_cached::<Footprint>(&cache) {
+        Some(fp) => fp,
+        None => {
+            let fp = diff(repo, base, tip)?;
+            write_cached(&cache, &fp);
+            fp
+        }
+    };
+    fp.reads = match declared {
+        Some(reads) => reads.iter().cloned().collect(),
+        None => {
+            // The commits of base..tip never change either.
+            let cache = cache.with_extension("reads.json");
+            match read_cached(&cache) {
+                Some(reads) => reads,
+                None => {
+                    let log = repo.git(&["log", "--format=%B", &format!("{base}..{tip}")])?;
+                    let reads: BTreeSet<Resource> =
+                        log.lines().filter_map(|l| l.strip_prefix("Zit-Read: ")).map(Resource::parse).collect();
+                    write_cached(&cache, &reads);
+                    reads
+                }
+            }
+        }
+    };
+    Ok(fp)
+}
+
+/// Writes, refs and signatures of `base..tip`, with no reads: what the two trees say.
+fn diff(repo: &Repo, base: &Oid, tip: &Oid) -> Result<Footprint> {
     let mut fp = Footprint::default();
     let diff = repo.git(&["diff-tree", "-r", "-z", "--no-renames", base.as_str(), tip.as_str()])?;
     let mut blobs = repo.objects()?;
@@ -173,18 +210,32 @@ fn compute(repo: &Repo, base: &Oid, tip: &Oid, declared: Option<&[Resource]>) ->
             fp.refs.extend(new.top.refs.iter().cloned());
         }
     }
-
-    fp.reads = match declared {
-        Some(reads) => reads.iter().cloned().collect(),
-        None => {
-            let log = repo.git(&["log", "--format=%B", &format!("{base}..{tip}")])?;
-            log.lines().filter_map(|l| l.strip_prefix("Zit-Read: ")).map(Resource::parse).collect()
-        }
-    };
-
-    if let Some(dir) = cache.parent() {
-        let _ = std::fs::create_dir_all(dir);
-        let _ = std::fs::write(&cache, serde_json::to_vec(&fp)?);
-    }
     Ok(fp)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    fn sh(cwd: &Path, script: &str) {
+        assert!(Command::new("sh").current_dir(cwd).args(["-c", script]).status().unwrap().success());
+    }
+
+    /// `of_change` (reads known) and `between` (reads from the trailers)
+    /// share one cached diff; the reads are each caller's own.
+    #[test]
+    fn the_diff_of_a_span_is_shared_but_its_reads_are_not() {
+        let dir = tempfile::tempdir().unwrap();
+        sh(dir.path(), "git init -q -b main . && printf 'fn a() {}\\n' > a.rs && git add a.rs && git -c user.name=t -c user.email=t@t commit -qm one && printf 'fn a() { 1 }\\n' > a.rs && git -c user.name=t -c user.email=t@t commit -qam 'two\n\nZit-Read: b.rs'");
+        let repo = Repo::open(dir.path(), &dir.path().join("home")).unwrap();
+        let (base, tip) = (repo.resolve("HEAD~1").unwrap(), repo.resolve("HEAD").unwrap());
+        let declared = of_change(&repo, &base, &tip, &[Resource::File("c.rs".into())]).unwrap();
+        assert!(diff_cache(&repo, &base, &tip).is_file());
+        let trailers = between(&repo, &base, &tip).unwrap();
+        assert_eq!(declared.writes, trailers.writes);
+        assert_eq!(declared.reads, [Resource::File("c.rs".into())].into_iter().collect());
+        assert_eq!(trailers.reads, [Resource::File("b.rs".into())].into_iter().collect());
+        assert_eq!(between(&repo, &base, &tip).unwrap(), trailers, "the same from the cache");
+    }
 }

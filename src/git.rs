@@ -4,10 +4,12 @@
 use crate::workspace::Strategy;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 
 pub const CURRENT: &str = "refs/zit/current";
 pub const CHANGES: &str = "refs/zit/changes";
@@ -49,7 +51,14 @@ pub struct Repo {
     pub(crate) strategy: Strategy,
     /// Extra objects to read, written somewhere other than the repository.
     alternate: Option<PathBuf>,
+    /// Content of `<id>:<path>` names read so far: an id's tree never
+    /// changes, so each is read from git once per process.
+    remembered: Arc<Mutex<HashMap<String, Option<Vec<u8>>>>>,
 }
+
+/// How many remembered objects to keep before starting over (a long-lived
+/// `zit mcp` sees many ids; each entry is one small file).
+const REMEMBER_LIMIT: usize = 4096;
 
 /// The oldest git Zit works with: `merge-tree --write-tree` arrived in 2.38.
 pub const MIN_GIT: (u32, u32) = (2, 38);
@@ -103,6 +112,11 @@ impl Drop for Trace {
             eprintln!("zit-trace {:>6.1}ms git {shown}", started.elapsed().as_secs_f64() * 1000.0);
         }
     }
+}
+
+/// A full object id, which names its content forever.
+fn is_id(rev: &str) -> bool {
+    rev.len() == 40 && rev.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// Run to completion; trimmed stdout on success.
@@ -176,7 +190,13 @@ impl Repo {
             other => other,
         };
         let key = format!("{}-{}", name.unwrap_or("repo"), crate::hash(git_dir.as_os_str().as_encoded_bytes()));
-        Ok(Repo { git_dir, home: home_root.join(key), strategy: Strategy::Clone, alternate: None })
+        Ok(Repo {
+            git_dir,
+            home: home_root.join(key),
+            strategy: Strategy::Clone,
+            alternate: None,
+            remembered: Arc::default(),
+        })
     }
 
     pub fn with_strategy(mut self, strategy: Strategy) -> Repo {
@@ -212,9 +232,10 @@ impl Repo {
         cmd
     }
 
-    /// The same repository, also reading objects from `objects`.
+    /// The same repository, also reading objects from `objects`. What it
+    /// reads from there is not remembered: those objects may be discarded.
     pub(crate) fn reading_also(&self, objects: &Path) -> Repo {
-        Repo { alternate: Some(objects.to_path_buf()), ..self.clone() }
+        Repo { alternate: Some(objects.to_path_buf()), remembered: Arc::default(), ..self.clone() }
     }
 
     /// The object store: where git writes objects for this repository.
@@ -264,7 +285,7 @@ impl Repo {
     /// Resolve any revision (id prefix, ref, `HEAD`, `current`) to a change.
     pub fn resolve(&self, rev: &str) -> Result<Oid> {
         // A full id needs no lookup; a wrong one fails where it is used.
-        if rev.len() == 40 && rev.bytes().all(|b| b.is_ascii_hexdigit()) {
+        if is_id(rev) {
             return Ok(Oid::new(rev));
         }
         if rev.starts_with('-') {
@@ -331,6 +352,48 @@ impl Repo {
         Ok(child.wait()?.success())
     }
 
+    /// The content of `name`, read once per process when `name` is
+    /// `<id>:<path>` (immutable); a name through a ref is read every time.
+    pub(crate) fn read_immutable(&self, name: &str) -> Result<Option<Vec<u8>>> {
+        Ok(self.read_immutable_all(std::slice::from_ref(&name.to_string()))?.pop().expect("one answer per name"))
+    }
+
+    /// As `read_immutable` for several names, in their order, with at most
+    /// one `cat-file` session for all the names not remembered yet.
+    pub(crate) fn read_immutable_all(&self, names: &[String]) -> Result<Vec<Option<Vec<u8>>>> {
+        let mut found: Vec<Option<Option<Vec<u8>>>> = vec![None; names.len()];
+        {
+            let remembered = self.remembered.lock().expect("not poisoned");
+            for (name, slot) in names.iter().zip(&mut found) {
+                if let Some(known) = remembered.get(name) {
+                    *slot = Some(known.clone());
+                }
+            }
+        }
+        if found.iter().any(Option::is_none) {
+            let mut objects = self.objects()?;
+            let mut remembered = self.remembered.lock().expect("not poisoned");
+            for (name, slot) in names.iter().zip(&mut found) {
+                if slot.is_none() {
+                    let content = objects.read(name)?;
+                    if name.split_once(':').is_some_and(|(rev, _)| is_id(rev)) {
+                        if remembered.len() >= REMEMBER_LIMIT {
+                            remembered.clear();
+                        }
+                        remembered.insert(name.clone(), content.clone());
+                    }
+                    *slot = Some(content);
+                }
+            }
+        }
+        Ok(found.into_iter().map(|slot| slot.expect("filled above")).collect())
+    }
+
+    #[cfg(test)]
+    fn remembered(&self) -> usize {
+        self.remembered.lock().expect("not poisoned").len()
+    }
+
     /// Open a session for reading many objects with one process.
     pub(crate) fn objects(&self) -> Result<Objects> {
         let mut child =
@@ -387,6 +450,28 @@ impl Drop for Objects {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sh(cwd: &Path, script: &str) {
+        assert!(Command::new("sh").current_dir(cwd).args(["-c", script]).status().unwrap().success());
+    }
+
+    #[test]
+    fn only_content_named_by_an_id_is_remembered() {
+        let dir = tempfile::tempdir().unwrap();
+        sh(
+            dir.path(),
+            "git init -q -b main . && echo one > f && git add f && git -c user.name=t -c user.email=t@t commit -qm one",
+        );
+        let repo = Repo::open(dir.path(), &dir.path().join("home")).unwrap();
+        let first = repo.resolve("HEAD").unwrap();
+        assert_eq!(repo.read_immutable(&format!("{first}:f")).unwrap().as_deref(), Some(&b"one\n"[..]));
+        assert_eq!(repo.read_immutable("HEAD:f").unwrap().as_deref(), Some(&b"one\n"[..]));
+        sh(dir.path(), "echo two > f && git -c user.name=t -c user.email=t@t commit -qam two");
+        assert_eq!(repo.read_immutable("HEAD:f").unwrap().as_deref(), Some(&b"two\n"[..]), "a ref moves");
+        assert_eq!(repo.read_immutable(&format!("{first}:f")).unwrap().as_deref(), Some(&b"one\n"[..]));
+        assert_eq!(repo.read_immutable(&format!("{first}:missing")).unwrap(), None);
+        assert_eq!(repo.remembered(), 2, "the two names under an id; nothing under HEAD");
+    }
 
     #[test]
     fn a_dead_batch_process_is_an_error_not_a_missing_object() {

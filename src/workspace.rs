@@ -210,7 +210,8 @@ fn build(repo: &Repo, ws: &Workspace, cache_it: bool) -> Result<()> {
     fs::write(admin.join("commondir"), format!("{}\n", repo.git_dir().display()))?;
     fs::write(admin.join("gitdir"), format!("{}\n", dir.join("tree/.git").display()))?;
     fs::write(dir.join("tree/.git"), format!("gitdir: {}\n", admin.display()))?;
-    fs::write(admin.join("zit-ignore"), excludes(repo, &ws.base)?)?;
+    // By the state, whose zit.toml populate() has read already.
+    fs::write(admin.join("zit-ignore"), excludes(repo, &ws.base_state)?)?;
     let _ = fs::remove_file(dir.join("zit-ignore"));
     ws.save()
 }

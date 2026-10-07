@@ -177,6 +177,27 @@ fn usage_trailers(usage: &Usage) -> String {
     out
 }
 
+/// The git settings a commit needs, in one call: `user.name`, `user.email`,
+/// `commit.gpgsign`. The last value of a repeated key wins, as in git.
+fn committer_settings(repo: &Repo) -> std::collections::HashMap<String, String> {
+    let out = repo.git(&["config", "-z", "--get-regexp", r"^(user\.name|user\.email|commit\.gpgsign)$"]);
+    out.unwrap_or_default()
+        .split('\0')
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| match entry.split_once('\n') {
+            Some((key, value)) => (key.to_string(), value.to_string()),
+            // A key with no `=` in the config file: git reads it as true.
+            None => (entry.to_string(), "true".to_string()),
+        })
+        .collect()
+}
+
+/// A boolean as git reads it: `true`, `yes`, `on` or a non-zero number, in any case.
+fn git_bool(value: &str) -> bool {
+    let value = value.trim();
+    matches!(value.to_ascii_lowercase().as_str(), "true" | "yes" | "on") || value.parse::<i64>().is_ok_and(|n| n != 0)
+}
+
 /// Write a change object. It is not referenced yet: `keep` it as a
 /// speculative change, or make it current.
 pub(crate) fn commit(repo: &Repo, state: &Oid, parents: &[&Oid], agent: &str, message: &str, time: u64) -> Result<Oid> {
@@ -187,12 +208,11 @@ pub(crate) fn commit(repo: &Repo, state: &Oid, parents: &[&Oid], agent: &str, me
     let email = format!("{}@zit", agent.replace(|c: char| c.is_whitespace() || c == '<' || c == '>', "-"));
     let date = format!("@{time} +0000");
     // The agent wrote it; the person running Zit committed it, and signs it if git is set to.
-    let setting = |key: &str| repo.git(&["config", key]).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    let settings = committer_settings(repo);
+    let setting = |key: &str| settings.get(key).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
     let committer = setting("user.name").unwrap_or_else(|| "zit".into());
     let committer_email = setting("user.email").unwrap_or_else(|| "zit@localhost".into());
-    // As git reads it: any boolean spelling (true, yes, on, 1).
-    let sign = repo.git(&["config", "--type=bool", "commit.gpgsign"]).is_ok_and(|v| v.trim() == "true");
-    if sign {
+    if settings.get("commit.gpgsign").is_some_and(|v| git_bool(v)) {
         args.push("-S".to_string());
     }
     let env = [
@@ -261,4 +281,19 @@ pub fn record(repo: &Repo, workspace: &str, opts: &Record) -> Result<Option<Chan
 pub fn discard(repo: &Repo, id: &Oid) -> Result<()> {
     repo.git(&["update-ref", "-d", &format!("{CHANGES}/{id}")])?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::git_bool;
+
+    #[test]
+    fn booleans_are_read_as_git_reads_them() {
+        for yes in ["true", "yes", "on", "1", "TRUE", "Yes", " on ", "-1"] {
+            assert!(git_bool(yes), "{yes:?}");
+        }
+        for no in ["false", "no", "off", "0", "", "maybe"] {
+            assert!(!git_bool(no), "{no:?}");
+        }
+    }
 }
