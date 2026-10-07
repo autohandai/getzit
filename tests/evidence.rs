@@ -99,6 +99,18 @@ fn input_paths_are_normalised_before_they_are_looked_up() {
     assert!(!evidence::verify(&fx.repo, &c.id, false).unwrap()[0].cached, "a changed input must not reuse evidence");
 }
 
+/// `git ls-tree` does not glob, so a pattern would address nothing and the
+/// evidence would be reused whatever the matching files became.
+#[test]
+fn an_input_pattern_is_refused() {
+    let fx = Fixture::new(&[
+        ("zit.toml", "[[check]]\nname = \"x\"\nrun = \"true\"\ninputs = [\"src/*.rs\"]\n"),
+        ("src/a.rs", "fn a() {}\n"),
+    ]);
+    let err = evidence::verify(&fx.repo, &fx.repo.current().unwrap(), false).unwrap_err().to_string();
+    assert!(err.contains("src/*.rs"), "{err}");
+}
+
 #[test]
 fn an_input_outside_the_state_is_refused() {
     let fx = Fixture::new(&[("zit.toml", "[[check]]\nname = \"x\"\nrun = \"true\"\ninputs = [\"../x\"]\n")]);

@@ -216,6 +216,11 @@ fn normalise(input: &str) -> Result<String> {
     if parts.contains(&"..") {
         return Err(Error::msg(format!("zit.toml: input `{input}` is outside the state")));
     }
+    // `ls-tree` takes paths, not patterns: a glob would address nothing and
+    // the evidence would never expire.
+    if input.contains(['*', '?']) {
+        return Err(Error::msg(format!("zit.toml: input `{input}` is a pattern; inputs are paths")));
+    }
     Ok(parts.join("/"))
 }
 
