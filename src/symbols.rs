@@ -174,7 +174,12 @@ fn methods<'t>(lang: Lang, node: tree_sitter::Node<'t>, text: &str) -> Vec<(Stri
             return node.child_by_field_name("declaration").map(|d| methods(lang, d, text)).unwrap_or_default()
         }
         (Lang::Js, "class_declaration" | "abstract_class_declaration") => {
-            (name_of(node).map(|(n, _)| n), node.child_by_field_name("body"), &["method_definition"])
+            // TypeScript's abstract methods and overload signatures are methods without a body.
+            (
+                name_of(node).map(|(n, _)| n),
+                node.child_by_field_name("body"),
+                &["method_definition", "abstract_method_signature", "method_signature"],
+            )
         }
         (Lang::Java, "class_declaration" | "interface_declaration" | "enum_declaration" | "record_declaration") => {
             // An enum's methods sit after its constants, in `enum_body_declarations`.
@@ -797,6 +802,49 @@ mod tests {
         .unwrap();
         assert_eq!(names(&ix), [IMPORTS, "C", "E", "I", "T", "f", "k", "m"]);
         assert!(ix.symbols["f"].refs.contains("g"));
+    }
+
+    /// Every language with classes names their methods `Class::method`.
+    #[test]
+    fn class_methods_are_units_of_their_class_in_every_language() {
+        let ix = index(
+            "a.ts",
+            b"export class Shop {\n  n = 1;\n  constructor(n: number) { this.n = n }\n  price(it: Item): number { return lib.tax(it.cost) }\n  static build() { return new Shop(1) }\n  get count() { return this.n }\n  async run() {}\n}\nexport abstract class Base { abstract run(): void; go() {} }\nexport default class Def { m() {} }\n",
+        )
+        .unwrap();
+        assert_eq!(
+            names(&ix),
+            [
+                "Base",
+                "Base::go",
+                "Base::run",
+                "Def",
+                "Def::m",
+                "Shop",
+                "Shop::build",
+                "Shop::constructor",
+                "Shop::count",
+                "Shop::price",
+                "Shop::run",
+            ]
+        );
+        assert!(ix.symbols["Shop::price"].refs.contains("Item"));
+        assert!(!ix.symbols["Shop"].refs.contains("Item"), "a method's references are the method's");
+        let ix = index(
+            "a.js",
+            b"class Shop {\n  price(it) { return it.cost }\n  static build() {}\n}\nmodule.exports = Shop;\n",
+        )
+        .unwrap();
+        assert_eq!(names(&ix), ["Shop", "Shop::build", "Shop::price"]);
+        let ix = index(
+            "a.py",
+            b"class Shop(Base):\n    n = 1\n    def __init__(self, n):\n        self.n = n\n    @staticmethod\n    def build():\n        return Shop(1)\n    async def run(self):\n        pass\n",
+        )
+        .unwrap();
+        assert_eq!(names(&ix), ["Shop", "Shop::__init__", "Shop::build", "Shop::run"]);
+        let ix = index("a.go", b"package a\ntype Shop struct{ n int }\nfunc (s Shop) Price() int { return s.n }\nfunc (s *Shop) Run() {}\n")
+            .unwrap();
+        assert_eq!(names(&ix), ["Shop", "Shop::Price", "Shop::Run"]);
     }
 
     #[test]
