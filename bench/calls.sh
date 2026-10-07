@@ -13,11 +13,13 @@ printf '#!/bin/sh\n[ -n "$GIT_COUNT_LOG" ] && echo "$*" >> "$GIT_COUNT_LOG"\nexe
 chmod +x "$dir/git"
 export ZIT_HOME="$dir/home" ZIT_GIT="$dir/git"
 git init -q -b main . && git config user.name b && git config user.email b@b
-for i in $(seq 1 400); do printf 'def f%s(x):\n    return x + %s\n' "$i" "$i" > "m$i.py"; done
+# 400 modules of 40 functions each (about 2 KB), so parsing is a real cost.
+module() { local m="$1" op="$2"; for f in $(seq 1 40); do printf 'def f%s_%s(x, y):\n    """Function %s of module %s."""\n    return helper(x) %s %s\n\n' "$m" "$f" "$f" "$m" "$op" "$f"; done; }
+for i in $(seq 1 400); do module "$i" + > "m$i.py"; done
 printf '[[check]]\nname = "ok"\nrun = "true"\n' > zit.toml
 git add -A && git commit -qm base && "$zit" init >/dev/null
 ws() { "$zit" materialise --agent "$1" --json | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d["id"], d["path"])'; }
-edit() { local path="$1" from="$2"; for i in $(seq "$from" $((from + files - 1))); do printf 'def f%s(x):\n    return x * %s\n' "$i" "$i" > "$path/m$i.py"; done; }
+edit() { local path="$1" from="$2"; for i in $(seq "$from" $((from + files - 1))); do module "$i" '*' > "$path/m$i.py"; done; }
 timed() { # name, command...: prints every git process started and the wall time
   local name="$1"; shift
   local log="$dir/$name.calls" s e
@@ -29,7 +31,7 @@ timed() { # name, command...: prints every git process started and the wall time
   sed -E 's/^--git-dir [^ ]+ //; s/^(-c [^ ]+ )+//' "$log" | cut -c1-70 | sed 's/^/    /'
 }
 read -r a apath < <(ws a); edit "$apath" 1
-read -r b bpath < <(ws b); edit "$bpath" 101
+read -r b bpath < <(ws b); edit "$bpath" $((files + 1))
 timed "record ($files files)" "$zit" record --workspace "$a" --dispose
 ca=$(cat "$dir/record ($files files).out")
 "$zit" record --workspace "$b" --dispose >/dev/null

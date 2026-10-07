@@ -104,16 +104,36 @@ const MAX_PARSE_BYTES: usize = 1 << 20;
 
 const NULL_OID: &str = "0000000000000000000000000000000000000000";
 
-fn index_blob(blobs: &mut Objects, path: &str, mode: &str, oid: &str) -> Result<Option<symbols::FileIndex>> {
+/// One side of a changed path, as read from the object store.
+enum Blob {
+    /// The path does not exist on this side.
+    Absent,
+    /// A symlink, a submodule or a file too large to parse: one resource.
+    Opaque,
+    Text(Vec<u8>),
+}
+
+fn read_blob(blobs: &mut Objects, mode: &str, oid: &str) -> Result<Blob> {
     if oid == NULL_OID {
-        return Ok(Some(symbols::FileIndex::default()));
+        return Ok(Blob::Absent);
     }
     if !mode.starts_with("100") {
-        return Ok(None); // symlink or submodule
+        return Ok(Blob::Opaque);
     }
     let body = blobs.read(oid)?.ok_or_else(|| Error::msg(format!("git object {oid} is missing")))?;
-    Ok(if body.len() > MAX_PARSE_BYTES { None } else { symbols::index(path, &body) })
+    Ok(if body.len() > MAX_PARSE_BYTES { Blob::Opaque } else { Blob::Text(body) })
 }
+
+fn index_blob(path: &str, blob: &Blob) -> Option<symbols::FileIndex> {
+    match blob {
+        Blob::Absent => Some(symbols::FileIndex::default()),
+        Blob::Opaque => None,
+        Blob::Text(body) => symbols::index(path, body),
+    }
+}
+
+/// Changes touching at least this many files are parsed on several threads.
+const PARALLEL_PARSE_FROM: usize = 8;
 
 /// The footprint of `base..tip`. Pure in its arguments, so cached.
 pub fn between(repo: &Repo, base: &Oid, tip: &Oid) -> Result<Footprint> {
@@ -181,15 +201,25 @@ fn compute(repo: &Repo, base: &Oid, tip: &Oid, declared: Option<&[Resource]>) ->
 fn diff(repo: &Repo, base: &Oid, tip: &Oid) -> Result<Footprint> {
     let mut fp = Footprint::default();
     let diff = repo.git(&["diff-tree", "-r", "-z", "--no-renames", base.as_str(), tip.as_str()])?;
+    // Read every blob through one session, then parse them all at once.
     let mut blobs = repo.objects()?;
+    let mut changed: Vec<(&str, Blob, Blob)> = Vec::new();
     let mut fields = diff.split('\0');
     while let (Some(meta), Some(path)) = (fields.next(), fields.next()) {
         let meta: Vec<&str> = meta.trim_start_matches(':').split(' ').collect();
         let [old_mode, new_mode, old_oid, new_oid, _status] = meta[..] else {
             return Err(Error::msg(format!("unexpected diff-tree record: {meta:?}")));
         };
-        let old = index_blob(&mut blobs, path, old_mode, old_oid)?;
-        let new = index_blob(&mut blobs, path, new_mode, new_oid)?;
+        changed.push((path, read_blob(&mut blobs, old_mode, old_oid)?, read_blob(&mut blobs, new_mode, new_oid)?));
+    }
+    drop(blobs);
+    let index = |(path, old, new): &(&str, Blob, Blob)| (index_blob(path, old), index_blob(path, new));
+    let indexed = match changed.len() >= PARALLEL_PARSE_FROM {
+        true => crate::api::parallel(&changed, index),
+        false => changed.iter().map(index).collect(),
+    };
+    for ((path, _, _), (old, new)) in changed.iter().zip(indexed) {
+        let path = *path;
         let (Some(old), Some(new)) = (old, new) else {
             fp.writes.insert(Resource::File(path.to_string()));
             continue;
@@ -237,5 +267,22 @@ mod tests {
         assert_eq!(declared.reads, [Resource::File("c.rs".into())].into_iter().collect());
         assert_eq!(trailers.reads, [Resource::File("b.rs".into())].into_iter().collect());
         assert_eq!(between(&repo, &base, &tip).unwrap(), trailers, "the same from the cache");
+    }
+
+    /// Files of a large change are parsed on several threads; every symbol
+    /// of every file is still accounted for, whichever thread saw it.
+    #[test]
+    fn a_change_to_many_files_is_indexed_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let many = |body: &str| (1..=40).map(|i| format!("printf '{body}' > m{i}.py")).collect::<Vec<_>>().join(" && ");
+        sh(dir.path(), &format!("git init -q -b main . && {} && git add -A && git -c user.name=t -c user.email=t@t commit -qm one && {} && git -c user.name=t -c user.email=t@t commit -qam two", many("def a():\\n    return 1\\n\\ndef b():\\n    return 2\\n"), many("def a():\\n    return helper(1)\\n\\ndef b():\\n    return 2\\n\\ndef c():\\n    return 3\\n")));
+        let repo = Repo::open(dir.path(), &dir.path().join("home")).unwrap();
+        let (base, tip) = (repo.resolve("HEAD~1").unwrap(), repo.resolve("HEAD").unwrap());
+        let fp = between(&repo, &base, &tip).unwrap();
+        let expected: BTreeSet<Resource> =
+            (1..=40).flat_map(|i| ["a", "c"].map(|s| Resource::Symbol(format!("m{i}.py"), s.to_string()))).collect();
+        assert_eq!(fp.writes, expected);
+        assert_eq!(fp.refs, ["helper".to_string()].into_iter().collect());
+        assert_eq!(fp.signatures.len(), 40, "one new symbol per file");
     }
 }
