@@ -22,6 +22,9 @@ pub struct Check {
     /// Seconds before the check is stopped and counted as failed. Default 1800.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout: Option<u64>,
+    /// Never run alongside another check, whatever `[accept] jobs` allows.
+    #[serde(default)]
+    pub serial: bool,
 }
 
 /// How long a check may run when `zit.toml` does not say.
@@ -81,18 +84,39 @@ pub(crate) fn stable_paths(repo: &Repo, rev: &Oid) -> Result<bool> {
     Ok(config(repo, rev)?.workspace.stable_paths)
 }
 
-/// `[accept]` in zit.toml: rules for how changes land.
-#[derive(Deserialize, Default)]
+/// `[accept]` in zit.toml: rules for how changes land. Read from current,
+/// so they apply to everyone who accepts.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-struct AcceptRules {
+pub struct AcceptRules {
     /// Compose onto current as one commit, never a merge commit.
     #[serde(default)]
-    linear: bool,
+    pub linear: bool,
+    /// Refuse a composed state whose files no longer parse (default on).
+    #[serde(default = "yes")]
+    pub parse_check: bool,
+    /// How many checks of one verification may run at once (default 1).
+    #[serde(default = "one")]
+    pub jobs: usize,
 }
 
-/// Whether the state at `rev` asks for linear history.
-pub fn linear(repo: &Repo, rev: &Oid) -> Result<bool> {
-    Ok(config(repo, rev)?.accept.linear)
+fn yes() -> bool {
+    true
+}
+
+fn one() -> usize {
+    1
+}
+
+impl Default for AcceptRules {
+    fn default() -> AcceptRules {
+        AcceptRules { linear: false, parse_check: true, jobs: 1 }
+    }
+}
+
+/// The `[accept]` rules of the state at `rev`.
+pub fn accept_rules(repo: &Repo, rev: &Oid) -> Result<AcceptRules> {
+    Ok(config(repo, rev)?.accept)
 }
 
 /// How to install dependencies into a fresh checkout (`npm ci`, `uv sync`,
@@ -143,8 +167,13 @@ pub fn prepare(repo: &Repo, rev: &Oid) -> Result<Option<Prepare>> {
 
 /// Identifies an install: the command and the content of its inputs.
 pub fn prepare_key(repo: &Repo, rev: &Oid, prepare: &Prepare) -> Result<String> {
-    let as_check =
-        Check { name: "prepare".into(), run: prepare.run.clone(), inputs: prepare.inputs.clone(), timeout: None };
+    let as_check = Check {
+        name: "prepare".into(),
+        run: prepare.run.clone(),
+        inputs: prepare.inputs.clone(),
+        timeout: None,
+        serial: false,
+    };
     Ok(keys(repo, rev, std::slice::from_ref(&as_check))?.remove(0))
 }
 
@@ -275,7 +304,12 @@ fn lookup_keyed(repo: &Repo, state: &Oid, governing: Option<&Oid>) -> Result<Vec
 
 /// Existing evidence for each check of a state. Runs nothing.
 pub fn lookup(repo: &Repo, state: &Oid) -> Result<Vec<(Check, Option<Evidence>)>> {
-    Ok(lookup_keyed(repo, state, None)?.into_iter().map(|(check, _, found)| (check, found)).collect())
+    lookup_with(repo, state, None)
+}
+
+/// As `lookup`, with a governing revision's checks applying too.
+pub(crate) fn lookup_with(repo: &Repo, state: &Oid, governing: Option<&Oid>) -> Result<Vec<(Check, Option<Evidence>)>> {
+    Ok(lookup_keyed(repo, state, governing)?.into_iter().map(|(check, _, found)| (check, found)).collect())
 }
 
 /// This clone's record of the evidence it produced. Evidence refs travel
@@ -381,7 +415,13 @@ fn execute(repo: &Repo, check: &Check, key: String, state: &Oid, change: &Oid, v
 /// Produce evidence for every check of a change's state, running only
 /// those with no evidence yet (or all of them when `rerun`).
 pub fn verify(repo: &Repo, change: &Oid, rerun: bool) -> Result<Vec<Verdict>> {
-    verify_state(repo, change, &repo.tree_of(change)?, None, rerun)
+    verify_only(repo, change, rerun, &[])
+}
+
+/// As `verify`, for the checks named in `only` (all of them when empty).
+/// A name no check has is an error, and nothing runs.
+pub fn verify_only(repo: &Repo, change: &Oid, rerun: bool, only: &[String]) -> Result<Vec<Verdict>> {
+    verify_state(repo, change, &repo.tree_of(change)?, None, rerun, only)
 }
 
 pub(crate) fn verify_state(
@@ -390,32 +430,93 @@ pub(crate) fn verify_state(
     state: &Oid,
     governing: Option<&Oid>,
     rerun: bool,
+    only: &[String],
 ) -> Result<Vec<Verdict>> {
-    let mut view = None;
-    let mut verdicts = Vec::new();
-    let mut run_all = || -> Result<()> {
-        for (check, key, found) in lookup_keyed(repo, state, governing)? {
-            if let (Some(evidence), false) = (found, rerun) {
-                verdicts.push(Verdict { evidence, cached: true });
-                continue;
-            }
-            if view.is_none() {
-                view = Some(View::acquire(repo, change, state)?);
-            }
-            let workspace = &view.as_ref().expect("acquired above").workspace;
-            verdicts.push(Verdict { evidence: execute(repo, &check, key, state, change, workspace)?, cached: false });
+    let mut keyed = lookup_keyed(repo, state, governing)?;
+    if !only.is_empty() {
+        let declared: Vec<&str> = keyed.iter().map(|(c, _, _)| c.name.as_str()).collect();
+        if let Some(unknown) = only.iter().find(|name| !declared.contains(&name.as_str())) {
+            return Err(Error::msg(format!("no check named `{unknown}`; declared: {}", declared.join(", "))));
         }
-        Ok(())
+        keyed.retain(|(c, _, _)| only.contains(&c.name));
+    }
+    let mut verdicts: Vec<Option<Verdict>> = vec![None; keyed.len()];
+    let mut pending = Vec::new();
+    for (i, (check, key, found)) in keyed.into_iter().enumerate() {
+        match (found, rerun) {
+            (Some(evidence), false) => verdicts[i] = Some(Verdict { evidence, cached: true }),
+            _ => pending.push((i, check, key)),
+        }
+    }
+    let outcome = match pending.is_empty() {
+        true => Ok(()),
+        false => {
+            // The gate's own rules say how many checks may run at once.
+            let jobs = accept_rules(repo, governing.unwrap_or(state))?.jobs.max(1);
+            let view = View::acquire(repo, change, state)?;
+            run_checks(repo, pending, jobs, state, change, &view.workspace, &mut verdicts)
+        }
     };
-    let outcome = run_all();
     // Keep what was learned before anything else can fail. A check that timed out or was
     // killed (exit code -1) says nothing lasting about the state, so it is not kept.
     let fresh: Vec<_> =
-        verdicts.iter().filter(|v| !v.cached && v.evidence.exit_code != -1).map(|v| &v.evidence).collect();
+        verdicts.iter().flatten().filter(|v| !v.cached && v.evidence.exit_code != -1).map(|v| &v.evidence).collect();
     let stored = store(repo, &fresh);
     outcome?;
     stored?;
-    Ok(verdicts)
+    Ok(verdicts.into_iter().flatten().collect())
+}
+
+/// Run `pending` checks in one view, up to `jobs` at once, in declared order.
+/// A `serial` check waits for the others to finish and runs alone. Results
+/// land in `verdicts` at each check's position; the first error is returned
+/// once every started check has finished.
+fn run_checks(
+    repo: &Repo,
+    pending: Vec<(usize, Check, String)>,
+    jobs: usize,
+    state: &Oid,
+    change: &Oid,
+    view: &Workspace,
+    verdicts: &mut [Option<Verdict>],
+) -> Result<()> {
+    use std::sync::{Condvar, Mutex};
+    let done: Mutex<Vec<(usize, Result<Evidence>)>> = Mutex::new(Vec::new());
+    let running = (Mutex::new(0usize), Condvar::new());
+    let wait_until = |at_most: usize| {
+        let mut n = running.0.lock().unwrap_or_else(|e| e.into_inner());
+        while *n > at_most {
+            n = running.1.wait(n).unwrap_or_else(|e| e.into_inner());
+        }
+        n
+    };
+    std::thread::scope(|s| {
+        for (i, check, key) in pending {
+            let serial = check.serial;
+            // Room for one more; a serial check needs the view to itself.
+            let mut n = wait_until(if serial { 0 } else { jobs - 1 });
+            *n += 1;
+            drop(n);
+            let (done, running) = (&done, &running);
+            s.spawn(move || {
+                let result = execute(repo, &check, key, state, change, view);
+                done.lock().unwrap_or_else(|e| e.into_inner()).push((i, result));
+                *running.0.lock().unwrap_or_else(|e| e.into_inner()) -= 1;
+                running.1.notify_all();
+            });
+            if serial {
+                drop(wait_until(0));
+            }
+        }
+    });
+    let mut first_error = None;
+    for (i, result) in done.into_inner().unwrap_or_else(|e| e.into_inner()) {
+        match result {
+            Ok(evidence) => verdicts[i] = Some(Verdict { evidence, cached: false }),
+            Err(e) => first_error = first_error.or(Some(e)),
+        }
+    }
+    first_error.map_or(Ok(()), Err)
 }
 
 /// How many states can be verified at the same time; further ones wait.
@@ -434,6 +535,8 @@ struct View {
 impl View {
     fn acquire(repo: &Repo, change: &Oid, state: &Oid) -> Result<View> {
         use std::os::fd::AsRawFd;
+        // Moving a view in place writes files too.
+        crate::clean::require_free_space(repo)?;
         let root = repo.home().join("verify");
         std::fs::create_dir_all(&root)?;
         for slot in 0..MAX_VIEWS {

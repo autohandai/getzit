@@ -340,6 +340,7 @@ pub(crate) fn materialise_in(
     if !new.agent.chars().any(char::is_alphanumeric) {
         return Err(Error::msg(format!("agent name `{}` must contain a letter or digit", new.agent)));
     }
+    crate::clean::require_free_space(repo)?;
     let ws = Workspace {
         id,
         base,

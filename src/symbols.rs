@@ -195,6 +195,16 @@ pub fn unparsed_code(path: &str) -> bool {
     language(path).is_none() && ext.is_some_and(|e| CODE.contains(&e.as_str()))
 }
 
+/// Whether `src` has syntax errors, by the grammar for `path`'s language.
+/// `None` for a language without a grammar or a file that is not UTF-8.
+pub fn has_syntax_errors(path: &str, src: &[u8]) -> Option<bool> {
+    let (_, grammar) = language(path)?;
+    let text = std::str::from_utf8(src).ok()?;
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&grammar).ok()?;
+    Some(parser.parse(text, None)?.root_node().has_error())
+}
+
 /// Index `src`. `None` when the language is unsupported or the file is not
 /// UTF-8; callers then treat the file as one indivisible resource.
 pub fn index(path: &str, src: &[u8]) -> Option<FileIndex> {

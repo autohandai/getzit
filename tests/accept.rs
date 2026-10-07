@@ -447,6 +447,307 @@ fn edits_to_different_methods_of_one_type_compose() {
     }
 }
 
+/// A check that leaves a mark each time it runs.
+fn counting_check(scratch: &std::path::Path) -> (String, std::path::PathBuf) {
+    let log = scratch.join("runs.log");
+    (format!("[[check]]\nname = \"t\"\nrun = \"echo run >> {}\"\n", log.display()), log)
+}
+
+fn run_count(log: &std::path::Path) -> usize {
+    fs::read_to_string(log).unwrap_or_default().lines().count()
+}
+
+fn change_with_intent(fx: &Fixture, agent: &str, intent: &str, files: &[(&str, &str)]) -> change::Change {
+    let ws = fx.workspace(agent);
+    write(ws.path(), files);
+    let record = Record { intent: Some(intent.into()), ..Default::default() };
+    let c = change::record(&fx.repo, &ws.id, &record).unwrap().unwrap();
+    workspace::dispose(&fx.repo, &ws.id).unwrap();
+    c
+}
+
+#[test]
+fn a_batch_composes_every_change_checks_once_and_moves_current_once() {
+    let scratch = tempfile::tempdir().unwrap();
+    let (config, log) = counting_check(scratch.path());
+    let fx = Fixture::new(&[("zit.toml", &config), ("a.txt", "-\n"), ("b.txt", "-\n"), ("c.txt", "-\n")]);
+    let a = change_with_intent(&fx, "a", "Change a", &[("a.txt", "A\n")]);
+    let b = change_with_intent(&fx, "b", "Change b", &[("b.txt", "B\n")]);
+    let c = change_with_intent(&fx, "c", "Change c", &[("c.txt", "C\n")]);
+
+    let ids = [a.id.clone(), b.id.clone(), c.id.clone()];
+    let outcome = accept::accept_batch(&fx.repo, &ids, &accept::Policy::default()).unwrap();
+    let accept::BatchOutcome::Accepted { current, landed, skipped, verdicts } = outcome else {
+        panic!("expected the batch to land, got {outcome:?}");
+    };
+    assert_eq!(landed, ids);
+    assert!(skipped.is_empty());
+    assert_eq!(fx.repo.current().unwrap(), current);
+    assert_eq!(run_count(&log), 1, "the checks ran once, on the combined state");
+    assert_eq!(verdicts.len(), 1);
+    for file in ["a.txt", "b.txt", "c.txt"] {
+        assert_eq!(show(&fx, current.as_str(), file), file[..1].to_uppercase());
+    }
+    assert!(change::speculative(&fx.repo).unwrap().is_empty());
+
+    // Each change is its own step of history, with its reason.
+    let history = change::accepted(&fx.repo, 10).unwrap();
+    let intents: Vec<&str> = history.iter().map(|c| c.intent.as_str()).collect();
+    assert_eq!(intents.len(), 4, "{intents:?}");
+    assert!(intents[0].ends_with(": Change c") && intents[1].ends_with(": Change b"), "{intents:?}");
+    assert_eq!(&intents[2..], ["Change a", "genesis"]);
+    assert_eq!(history[0].parents[1], c.id, "the compose of c has c as its second parent");
+    assert_eq!(history[1].parents[1], b.id);
+    assert_eq!(history[2].id, a.id, "the first change was built on current: a fast-forward");
+}
+
+#[test]
+fn a_batch_skips_what_is_stale_or_conflicts_and_says_why() {
+    let fx = fixture();
+    let callee = fx.change("claude", &[("src/lib.rs", &LIB.replace("price(x: u32)", "price(x: u32, t: u32)"))]);
+    let caller = fx.change("codex", &[("src/shop.rs", CALLER)]);
+    let note = fx.change("gemini", &[("notes.txt", "edited\n")]);
+
+    let ids = [callee.id.clone(), caller.id.clone(), note.id.clone()];
+    let outcome = accept::accept_batch(&fx.repo, &ids, &accept::Policy::default()).unwrap();
+    let accept::BatchOutcome::Accepted { landed, skipped, .. } = outcome else { panic!("{outcome:?}") };
+    assert_eq!(landed, [callee.id.clone(), note.id.clone()]);
+    assert_eq!(skipped.len(), 1);
+    assert_eq!(skipped[0].change, caller.id);
+    let Invalid::Stale(why) = &skipped[0].reason else { panic!("{:?}", skipped[0].reason) };
+    assert_eq!(why[0].resource.to_string(), "src/lib.rs#price");
+    assert_eq!(why[0].by.as_ref(), Some(&callee.id), "stale against what landed earlier in the batch");
+    assert_eq!(change::speculative(&fx.repo).unwrap(), vec![caller], "a skipped change stays in the graph");
+}
+
+#[test]
+fn a_batch_lands_nothing_when_the_combined_state_fails_a_check() {
+    let fx = Fixture::new(&[("zit.toml", GATE), ("a.txt", "-\n"), ("b.txt", "-\n")]);
+    let a = fx.change("a", &[("a.txt", "A\n")]);
+    let b = fx.change("b", &[("b.txt", "B\n")]);
+    let before = fx.repo.current().unwrap();
+
+    let ids = [a.id.clone(), b.id.clone()];
+    let outcome = accept::accept_batch(&fx.repo, &ids, &accept::Policy::default()).unwrap();
+    let accept::BatchOutcome::Rejected { failed, tried, .. } = outcome else { panic!("{outcome:?}") };
+    assert_eq!(failed, ["gate"]);
+    assert_eq!(tried, ids);
+    assert_eq!(fx.repo.current().unwrap(), before);
+    assert_eq!(change::speculative(&fx.repo).unwrap().len(), 2);
+    // One at a time finds the culprit: a lands, b is what fails.
+    accepted(accept::accept(&fx.repo, &a.id).unwrap());
+    assert!(matches!(accept::accept(&fx.repo, &b.id).unwrap(), Outcome::Rejected(Invalid::Failed(_))));
+}
+
+/// `--batch` with no ids takes every verified change; one without evidence is not verified.
+#[test]
+fn the_default_batch_is_every_verified_change() {
+    let fx = Fixture::new(&[("zit.toml", "[[check]]\nname = \"t\"\nrun = \"true\"\n"), ("a.txt", "a\n")]);
+    let checked = fx.change("a", &[("a.txt", "A\n")]);
+    let unchecked = fx.change("b", &[("b.txt", "B\n")]);
+    zit::evidence::verify(&fx.repo, &checked.id, false).unwrap();
+    assert_eq!(accept::verified(&fx.repo).unwrap(), vec![checked.id.clone()]);
+    let fx2 = fixture();
+    let x = fx2.change("a", &[("notes.txt", "x\n")]);
+    let y = fx2.change("b", &[("src/shop.rs", "pub fn buy() { 1; }\n")]);
+    // Recorded in the same second, so their order falls back to id: compare as sets.
+    let mut verified = accept::verified(&fx2.repo).unwrap();
+    verified.sort();
+    let mut expected = vec![x.id, y.id];
+    expected.sort();
+    assert_eq!(verified, expected, "no checks: every composable change is verified");
+    drop(unchecked);
+}
+
+#[test]
+fn batch_from_the_shell_lists_what_landed_and_what_was_skipped() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli =
+        common::Cli::new(dir.path(), &[("src/lib.rs", LIB), ("src/shop.rs", "pub fn buy() {}\n"), ("n.txt", "n\n")]);
+    cli.run(&["init"]).ok();
+    let make = |agent: &str, files: &[(&str, &str)]| {
+        let ws = cli.run(&["materialise", "--agent", agent, "--intent", "edit", "--json"]).ok().json();
+        let path = std::path::PathBuf::from(ws["path"].as_str().unwrap());
+        write(&path, files);
+        cli.run_in(&path, &["record", "--dispose", "--json"]).ok().json()["change"]["id"].as_str().unwrap().to_string()
+    };
+    let callee = make("claude", &[("src/lib.rs", &LIB.replace("price(x: u32)", "price(x: u32, t: u32)"))]);
+    let caller = make("codex", &[("src/shop.rs", CALLER)]);
+    let note = make("gemini", &[("n.txt", "edited\n")]);
+
+    // Several ids: composed in the order given.
+    let ran = cli.run(&["accept", &callee, &caller, &note]).ok();
+    assert!(ran.stdout.contains(&format!("landed   {}", &callee[..10])), "{}", ran.stdout);
+    assert!(ran.stdout.contains(&format!("landed   {}", &note[..10])), "{}", ran.stdout);
+    assert!(ran.stdout.contains(&format!("skipped  {}  invalid: stale", &caller[..10])), "{}", ran.stdout);
+    assert!(ran.stdout.contains("src/lib.rs#price"), "{}", ran.stdout);
+    assert!(ran.stdout.contains("2 landed, 1 skipped"), "{}", ran.stdout);
+
+    // --batch takes what is verified; the stale change is not even tried.
+    let fresh = make("pi", &[("n.txt", "again\n")]);
+    let out = cli.run(&["accept", "--batch", "--json"]).ok().json();
+    assert_eq!(out["outcome"], "accepted");
+    assert_eq!(out["landed"], serde_json::json!([fresh]));
+    assert_eq!(out["skipped"], serde_json::json!([]));
+
+    // Named explicitly, a skipped change is reported with its reason.
+    let again = make("pi", &[("n.txt", "and again\n")]);
+    let out = cli.run(&["accept", &caller, &again, "--json"]).ok().json();
+    assert_eq!(out["landed"], serde_json::json!([again]));
+    assert_eq!(out["skipped"][0]["change"], caller.as_str());
+    assert_eq!(out["skipped"][0]["reason"], "stale");
+    assert_eq!(
+        cli.run(&["accept", &caller, &again]).code,
+        0,
+        "already accepted and stale: nothing to do, not an error"
+    );
+}
+
+#[test]
+fn a_dry_run_reports_the_outcome_and_the_checks_but_moves_and_runs_nothing() {
+    let scratch = tempfile::tempdir().unwrap();
+    let (config, log) = counting_check(scratch.path());
+    let config = format!("{config}\n[[check]]\nname = \"scoped\"\nrun = \"true\"\ninputs = [\"b.txt\"]\n");
+    let fx = Fixture::new(&[("zit.toml", &config), ("a.txt", "-\n"), ("b.txt", "-\n")]);
+    let a = fx.change("a", &[("a.txt", "A\n")]);
+    let before = fx.repo.current().unwrap();
+    zit::evidence::verify(&fx.repo, &before, false).unwrap();
+    assert_eq!(run_count(&log), 1);
+
+    let policy = accept::Policy::default();
+    let dry = accept::dry_run(&fx.repo, &a.id, &policy).unwrap();
+    let accept::DryRun::WouldAccept { composed, checks } = dry else { panic!("{dry:?}") };
+    assert!(!composed);
+    let planned: Vec<(&str, bool)> = checks.iter().map(|c| (c.check.as_str(), c.run)).collect();
+    assert_eq!(planned, [("t", true), ("scoped", false)], "scoped's input is unchanged, so it would be reused");
+    assert_eq!(run_count(&log), 1, "nothing ran");
+    assert_eq!(fx.repo.current().unwrap(), before, "nothing moved");
+    assert_eq!(change::speculative(&fx.repo).unwrap(), vec![a.clone()]);
+
+    // --rerun would run everything again.
+    let rerun = accept::Policy { rerun: true, ..Default::default() };
+    let accept::DryRun::WouldAccept { checks, .. } = accept::dry_run(&fx.repo, &a.id, &rerun).unwrap() else {
+        panic!()
+    };
+    assert!(checks.iter().all(|c| c.run));
+
+    // Once current moves, the dry run composes and validates against it.
+    let other = fx.change("b", &[("b.txt", "B\n")]);
+    accepted(accept::accept(&fx.repo, &other.id).unwrap());
+    let accept::DryRun::WouldAccept { composed, .. } = accept::dry_run(&fx.repo, &a.id, &policy).unwrap() else {
+        panic!()
+    };
+    assert!(composed);
+    assert!(matches!(accept::dry_run(&fx.repo, &other.id, &policy).unwrap(), accept::DryRun::AlreadyAccepted));
+}
+
+#[test]
+fn a_dry_run_rejects_what_accept_would_reject() {
+    let fx = fixture();
+    let callee = fx.change("claude", &[("src/lib.rs", &LIB.replace("price(x: u32)", "price(x: u32, t: u32)"))]);
+    let caller = fx.change("codex", &[("src/shop.rs", CALLER)]);
+    accepted(accept::accept(&fx.repo, &callee.id).unwrap());
+    let dry = accept::dry_run(&fx.repo, &caller.id, &accept::Policy::default()).unwrap();
+    assert!(matches!(dry, accept::DryRun::Rejected(Invalid::Stale(_))), "{dry:?}");
+
+    let fx = Fixture::new(&[("m.go", GO)]);
+    let (wrap, split) = wrap_and_split(&fx);
+    accepted(accept::accept(&fx.repo, &wrap.id).unwrap());
+    let policy = accept::Policy { allow_stale: true, ..Default::default() };
+    let dry = accept::dry_run(&fx.repo, &split.id, &policy).unwrap();
+    assert!(matches!(dry, accept::DryRun::Rejected(Invalid::Error(_))), "{dry:?}");
+}
+
+#[test]
+fn dry_run_from_the_shell() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli =
+        common::Cli::new(dir.path(), &[("zit.toml", "[[check]]\nname = \"t\"\nrun = \"true\"\n"), ("a.txt", "a\n")]);
+    cli.run(&["init"]).ok();
+    let ws = cli.run(&["materialise", "--agent", "a", "--intent", "Edit a", "--json"]).ok().json();
+    let path = std::path::PathBuf::from(ws["path"].as_str().unwrap());
+    write(&path, &[("a.txt", "A\n")]);
+    let id =
+        cli.run_in(&path, &["record", "--dispose", "--json"]).ok().json()["change"]["id"].as_str().unwrap().to_string();
+
+    let ran = cli.run(&["accept", "--dry-run", &id]).ok();
+    assert!(ran.stdout.contains("would accept") && ran.stdout.contains("fast-forward"), "{}", ran.stdout);
+    assert!(ran.stdout.contains("t (run)"), "{}", ran.stdout);
+    let out = cli.run(&["accept", "--dry-run", &id, "--json"]).ok().json();
+    assert_eq!(out["outcome"], "would-accept");
+    assert_eq!(out["checks"][0]["check"], "t");
+    assert_eq!(out["checks"][0]["run"], true);
+    let status = cli.run(&["status", "--json"]).ok().json();
+    assert_eq!(status["changes"][0]["id"], id.as_str(), "still speculative");
+    assert_eq!(status["changes"][0]["status"], "speculative", "no evidence was produced");
+}
+
+const GO: &str = "package m\n\nfunc f() {\n\ta()\n\tb()\n\tc()\n\td()\n\te()\n}\n";
+
+/// One side wraps the body in a block, the other splits the function: each
+/// parses, git merges the text, and the result is a function inside a function.
+fn wrap_and_split(fx: &Fixture) -> (zit::change::Change, zit::change::Change) {
+    let wrap =
+        fx.change("a", &[("m.go", &GO.replace("\ta()\n", "\tif x {\n\t\ta()\n").replace("\te()\n", "\te()\n\t}\n"))]);
+    let split = fx.change("b", &[("m.go", &GO.replace("\tc()\n", "\tc()\n}\n\nfunc g() {\n"))]);
+    (wrap, split)
+}
+
+#[test]
+fn a_composed_state_that_does_not_parse_is_rejected_even_when_stale_is_allowed() {
+    let fx = Fixture::new(&[("m.go", GO)]);
+    let (wrap, split) = wrap_and_split(&fx);
+    accepted(accept::accept(&fx.repo, &wrap.id).unwrap());
+    let policy = accept::Policy { allow_stale: true, ..Default::default() };
+    let Outcome::Rejected(Invalid::Error(why)) = accept::accept_with(&fx.repo, &split.id, &policy).unwrap() else {
+        panic!("expected a parse rejection");
+    };
+    assert_eq!(why, "does not parse after composing: m.go");
+    assert_eq!(fx.repo.current().unwrap(), wrap.id);
+    assert_eq!(change::speculative(&fx.repo).unwrap(), vec![split]);
+}
+
+/// Imports are decided by text alone, so two edits there compose without being
+/// stale; the composed file must still parse.
+const COMMENTED_IMPORT: &str = "use a::A;\n/* off:\n// slow\nuse b::B;\n// end\n*/\nuse c::C;\n\npub fn f() {}\n";
+
+fn uncomment_and_annotate(fx: &Fixture) -> (zit::change::Change, zit::change::Change) {
+    let uncomment = fx.change("a", &[("m.rs", &COMMENTED_IMPORT.replace("/* off:\n", "").replace("*/\n", ""))]);
+    let annotate = fx.change("b", &[("m.rs", &COMMENTED_IMPORT.replace("use b::B;", "use b::B (see #12)"))]);
+    (uncomment, annotate)
+}
+
+#[test]
+fn the_parse_check_is_on_by_default_for_text_decided_merges() {
+    let fx = Fixture::new(&[("m.rs", COMMENTED_IMPORT)]);
+    let (uncomment, annotate) = uncomment_and_annotate(&fx);
+    accepted(accept::accept(&fx.repo, &uncomment.id).unwrap());
+    let outcome = accept::accept(&fx.repo, &annotate.id).unwrap();
+    let Outcome::Rejected(Invalid::Error(why)) = outcome else { panic!("expected a parse rejection, got {outcome:?}") };
+    assert_eq!(why, "does not parse after composing: m.rs");
+}
+
+#[test]
+fn the_parse_check_can_be_turned_off_in_zit_toml() {
+    let fx = Fixture::new(&[("m.rs", COMMENTED_IMPORT), ("zit.toml", "[accept]\nparse_check = false\n")]);
+    let (uncomment, annotate) = uncomment_and_annotate(&fx);
+    accepted(accept::accept(&fx.repo, &uncomment.id).unwrap());
+    let (_, composed) = accepted(accept::accept(&fx.repo, &annotate.id).unwrap());
+    assert!(composed);
+}
+
+/// A file that was already broken on one side is left to the checks: the
+/// compose did not introduce the error.
+#[test]
+fn a_file_one_side_could_not_parse_is_not_a_parse_rejection() {
+    let fx = Fixture::new(&[("m.go", GO)]);
+    let broken = fx.change("a", &[("m.go", &GO.replace("\ta()\n", "\ta(\n"))]);
+    let other = fx.change("b", &[("m.go", &GO.replace("\te()\n", "\te()\n\tee()\n"))]);
+    accepted(accept::accept(&fx.repo, &broken.id).unwrap());
+    let policy = accept::Policy { allow_stale: true, ..Default::default() };
+    accepted(accept::accept_with(&fx.repo, &other.id, &policy).unwrap());
+}
+
 /// Changing a method's signature still stales code that uses the type.
 #[test]
 fn a_method_signature_change_stales_users_of_the_type() {
