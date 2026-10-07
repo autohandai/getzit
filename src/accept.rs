@@ -83,7 +83,9 @@ fn merge(repo: &Repo, ours: &Oid, theirs: &Oid, base: Option<&Oid>) -> Result<Me
             merge_text(repo, &ours, &theirs)?
         }
     };
-    let generated = generated_paths(repo, ours)?;
+    // The composed state's rules are what will regenerate; a rule the change
+    // dropped rebuilds nothing. Unreadable (conflicted) config drops nothing.
+    let generated = generated_paths(repo, &merged.state).unwrap_or_default();
     merged.conflicts.retain(|path| !generated.contains(path));
     Ok(merged)
 }

@@ -332,6 +332,22 @@ fn generated_files_are_regenerated_on_compose_not_conflicted() {
     assert_eq!(change::load(&fx.repo, &current).unwrap().parents, vec![b.id, c.id]);
 }
 
+/// A conflict in a generated file is ignored because the file is rebuilt.
+/// When the change drops the rule that rebuilds it, nothing does: the
+/// conflict stands, and markers never land.
+#[test]
+fn dropping_a_derive_rule_brings_its_conflicts_back() {
+    let rule = "[[derive]]\npath = \"registry.txt\"\nrun = \"ls items | sort > registry.txt\"\n";
+    let fx = Fixture::new(&[("zit.toml", rule), ("items/a", "a\n"), ("registry.txt", "a\n")]);
+    let b = fx.change("dev-1", &[("items/b", "b\n"), ("registry.txt", "a\nb\n")]);
+    let c = fx.change("dev-2", &[("zit.toml", "ignore = []\n"), ("registry.txt", "by hand\n")]);
+    accepted(accept::accept(&fx.repo, &b.id).unwrap());
+    let outcome = accept::accept(&fx.repo, &c.id).unwrap();
+    assert!(matches!(outcome, Outcome::Rejected(Invalid::Conflict(_))), "{outcome:?}");
+    assert!(!show(&fx, "refs/zit/current", "registry.txt").contains("<<<<"));
+    assert!(matches!(accept::status(&fx.repo, &c.id).unwrap(), Status::Invalid(Invalid::Conflict(_))));
+}
+
 #[test]
 fn a_generated_file_is_not_a_reason_to_be_stale() {
     let fx = Fixture::new(&[("zit.toml", DERIVE), ("items/a", "a\n"), ("registry.txt", "a\n")]);
