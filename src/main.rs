@@ -154,8 +154,9 @@ enum Cmd {
     },
     /// Delete workspaces. Recorded changes are unaffected.
     Dispose {
+        #[arg(required_unless_present_any = ["all", "orphaned"])]
         ids: Vec<String>,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "ids")]
         all: bool,
         /// Delete every workspace whose `zit run` is gone and that has no unrecorded edits.
         #[arg(long, conflicts_with_all = ["ids", "all"])]
@@ -325,6 +326,10 @@ fn workspace_id(repo: &Repo, given: Option<String>) -> anyhow::Result<String> {
 
 fn main() -> ExitCode {
     use clap::{CommandFactory, FromArgMatches};
+    // Rust ignores SIGPIPE, so `zit status | head` would panic on the closed
+    // pipe; end quietly like every other command-line tool instead.
+    // SAFETY: resetting a signal disposition before any thread exists.
+    unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
     // Called as `git zit`, say so in usage and errors.
     let invoked = std::env::args_os().next().map(std::path::PathBuf::from);
     let as_git = invoked.as_deref().and_then(|p| p.file_stem()).is_some_and(|stem| stem == "git-zit");
@@ -532,10 +537,12 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
             emit(json, &ws, || print_workspace(&ws))?;
         }
         Cmd::Discard { changes } => {
-            for rev in &changes {
-                change::discard(&repo, &repo.resolve(rev)?)?;
+            // Resolve everything first: one bad name must not discard the others.
+            let ids = changes.iter().map(|rev| repo.resolve(rev)).collect::<Result<Vec<_>, _>>()?;
+            for id in &ids {
+                change::discard(&repo, id)?;
             }
-            emit(json, &serde_json::json!({"discarded": changes}), || {})?;
+            emit(json, &serde_json::json!({"discarded": ids}), || {})?;
         }
         Cmd::Dispose { orphaned: true, force, .. } => {
             let report = workspace::dispose_orphaned(&repo, force)?;

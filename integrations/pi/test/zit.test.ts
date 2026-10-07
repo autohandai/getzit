@@ -96,7 +96,7 @@ function makeCtx(cwd: string, entries: any[] = []) {
 			sessionManager: {
 				getEntries: () => entries,
 				getBranch: () => entries,
-				getSessionFile: () => undefined,
+				getSessionFile: (): string | undefined => undefined,
 				getSessionDir: () => "",
 				getSessionId: () => "test-session",
 			},
@@ -266,6 +266,28 @@ describe("session lifecycle", () => {
 		assert.equal(recorded.summary, "Added NOTES.md so decisions are written down.");
 	});
 
+	test("a failed auto-record is reported on stderr when there is no UI", async () => {
+		const ws = await materialise(repo, "no zit at quit");
+		const ext = loadExtension();
+		const { ctx } = makeCtx(ws.tree, [assistant("done")]);
+		await ext.emit("session_start", { type: "session_start", reason: "startup" }, ctx);
+		const errors: string[] = [];
+		const original = console.error;
+		console.error = (...args: unknown[]) => errors.push(args.join(" "));
+		const bin = process.env.ZIT_BIN;
+		process.env.ZIT_BIN = join(root, "no-such-zit");
+		try {
+			await ext.emit("session_shutdown", { type: "session_shutdown", reason: "quit" }, ctx);
+		} finally {
+			process.env.ZIT_BIN = bin;
+			console.error = original;
+		}
+		assert.ok(existsSync(ws.tree), "the workspace is kept when it could not be recorded");
+		assert.equal(errors.length, 1, errors.join("\n"));
+		assert.match(errors[0], /could not record workspace/);
+		await runZit(["dispose", ws.id], { cwd: repo });
+	});
+
 	test("session switches other than quit do not record", async () => {
 		const ws = await materialise(repo, "reload test");
 		const ext = loadExtension();
@@ -308,6 +330,29 @@ describe("session lifecycle", () => {
 			delete process.env.ZIT_SUMMARY_FILE;
 			await runZit(["dispose", ws.id], { cwd: repo });
 		}
+	});
+});
+
+describe("/zit command", () => {
+	test("cancelling the intent prompt creates no workspace and switches no session", async () => {
+		const before = zitJson(["status"]).workspaces.length;
+		const ext = loadExtension();
+		const { ctx, notes } = makeCtx(repo);
+		let switched = 0;
+		Object.assign(ctx, {
+			hasUI: true,
+			waitForIdle: async () => {},
+			switchSession: async () => {
+				switched++;
+				return { cancelled: false };
+			},
+		});
+		Object.assign(ctx.ui, { confirm: async () => true, input: async () => undefined });
+		ctx.sessionManager.getSessionFile = () => join(root, "session.jsonl");
+		ctx.sessionManager.getSessionDir = () => join(root, "sessions");
+		await ext.commands.get("zit").handler("", ctx);
+		assert.equal(switched, 0, `no session switch: ${notes.join(" | ")}`);
+		assert.equal(zitJson(["status"]).workspaces.length, before, `no workspace created: ${notes.join(" | ")}`);
 	});
 });
 

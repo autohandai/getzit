@@ -300,9 +300,13 @@ impl Repo {
             return Err(Error::UnknownRevision(rev.to_string()));
         }
         let rev = if rev == "current" { CURRENT } else { rev };
-        self.git(&["rev-parse", "--verify", "--quiet", &format!("{rev}^{{commit}}")])
-            .map(Oid)
-            .map_err(|_| Error::UnknownRevision(rev.to_string()))
+        // Not --quiet: git's stderr is the only way to tell an ambiguous prefix from an unknown one.
+        self.git(&["rev-parse", "--verify", &format!("{rev}^{{commit}}")]).map(Oid).map_err(|e| match e {
+            Error::Git { stderr, .. } if stderr.contains("is ambiguous") => {
+                Error::msg(format!("ambiguous revision: {rev} names more than one object; give more characters"))
+            }
+            _ => Error::UnknownRevision(rev.to_string()),
+        })
     }
 
     /// Resolve a revision to (change, resulting state) in one git call.

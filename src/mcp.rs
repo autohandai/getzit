@@ -128,8 +128,15 @@ fn text<'a>(args: &'a Value, name: &str) -> Result<&'a str> {
     args[name].as_str().ok_or_else(|| Error::msg(format!("missing required argument: {name}")))
 }
 
-fn resources(args: &Value, name: &str) -> Vec<Resource> {
-    args[name].as_array().into_iter().flatten().filter_map(Value::as_str).map(Resource::parse).collect()
+/// Absent means none; anything but a list of strings is refused rather than
+/// silently read as none (a claim of nothing is "granted").
+fn resources(args: &Value, name: &str) -> Result<Vec<Resource>> {
+    let bad = || Error::msg(format!("{name} must be a list of strings"));
+    match &args[name] {
+        Value::Null => Ok(vec![]),
+        Value::Array(items) => items.iter().map(|v| v.as_str().map(Resource::parse).ok_or_else(bad)).collect(),
+        _ => Err(bad()),
+    }
 }
 
 /// `None` when the tool does not exist.
@@ -148,9 +155,9 @@ fn call(cwd: &Path, client: &str, integrator: bool, name: &str, args: &Value) ->
                 };
                 json!(workspace::materialise(&repo, &new)?)
             }
-            "zit_claim" => json!(crate::claim::claim(&repo, text(args, "workspace")?, &resources(args, "resources"))?),
+            "zit_claim" => json!(crate::claim::claim(&repo, text(args, "workspace")?, &resources(args, "resources")?)?),
             "zit_read" => {
-                let reads = resources(args, "resources");
+                let reads = resources(args, "resources")?;
                 workspace::declare_reads(&repo, text(args, "workspace")?, &reads)?;
                 json!({"declared": reads})
             }
@@ -158,7 +165,7 @@ fn call(cwd: &Path, client: &str, integrator: bool, name: &str, args: &Value) ->
                 let opts = Record {
                     intent: args["intent"].as_str().map(str::to_string),
                     summary: args["summary"].as_str().map(str::to_string),
-                    reads: resources(args, "reads"),
+                    reads: resources(args, "reads")?,
                     usage: None,
                 };
                 let dispose = args["dispose"].as_bool().unwrap_or(false);
@@ -200,56 +207,26 @@ fn call(cwd: &Path, client: &str, integrator: bool, name: &str, args: &Value) ->
 /// Without `integrator`, the agent cannot accept or discard changes.
 pub fn serve(cwd: &Path, integrator: bool, input: impl BufRead, mut output: impl Write) -> Result<()> {
     let mut client = "agent".to_string();
-    for line in input.lines() {
+    for line in input.split(b'\n') {
         let line = line?;
-        if line.trim().is_empty() {
+        if line.trim_ascii().is_empty() {
             continue;
         }
-        let reply = match serde_json::from_str::<Value>(&line) {
-            Err(e) => Some(json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": e.to_string()}})),
-            Ok(msg) => {
-                let id = msg.get("id").cloned();
-                let params = &msg["params"];
-                let result = match msg["method"].as_str().unwrap_or_default() {
-                    "initialize" => {
-                        if let Some(name) = params["clientInfo"]["name"].as_str() {
-                            client = name.to_string();
-                        }
-                        let asked = params["protocolVersion"].as_str().unwrap_or_default();
-                        let version = PROTOCOL_VERSIONS.iter().find(|v| **v == asked).unwrap_or(&PROTOCOL_VERSIONS[0]);
-                        Ok(json!({
-                            "protocolVersion": version,
-                            "capabilities": {"tools": {}},
-                            "serverInfo": {"name": "zit", "version": env!("CARGO_PKG_VERSION")},
-                            "instructions": "Zit: work in a workspace from zit_materialise, claim what you will change with zit_claim, record it with zit_record and a summary of what you did and why. Recorded changes survive your process; an integrator accepts them.",
-                        }))
-                    }
-                    "ping" => Ok(json!({})),
-                    "tools/list" => Ok(json!({"tools": tools(integrator)})),
-                    "tools/call" => {
-                        let name = params["name"].as_str().unwrap_or_default();
-                        match call(cwd, &client, integrator, name, &params["arguments"]) {
-                            None => Err((-32602, format!("unknown tool: {name}"))),
-                            Some(Ok(value)) => Ok(json!({
-                                "content": [{"type": "text", "text": serde_json::to_string_pretty(&value)?}],
-                                "isError": false,
-                            })),
-                            Some(Err(e)) => Ok(json!({
-                                "content": [{"type": "text", "text": e.to_string()}],
-                                "isError": true,
-                            })),
-                        }
-                    }
-                    method => Err((-32601, format!("method not found: {method}"))),
-                };
-                // Notifications carry no id and get no reply.
-                id.map(|id| match result {
-                    Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
-                    Err((code, message)) => {
-                        json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
-                    }
-                })
+        // Bytes that are not UTF-8 are that message's parse error, not the end of the server.
+        let parsed = std::str::from_utf8(&line)
+            .map_err(|e| e.to_string())
+            .and_then(|text| serde_json::from_str::<Value>(text).map_err(|e| e.to_string()));
+        let reply = match parsed {
+            Err(message) => Some(json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": message}})),
+            // A batch (protocol 2025-03-26) is answered with a batch; all notifications, no reply.
+            Ok(Value::Array(batch)) if !batch.is_empty() => {
+                let mut replies = Vec::new();
+                for msg in &batch {
+                    replies.extend(handle(cwd, integrator, &mut client, msg)?);
+                }
+                (!replies.is_empty()).then_some(Value::Array(replies))
             }
+            Ok(msg) => handle(cwd, integrator, &mut client, &msg)?,
         };
         if let Some(reply) = reply {
             writeln!(output, "{reply}")?;
@@ -257,4 +234,54 @@ pub fn serve(cwd: &Path, integrator: bool, input: impl BufRead, mut output: impl
         }
     }
     Ok(())
+}
+
+/// One message in, at most one reply out (notifications get none).
+fn handle(cwd: &Path, integrator: bool, client: &mut String, msg: &Value) -> Result<Option<Value>> {
+    let invalid =
+        |id: Value| json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32600, "message": "invalid request"}});
+    let Some(id) = msg.as_object().map(|m| m.get("id").cloned()) else {
+        return Ok(Some(invalid(Value::Null)));
+    };
+    let Some(method) = msg["method"].as_str() else {
+        return Ok(Some(invalid(id.unwrap_or(Value::Null))));
+    };
+    let params = &msg["params"];
+    let result = match method {
+        "initialize" => {
+            if let Some(name) = params["clientInfo"]["name"].as_str() {
+                *client = name.to_string();
+            }
+            let asked = params["protocolVersion"].as_str().unwrap_or_default();
+            let version = PROTOCOL_VERSIONS.iter().find(|v| **v == asked).unwrap_or(&PROTOCOL_VERSIONS[0]);
+            Ok(json!({
+                "protocolVersion": version,
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "zit", "version": env!("CARGO_PKG_VERSION")},
+                "instructions": "Zit: work in a workspace from zit_materialise, claim what you will change with zit_claim, record it with zit_record and a summary of what you did and why. Recorded changes survive your process; an integrator accepts them.",
+            }))
+        }
+        "ping" => Ok(json!({})),
+        "tools/list" => Ok(json!({"tools": tools(integrator)})),
+        "tools/call" => {
+            let name = params["name"].as_str().unwrap_or_default();
+            match call(cwd, client, integrator, name, &params["arguments"]) {
+                None => Err((-32602, format!("unknown tool: {name}"))),
+                Some(Ok(value)) => Ok(json!({
+                    "content": [{"type": "text", "text": serde_json::to_string_pretty(&value)?}],
+                    "isError": false,
+                })),
+                Some(Err(e)) => Ok(json!({
+                    "content": [{"type": "text", "text": e.to_string()}],
+                    "isError": true,
+                })),
+            }
+        }
+        method => Err((-32601, format!("method not found: {method}"))),
+    };
+    // Notifications carry no id and get no reply.
+    Ok(id.map(|id| match result {
+        Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
+        Err((code, message)) => json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}}),
+    }))
 }

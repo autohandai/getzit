@@ -262,6 +262,9 @@ pub fn record(repo: &Repo, workspace: &str, opts: &Record) -> Result<Option<Chan
 
 /// Forget a speculative change. The object stays until git collects it.
 pub fn discard(repo: &Repo, id: &Oid) -> Result<()> {
-    repo.git(&["update-ref", "-d", &format!("{CHANGES}/{id}")])?;
-    Ok(())
+    // With the expected value, deleting a ref that is not there fails instead of passing silently.
+    match repo.transaction(&[format!("delete {CHANGES}/{id} {id}")])? {
+        true => Ok(()),
+        false => Err(crate::Error::msg(format!("not a speculative change: {}", id.short()))),
+    }
 }

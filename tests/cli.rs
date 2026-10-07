@@ -95,7 +95,10 @@ fn a_rejected_accept_exits_1_and_says_why() {
     write(&path, &[("src/shop.rs", "pub fn buy() { lib::price(3, 1); }\n")]);
     let fixed = cli.run_in(&path, &["record", "--dispose", "--json"]).ok().json();
     cli.run(&["accept", fixed["change"]["id"].as_str().unwrap()]).ok();
-    cli.run(&["discard", &caller]).ok();
+    // Accepting the fix retired the original too: it is no longer speculative.
+    let gone = cli.run(&["discard", &caller]);
+    assert_eq!(gone.code, 2, "{}", gone.stderr);
+    assert!(gone.stderr.contains("not a speculative change"), "{}", gone.stderr);
     assert_eq!(cli.run(&["status", "--json"]).ok().json()["changes"], serde_json::json!([]));
 }
 

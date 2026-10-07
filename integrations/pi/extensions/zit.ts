@@ -199,7 +199,10 @@ export default function zitExtension(pi: ExtensionAPI) {
 			const outcome = await record(ws, summary, { dispose: true });
 			if (ctx.hasUI) ctx.ui.notify(`Zit: ${outcome.text.split("\n")[0]}; workspace ${ws.id} deleted.`, "info");
 		} catch (error) {
-			if (ctx.hasUI) ctx.ui.notify(`Zit: could not record workspace ${ws.id}: ${(error as Error).message}`, "error");
+			// Work that was not recorded must not go unmentioned, UI or not.
+			const message = `Zit: could not record workspace ${ws.id}: ${(error as Error).message}`;
+			if (ctx.hasUI) ctx.ui.notify(message, "error");
+			else console.error(message);
 		}
 	});
 
@@ -235,7 +238,12 @@ export default function zitExtension(pi: ExtensionAPI) {
 					await runZitOk(["init"], { cwd: repo });
 				}
 				let intent = args.trim();
-				if (!intent && ctx.hasUI) intent = ((await ctx.ui.input("What is this session for?", "intent")) ?? "").trim();
+				if (!intent && ctx.hasUI) {
+					const typed = await ctx.ui.input("What is this session for?", "intent");
+					// Dismissing the prompt means "not now", not "no intent".
+					if (typed === undefined) return;
+					intent = typed.trim();
+				}
 
 				await ctx.waitForIdle();
 				const created = await materialise(repo, intent, { session: ctx.sessionManager.getSessionId() });
