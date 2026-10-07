@@ -95,7 +95,7 @@ pub fn overview(repo: &Repo) -> Result<Overview> {
         .into_iter()
         .zip(writing)
         .map(|(workspace, writes)| {
-            let alive = workspace.pid.map(workspace::process_alive);
+            let alive = workspace.pid.map(|_| workspace::running(&workspace));
             let claims = workspace.claims();
             let mut overlaps: Vec<Overlap> = touching
                 .iter()

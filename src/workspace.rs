@@ -129,6 +129,43 @@ pub fn process_alive(pid: u32) -> bool {
     probed == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
+/// Held by the `zit run` that owns a workspace, for as long as it lives.
+pub struct Owner(#[allow(dead_code)] fs::File);
+
+/// Try a non-blocking `flock` for a moment before giving up: a process being
+/// spawned anywhere (macOS) holds every open descriptor, locks included,
+/// until it execs, so a lock busy for milliseconds is nobody's.
+fn flock_soon(file: &fs::File, operation: libc::c_int) -> bool {
+    use std::os::fd::AsRawFd;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
+    // SAFETY: `file` is an open descriptor we own; a lock taken goes with it.
+    while unsafe { libc::flock(file.as_raw_fd(), operation | libc::LOCK_NB) } != 0 {
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    true
+}
+
+impl Workspace {
+    /// Become the workspace's running owner. The kernel releases it however
+    /// the process ends, so a reused pid never looks like a live owner.
+    pub fn hold(&self) -> Result<Owner> {
+        let file = fs::File::create(self.dir().join("run.lock"))?;
+        if !flock_soon(&file, libc::LOCK_EX) {
+            return Err(Error::msg(format!("workspace {} is already running", self.id)));
+        }
+        Ok(Owner(file))
+    }
+}
+
+/// Is a `zit run` holding the workspace right now?
+pub fn running(ws: &Workspace) -> bool {
+    let Ok(file) = fs::File::open(ws.dir().join("run.lock")) else { return false };
+    !flock_soon(&file, libc::LOCK_SH)
+}
+
 pub(crate) fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }

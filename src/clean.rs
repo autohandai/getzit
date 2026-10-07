@@ -54,7 +54,7 @@ pub fn clean(repo: &Repo, force: bool) -> Result<Report> {
     if !force {
         let mut blocked = Vec::new();
         for ws in &spaces {
-            if ws.pid.is_some_and(workspace::process_alive) {
+            if workspace::running(ws) {
                 blocked.push(format!("{} ({}) is running", ws.id, ws.agent));
             } else if ws.path().is_dir() && workspace::is_dirty(repo, ws).unwrap_or(true) {
                 // A view deleted by hand holds no edits to lose.

@@ -127,6 +127,7 @@ pub fn run(repo: &Repo, opts: &Run) -> Result<Report> {
     let mut ws = workspace::materialise(repo, &new)?;
     ws.pid = Some(std::process::id());
     ws.save()?;
+    let _owner = ws.hold()?;
 
     let summary_file = ws.summary_file();
     let args = opts.command[1..].iter().map(|a| a.replace(SUMMARY_FILE, &summary_file.display().to_string()));
