@@ -1,9 +1,13 @@
 import { defineConfig } from "blume";
 import { filesystem, githubReleases } from "blume/sources";
+import { formatStars, githubStars } from "./components/github-stars";
 import { zitVersion } from "./components/zit-version";
 
 // The latest GitHub release, the same version the docs pages show.
 const version = await zitVersion();
+// The repository's stars at build time; the header link drops the count when GitHub is unreachable.
+const stars = await githubStars();
+const repoUrl = "https://github.com/autohandai/getzit";
 
 export default defineConfig({
   title: "Zit",
@@ -24,6 +28,11 @@ export default defineConfig({
   deployment: {
     site: "https://getzit.org",
   },
+  // The footer's GitHub mark and each page's "Edit on GitHub" link.
+  github: {
+    owner: "autohandai",
+    repo: "getzit",
+  },
   ai: {
     // Autohand Dev is added first by components/OpenInAutohand.astro; v0 goes last.
     openInChat: ["chatgpt", "claude", "t3", "cursor", "v0"],
@@ -37,6 +46,7 @@ export default defineConfig({
     ],
   },
   navigation: {
+    actions: [{ href: repoUrl, label: stars === undefined ? "GitHub" : `GitHub ★ ${formatStars(stars)}` }],
     sidebar: [
       { label: "Get started", items: ["index", "tutorial", "quickstart", "why", "compare"] },
       { label: "Use it", items: ["agents", "web", "git"] },
