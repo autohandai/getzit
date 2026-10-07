@@ -1,0 +1,2 @@
+# autohand 0.9.9-alpha.ae34d3f, `autohand -p "reply with the word ok" --yes --output-format stream-json </dev/null`, captured 2026-10-07: the whole of stdout. Its stderr carried only a human summary line, "Completed in 0m 07s · 28.0k tokens used", a rounded total with no in/out split. Lines that are not JSON are ignored by zit.
+{"type":"result","content":"ok"}

@@ -214,6 +214,120 @@ fn ignoring_never_hides_a_tracked_file() {
     assert!(change::record(&fx.repo, &ws.id, &Record::default()).unwrap().is_some());
 }
 
+const STABLE: &[(&str, &str)] =
+    &[("zit.toml", "[workspace]\nstable_paths = true\n"), (".gitignore", "target/\n"), ("src/a.rs", "fn a() {}\n")];
+
+/// With stable paths, a disposed workspace's slot is reused at the same path:
+/// ignored files (a build directory) survive, tracked files are reset,
+/// untracked leftovers are removed.
+#[test]
+fn stable_paths_reuse_a_slot_and_keep_its_ignored_files() {
+    both_with(STABLE, |fx| {
+        let first = fx.workspace("claude");
+        let path = first.path().to_path_buf();
+        assert!(path.ends_with("ws/slot-0/tree"), "{}", path.display());
+        assert_eq!(first.id, "slot-0");
+        write(&path, &[("target/out.bin", "built"), ("src/a.rs", "fn edited() {}\n"), ("junk.txt", "x")]);
+        workspace::dispose(&fx.repo, &first.id).unwrap();
+        assert!(workspace::list(&fx.repo).unwrap().is_empty(), "a disposed slot is not a workspace");
+
+        let second = fx.workspace("codex");
+        assert_eq!(second.path(), path, "the slot is reused");
+        assert_eq!(fs::read_to_string(path.join("target/out.bin")).unwrap(), "built", "ignored files survive");
+        assert_eq!(fs::read_to_string(path.join("src/a.rs")).unwrap(), "fn a() {}\n", "tracked files are reset");
+        assert!(!path.join("junk.txt").exists(), "untracked leftovers are removed");
+        assert_eq!(git(&path, &["status", "--porcelain"]), "");
+        assert!(!workspace::is_dirty(&fx.repo, &second).unwrap());
+        assert_eq!(second.agent, "codex");
+
+        // A live slot is never reused; the next one is taken.
+        let third = fx.workspace("pi");
+        assert!(third.path().ends_with("ws/slot-1/tree"), "{}", third.path().display());
+        let listed: Vec<String> = workspace::list(&fx.repo).unwrap().into_iter().map(|w| w.id).collect();
+        assert_eq!(listed, ["slot-0", "slot-1"]);
+        assert_eq!(workspace::get(&fx.repo, "slot-0").unwrap().agent, "codex");
+    });
+}
+
+/// A reused slot moves to the state asked for, including a different change.
+#[test]
+fn a_reused_slot_holds_the_state_asked_for() {
+    let fx = Fixture::new(STABLE);
+    let c = fx.change("claude", &[("src/new.rs", "fn n() {}\n")]);
+    let ws = fx.workspace_from(Some(&c.id), "codex");
+    assert_eq!(ws.id, "slot-0", "the slot a recorded change freed");
+    assert_eq!(ws.base, c.id);
+    assert_eq!(fs::read_to_string(ws.path().join("src/new.rs")).unwrap(), "fn n() {}\n");
+    write(ws.path(), &[("src/a.rs", "fn b() {}\n")]);
+    let c2 = change::record(&fx.repo, &ws.id, &Record::default()).unwrap().unwrap();
+    assert_eq!(c2.parents, vec![c.id]);
+}
+
+/// The git setting `zit.stablePaths` turns stable paths on without touching the project.
+#[test]
+fn stable_paths_can_be_set_in_git_config() {
+    let fx = Fixture::new(FILES);
+    git(&fx.root(), &["config", "zit.stablePaths", "true"]);
+    let ws = fx.workspace("claude");
+    assert_eq!(ws.id, "slot-0");
+    assert!(ws.path().ends_with("ws/slot-0/tree"), "{}", ws.path().display());
+}
+
+/// A pid can be reused; the owner's start time tells a live `zit run` from a
+/// stranger that got its number.
+#[test]
+fn an_owner_pid_with_another_start_time_is_gone() {
+    let fx = Fixture::new(FILES);
+    let mut agent = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+    let mut ws = fx.workspace("claude");
+    let save = |ws: &workspace::Workspace| {
+        fs::write(ws.path().parent().unwrap().join("meta.json"), serde_json::to_vec(ws).unwrap()).unwrap()
+    };
+    let alive = || zit::api::overview(&fx.repo).unwrap().workspaces[0].alive;
+
+    ws.pid = Some(agent.id());
+    ws.pid_started = workspace::process_start(agent.id());
+    assert!(ws.pid_started.is_some(), "the start time of a live process is known");
+    save(&ws);
+    assert_eq!(alive(), Some(true));
+    assert!(workspace::owner_alive(&ws));
+
+    ws.pid_started = Some(1);
+    save(&ws);
+    assert_eq!(alive(), Some(false), "same pid, different start time: a different process");
+    assert!(!workspace::owner_alive(&ws));
+    assert_eq!(zit::clean::clean(&fx.repo, false).unwrap().workspaces, 1, "clean does not mistake it for a run");
+
+    // A meta.json written before start times were recorded: the pid alone decides.
+    let ws = fx.workspace("codex");
+    let mut meta: serde_json::Value =
+        serde_json::from_slice(&fs::read(ws.path().parent().unwrap().join("meta.json")).unwrap()).unwrap();
+    meta["pid"] = serde_json::json!(agent.id());
+    meta.as_object_mut().unwrap().remove("pid_started");
+    fs::write(ws.path().parent().unwrap().join("meta.json"), serde_json::to_vec(&meta).unwrap()).unwrap();
+    assert_eq!(alive(), Some(true));
+    agent.kill().unwrap();
+    agent.wait().unwrap();
+    assert_eq!(alive(), Some(false));
+}
+
+/// `zit run` records its own start time with the workspace.
+#[test]
+fn run_records_the_owners_start_time() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = common::Cli::new(dir.path(), FILES);
+    cli.run(&["init"]).ok();
+    let script = "cat \"$(dirname \"$(git rev-parse --git-dir)\")/meta.json\"";
+    let out = cli.run(&["run", "--", "sh", "-c", script]).ok().stdout;
+    let meta: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(meta["pid"].is_number() && meta["pid_started"].is_number(), "{meta}");
+}
+
+fn both_with(files: &[(&str, &str)], test: impl Fn(Fixture)) {
+    test(Fixture::with_strategy(files, Strategy::Clone));
+    test(Fixture::with_strategy(files, Strategy::Checkout));
+}
+
 /// Coding agents keep session state in the project; it is the agent's, not the work.
 #[test]
 fn agents_session_state_is_never_recorded() {

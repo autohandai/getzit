@@ -36,6 +36,15 @@ pub struct Workspace {
     pub created: u64,
     /// Process that owns the view, if any (`zit run`).
     pub pid: Option<u32>,
+    /// When `pid` started, as [`process_start`] reports it: a process with
+    /// that pid but another start time is a stranger that got its number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid_started: Option<u64>,
+    /// A TCP port free when the view was made and held by no other live
+    /// workspace, exported as `$ZIT_PORT` to agents and checks. Nothing
+    /// reserves it: a program outside Zit may take it in the meantime.
+    #[serde(default)]
+    pub port: Option<u16>,
     path: PathBuf,
 }
 
@@ -95,6 +104,12 @@ impl Workspace {
         self.dir().join("summary.txt")
     }
 
+    /// Where an agent run by `zit run` may write the intent of its change
+    /// (`$ZIT_INTENT_FILE`), overriding `--intent`.
+    pub fn intent_file(&self) -> PathBuf {
+        self.dir().join("intent.txt")
+    }
+
     pub(crate) fn claims_file(&self) -> PathBuf {
         self.dir().join("claims")
     }
@@ -129,8 +144,65 @@ pub fn process_alive(pid: u32) -> bool {
     probed == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
+/// When process `pid` started, as an opaque number that only another call
+/// on the same machine compares to (macOS: microseconds since the epoch,
+/// from `proc_pidinfo`; Linux: clock ticks since boot, field 22 of
+/// `/proc/<pid>/stat`). `None` when there is no such process or it cannot be
+/// inspected.
+#[cfg(target_os = "macos")]
+pub fn process_start(pid: u32) -> Option<u64> {
+    // SAFETY: `info` is a properly sized out-parameter for PROC_PIDTBSDINFO.
+    let (info, written) = unsafe {
+        let mut info: libc::proc_bsdinfo = std::mem::zeroed();
+        let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+        let written =
+            libc::proc_pidinfo(pid as libc::c_int, libc::PROC_PIDTBSDINFO, 0, &mut info as *mut _ as *mut _, size);
+        (info, written)
+    };
+    (written == std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int)
+        .then(|| info.pbi_start_tvsec * 1_000_000 + info.pbi_start_tvusec)
+}
+
+#[cfg(target_os = "linux")]
+pub fn process_start(pid: u32) -> Option<u64> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // Fields after the parenthesised command name; `starttime` is field 22 overall.
+    let after = stat.rsplit_once(')')?.1;
+    after.split_whitespace().nth(19)?.parse().ok()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub fn process_start(_pid: u32) -> Option<u64> {
+    None
+}
+
+/// Whether the `zit run` that owns `ws` still exists: its pid is alive and,
+/// when the start time was recorded and can be read, it is the same process.
+pub fn owner_alive(ws: &Workspace) -> bool {
+    let Some(pid) = ws.pid else { return false };
+    process_alive(pid)
+        && match (ws.pid_started, process_start(pid)) {
+            (Some(recorded), Some(found)) => recorded == found,
+            _ => true,
+        }
+}
+
 pub(crate) fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// A TCP port the kernel reports free, and no live workspace (or
+/// verification view) of this repository holds. `None` when none can be bound.
+fn free_port(repo: &Repo) -> Option<u16> {
+    let taken: Vec<u16> = ["ws", "verify"]
+        .iter()
+        .flat_map(|sub| fs::read_dir(repo.home().join(sub)).into_iter().flatten().flatten())
+        .filter_map(|e| open(&e.path()).ok()?.port)
+        .collect();
+    (0..16).find_map(|_| {
+        let port = std::net::TcpListener::bind(("127.0.0.1", 0)).ok()?.local_addr().ok()?.port();
+        (!taken.contains(&port)).then_some(port)
+    })
 }
 
 pub(crate) fn fresh_id() -> String {
@@ -146,9 +218,32 @@ pub fn materialise(repo: &Repo, new: &NewWorkspace) -> Result<Workspace> {
     materialise_at(repo, base, tree, new)
 }
 
+/// Whether workspaces of `base` live in reusable slots: `[workspace]
+/// stable_paths = true` in its `zit.toml`, or `zit.stablePaths` in git config.
+///
+/// A fresh directory per workspace means a compiled project is rebuilt by
+/// every agent, and a build directory keyed on absolute paths fills with
+/// output for paths that no longer exist. With stable paths, a workspace is
+/// `ws/slot-N`, the lowest slot not in use; when it is disposed the slot keeps
+/// its ignored files (build output, installed dependencies) and the next
+/// workspace is made there like a verification view: tracked files reset,
+/// untracked files removed, ignored files kept. The trade-off is that
+/// agents inherit each other's ignored files, stale caches included, and that
+/// the number of slots on disk grows to the largest number of workspaces ever
+/// open at once.
+pub fn stable_paths(repo: &Repo, base: &Oid) -> Result<bool> {
+    if repo.git(&["config", "--type=bool", "zit.stablePaths"]).is_ok_and(|v| v.trim() == "true") {
+        return Ok(true);
+    }
+    crate::evidence::stable_paths(repo, base)
+}
+
 /// As `materialise`, for a change whose state is already known.
 pub(crate) fn materialise_at(repo: &Repo, base: Oid, tree: Oid, new: &NewWorkspace) -> Result<Workspace> {
     fs::create_dir_all(root(repo))?;
+    if stable_paths(repo, &base)? {
+        return materialise_slot(repo, base, tree, new);
+    }
     let (id, dir) = loop {
         let id = fresh_id();
         let dir = root(repo).join(&id);
@@ -184,6 +279,8 @@ pub(crate) fn materialise_in(
         session: new.session.map(str::to_string),
         created: now(),
         pid: None,
+        pid_started: None,
+        port: free_port(repo),
         path: dir.join("tree"),
     };
     let built = build(repo, &ws, cache_it);
@@ -197,6 +294,89 @@ pub(crate) fn materialise_in(
 /// Load the workspace that lives in `dir`.
 pub(crate) fn open(dir: &Path) -> Result<Workspace> {
     Ok(serde_json::from_slice(&fs::read(dir.join("meta.json"))?)?)
+}
+
+/// Workspace ids of slots; a slot's directory outlives the workspace in it.
+const SLOT: &str = "slot-";
+
+/// What a disposed slot keeps of its last workspace, so the next one can
+/// move the files in place instead of starting over.
+const RETIRED: &str = "retired.json";
+
+/// Materialise in the lowest free slot, moving a retired slot's files to the
+/// state in place where it can.
+fn materialise_slot(repo: &Repo, base: Oid, tree: Oid, new: &NewWorkspace) -> Result<Workspace> {
+    use std::os::fd::AsRawFd;
+    for n in 0.. {
+        let id = format!("{SLOT}{n}");
+        let dir = root(repo).join(&id);
+        // Held while the slot is being built: a reader that finds no meta.json
+        // and cannot take the lock knows another process is making one here.
+        let lock = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(root(repo).join(format!(".{id}.lock")))?;
+        // SAFETY: `lock` is an open descriptor we own for the duration of the call.
+        if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            continue;
+        }
+        if dir.join("meta.json").exists() {
+            continue;
+        }
+        if let Some(ws) = reuse_slot(repo, &dir, &base, &tree, new) {
+            return Ok(ws);
+        }
+        let _ = fs::remove_dir_all(&dir);
+        return materialise_in(repo, &dir, id, base, tree, new, new.from.is_none());
+    }
+    unreachable!("slots are unbounded")
+}
+
+/// Move a retired slot to `tree` in place: tracked files reset, untracked
+/// files removed, ignored files kept. `None` when there is no retired slot,
+/// it is damaged, or it was prepared with different dependencies.
+fn reuse_slot(repo: &Repo, dir: &Path, base: &Oid, tree: &Oid, new: &NewWorkspace) -> Option<Workspace> {
+    let retired: Workspace = serde_json::from_slice(&fs::read(dir.join(RETIRED)).ok()?).ok()?;
+    let installed = |state: &Oid| -> Option<Option<String>> {
+        crate::evidence::prepare(repo, state)
+            .ok()?
+            .map(|step| crate::evidence::prepare_key(repo, state, &step).ok())
+            .map_or(Some(None), |k| k.map(Some))
+    };
+    if installed(&retired.base_state)? != installed(tree)? {
+        return None;
+    }
+    let ws = Workspace {
+        base: base.clone(),
+        base_state: tree.clone(),
+        merge_parent: None,
+        intent: new.intent.to_string(),
+        agent: new.agent.to_string(),
+        session: new.session.map(str::to_string),
+        created: now(),
+        pid: None,
+        pid_started: None,
+        port: free_port(repo),
+        ..retired
+    };
+    fs::write(dir.join("git/zit-ignore"), excludes(repo, base).ok()?).ok()?;
+    run(ws.git().args(["reset", "--hard", "--quiet", base.as_str()])).ok()?;
+    run(ws.git().args(["clean", "-fd", "--quiet"])).ok()?;
+    ws.save().ok()?;
+    let _ = fs::remove_file(dir.join(RETIRED));
+    Some(ws)
+}
+
+/// Retire a slot: the workspace is gone, its files stay for the next one.
+fn retire_slot(ws: &Workspace) -> Result<()> {
+    let dir = ws.dir();
+    fs::rename(dir.join("meta.json"), dir.join(RETIRED))?;
+    for leftover in ["reads", "claims", "inflight.json", "summary.txt", "intent.txt", "git/index.lock"] {
+        let _ = fs::remove_file(dir.join(leftover));
+    }
+    let _ = fs::remove_dir_all(dir.join("tmp"));
+    Ok(())
 }
 
 fn build(repo: &Repo, ws: &Workspace, cache_it: bool) -> Result<()> {
@@ -572,7 +752,7 @@ mod cache {
 
 pub fn get(repo: &Repo, id: &str) -> Result<Workspace> {
     // Ids are generated here; anything else (a path, say) names no workspace.
-    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_alphanumeric()) {
+    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
         return Err(Error::UnknownWorkspace(id.to_string()));
     }
     let meta = fs::read(root(repo).join(id).join("meta.json")).map_err(|_| Error::UnknownWorkspace(id.to_string()))?;
@@ -598,11 +778,43 @@ pub fn containing(repo: &Repo, cwd: &Path) -> Option<Workspace> {
     get(repo, rel.components().next()?.as_os_str().to_str()?).ok()
 }
 
-/// Delete the view. Recorded changes are unaffected.
+/// Delete the view. Recorded changes are unaffected. A slot keeps its
+/// files for the next workspace made there (see [`stable_paths`]).
 pub fn dispose(repo: &Repo, id: &str) -> Result<()> {
     let ws = get(repo, id)?;
+    if id.starts_with(SLOT) {
+        return retire_slot(&ws);
+    }
     fs::remove_dir_all(ws.dir())?;
     Ok(())
+}
+
+/// What `dispose --orphaned` did: workspace id and agent of each.
+#[derive(Debug, Default, Serialize)]
+pub struct Orphans {
+    pub disposed: Vec<(String, String)>,
+    /// Owner gone, but holding unrecorded edits; kept unless forced.
+    pub kept: Vec<(String, String)>,
+}
+
+/// Dispose every workspace whose owning `zit run` is gone and that holds no
+/// unrecorded edits; with `force`, those with edits too. Workspaces that
+/// never had an owner (made by hand or over MCP) are not touched.
+pub fn dispose_orphaned(repo: &Repo, force: bool) -> Result<Orphans> {
+    let mut report = Orphans::default();
+    for ws in list(repo)? {
+        if ws.pid.is_none() || owner_alive(&ws) {
+            continue;
+        }
+        let who = (ws.id.clone(), ws.agent.clone());
+        if !force && is_dirty(repo, &ws).unwrap_or(true) {
+            report.kept.push(who);
+            continue;
+        }
+        dispose(repo, &ws.id)?;
+        report.disposed.push(who);
+    }
+    Ok(report)
 }
 
 /// Does the view differ from its base state?

@@ -149,7 +149,12 @@ fn a_known_agent_needs_no_command() {
         zit::run::preset("autohand", "Fix it", &writable).unwrap(),
         ["autohand", "-p", "Fix it", "--yes", "--output-format", "stream-json"]
     );
-    assert_eq!(zit::run::preset("pi", "Fix it", &writable).unwrap(), ["pi", "-p", "Fix it"]);
+    assert_eq!(zit::run::preset("pi", "Fix it", &writable).unwrap(), ["pi", "--mode", "json", "-p", "Fix it"]);
+    // Pi in its JSON mode is read like the others; in text mode its output is the account.
+    let s = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert!(zit::run::prints_json_events(&s(&["pi", "--mode", "json", "-p", "x"])));
+    assert!(zit::run::prints_json_events(&s(&["pi", "--mode=json", "-p", "x"])));
+    assert!(!zit::run::prints_json_events(&s(&["pi", "-p", "x"])));
     assert!(zit::run::preset("unknown", "x", &writable).is_none());
 }
 
@@ -234,6 +239,80 @@ fn each_run_has_a_private_temp_directory_that_goes_with_the_workspace() {
     assert!(tmp.contains("/ws/"), "inside the workspace's directory: {tmp}");
     assert!(!Path::new(tmp.trim()).exists(), "and gone with it");
     assert_eq!(status(&cli)["changes"], serde_json::json!([]), "temp files are not part of the change");
+}
+
+/// Every workspace has a TCP port of its own, so agents and checks on one machine
+/// can each start a server without colliding.
+#[test]
+fn each_workspace_has_a_port_the_agent_and_the_checks_see() {
+    let dir = tempfile::tempdir().unwrap();
+    let seen = dir.path().join("seen");
+    let config = format!(
+        "[[check]]\nname = \"port\"\nrun = \"test -n \\\"$ZIT_PORT\\\" && echo $ZIT_PORT >> {}\"\n",
+        seen.display()
+    );
+    let cli = Cli::new(dir.path(), &[("zit.toml", &config), ("a.txt", "a\n")]);
+    cli.run(&["init"]).ok();
+    let script = format!("echo $ZIT_PORT >> {}; echo b > b.txt", seen.display());
+    let ran = cli.run(&["run", "--accept", "--keep", "--json", "--", "sh", "-c", &script]).ok().json();
+    assert_eq!(ran["outcome"]["outcome"], "accepted");
+    let seen = std::fs::read_to_string(&seen).unwrap();
+    let ports: Vec<u16> = seen.lines().map(|l| l.trim().parse().expect(l)).collect();
+    assert_eq!(ports.len(), 2, "the agent and the check both saw a port: {seen:?}");
+    let s = status(&cli);
+    let ws = &s["workspaces"][0];
+    assert_eq!(ws["port"], ports[0], "{ws}");
+    assert_ne!(ports[0], ports[1], "the verification view has a port of its own");
+    let other = cli.run(&["materialise", "--json"]).ok().json();
+    assert!(other["port"].is_number());
+    assert_ne!(other["port"], ws["port"], "live workspaces never share a port");
+}
+
+/// `--log` keeps the end of the agent's combined output with the change; `show --log` prints it.
+#[test]
+fn run_log_keeps_the_agents_output_with_the_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = cli(dir.path());
+    // 100 KB of numbered lines, then a last word on stderr: only the end is kept.
+    let script = "i=0; while [ $i -lt 10000 ]; do printf 'line %05d padding\\n' $i; i=$((i+1)); done; echo last-word >&2; echo b > b.txt";
+    let ran = cli.run(&["run", "--log", "--json", "--", "sh", "-c", script]).ok().json();
+    let id = ran["change"]["id"].as_str().unwrap().to_string();
+    let shown = cli.run(&["show", &id, "--log"]).ok().stdout;
+    assert!(shown.len() <= 64 * 1024, "{} bytes", shown.len());
+    // Two pipes: the streams' relative order is not kept, their content is.
+    assert!(shown.contains("line 09999 padding") && shown.contains("last-word\n"), "{shown:.200}");
+    assert!(!shown.contains("line 00000"), "the start was dropped");
+    assert_eq!(
+        common::git(&cli.root, &["cat-file", "-t", &format!("refs/zit/logs/{id}")]),
+        "blob",
+        "stored in the repository"
+    );
+    assert_eq!(cli.run(&["show", &id, "--log", "--json"]).ok().json()["log"].as_str().unwrap(), shown);
+
+    // Without --log nothing is kept, and show says so.
+    let ran = cli.run(&["run", "--json", "--", "sh", "-c", "echo hello; echo c > c.txt"]).ok().json();
+    let id = ran["change"]["id"].as_str().unwrap();
+    let none = cli.run(&["show", id, "--log"]);
+    assert_ne!(none.code, 0);
+    assert!(none.stderr.contains("no log"), "{}", none.stderr);
+}
+
+/// An agent may set the recorded change's intent by writing `$ZIT_INTENT_FILE`,
+/// as it may its account with `$ZIT_SUMMARY_FILE`.
+#[test]
+fn an_agent_can_write_the_intent_of_its_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = cli(dir.path());
+    let script = "printf 'Add b, as the task\\nreally meant\\n' > \"$ZIT_INTENT_FILE\"; echo b > b.txt";
+    let ran = cli.run(&["run", "--intent", "Given", "--json", "--", "sh", "-c", script]).ok().json();
+    assert_eq!(ran["change"]["intent"], "Add b, as the task\nreally meant");
+    let shown = cli.run(&["show", ran["change"]["id"].as_str().unwrap()]).ok().stdout;
+    assert!(shown.contains("intent   Add b, as the task"), "{shown}");
+
+    // An empty file changes nothing.
+    let script = "printf '  \\n' > \"$ZIT_INTENT_FILE\"; echo c > c.txt";
+    let ran = cli.run(&["run", "--intent", "Given", "--json", "--", "sh", "-c", script]).ok().json();
+    assert_eq!(ran["change"]["intent"], "Given");
 }
 
 /// Processes the agent left behind (a dev server, a watcher) must not keep writing while its work is recorded.
