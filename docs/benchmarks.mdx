@@ -3,7 +3,7 @@ title: Benchmarks
 description: Zit measured against git worktrees, on one machine, including where it is slower.
 ---
 
-Every number in sections 1–6 is generated from `bench/results/*.json` by `bench/report.py`. Reproduce: sections 1–3 with `bench/run.sh`, 1b with `.github/workflows/bench-linux.yml`, 4 with `bench/run-agents.sh`, 5 with `bench/space.sh`, 6 with `bench/sim/simulate.py`. Section 7 is from the four scripts it names, run by hand.
+Every number in sections 1–6 is generated from `bench/results/*.json` by `bench/report.py`. Reproduce: sections 1–3 with `bench/run.sh`, 1b with `.github/workflows/bench-linux.yml`, 4 with `bench/run-agents.sh`, 5 with `bench/space.sh`, 6 with `bench/sim/simulate.py`. Section 7 is from the four scripts it names, run by hand; section 8 from `bench/crates-download/`, with its raw results in `bench/results/crates-download/`.
 
 ## How to read this
 
@@ -217,6 +217,22 @@ ADR 7's table counts with `ZIT_TRACE` on a smaller project and gives lower numbe
 **`bench/awareness.sh`**: `zit status` with 30 open workspaces that all have unrecorded edits, cold: 216 → 169 ms, 94 → 63 git processes (the object directory is found without a `rev-parse` per workspace).
 
 Also in this pass, not scripted: a `record` of 200 changed files went from about 520 to about 345 ms (median of 4) by parsing the files on several threads once a change touches 8 or more.
+
+## 8. Installing from crates.io, 300 times at once
+
+What `cargo install zit --locked` downloads is the crate (763 KB) and its 220 locked dependencies (31.9 MB of `.crate` files). `bench/crates-download/run.sh` starts fresh installers as Docker containers, each with an empty cargo cache on tmpfs, that fetch the tarball from `static.crates.io` and then `cargo fetch --locked` the crate's own `Cargo.lock`; nothing is cached or shared between them. Measured on 7 October 2026 from one Mac (Docker Desktop, 16 CPUs, 8 GB) over one home connection, Zit 0.1.2, Rust 1.88.
+
+| | Alone | 300 installers, 20 at a time |
+|---|---:|---:|
+| Installers that succeeded | 1 of 1 | 300 of 300 |
+| Crate tarball, median | 0.13 s | 1.8 s (p90 2.8 s) |
+| 220 dependencies, median | 3.6 s | 22.5 s (p90 25.5 s) |
+| Whole download, median | 3.7 s | 24.4 s (p90 27.4 s, max 31.7 s) |
+| All 300 | | 9.6 GB in 367 s: 26.1 MB/s, 49 installers a minute |
+
+Throughput was flat in every 30-second slice of the run (22–27 installers finished per slice), and the crate tarball, a single small file, took 14× longer under load than alone: the machine's own connection was saturated at about 26 MB/s. These numbers say what one client with that connection sees, not what crates.io's CDN can serve.
+
+The compile that follows the download: `bench/crates-download/install.sh` ran the whole `cargo install zit --locked` in a container with 4 CPUs, twice, from empty caches: 33 s and 34 s, of which the download is about 4 s.
 
 ## What these numbers say
 

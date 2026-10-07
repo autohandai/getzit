@@ -1,0 +1,9 @@
+2026-10-07T22:04:24Z start total=300 concurrency=20 version=0.1.2
+2026-10-07T22:10:31Z end wall=367s
+installers 300, succeeded 300, failed 0
+crate tarball (763 KB)       median     1836 ms  p90     2798  max     3874  min      113
+cargo fetch, 220 crates      median    22491 ms  p90    25503  max    29272  min     9693
+total download               median    24350 ms  p90    27420  max    31675  min    10171
+cache per installer          median     31.9 MB
+crates per installer         median      220
+all installers                   9584 MB in 367 s = 26.1 MB/s sustained, 49.0 installers/min
