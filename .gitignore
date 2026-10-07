@@ -5,3 +5,9 @@ dist/
 .env.local
 .blume-verify/
 demo/out/
+# Cloudflare deploy config and state: local only
+wrangler.jsonc
+wrangler.json
+wrangler.toml
+.wrangler/
+.dev.vars

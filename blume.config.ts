@@ -6,6 +6,10 @@ export default defineConfig({
   content: {
     root: "docs",
   },
+  // Cloudflare Workers does not expose the site's URL; canonical links, the sitemap and llms.txt need it.
+  deployment: {
+    site: "https://getzit.org",
+  },
   ai: {
     // Autohand Dev is added first by components/OpenInAutohand.astro; v0 goes last.
     openInChat: ["chatgpt", "claude", "t3", "cursor", "v0"],

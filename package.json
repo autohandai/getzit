@@ -6,7 +6,8 @@
     "dev": "blume dev",
     "build": "blume build",
     "doctor": "blume doctor",
-    "validate": "blume validate"
+    "validate": "blume validate",
+    "deploy": "rm -rf dist && blume build && wrangler deploy"
   },
   "dependencies": {
     "blume": "^2.1.1"
