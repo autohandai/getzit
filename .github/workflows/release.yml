@@ -73,7 +73,9 @@ jobs:
       - name: Notes from the changelog
         run: |
           version="${GITHUB_REF_NAME#v}"
-          awk -v v="$version" '$0 ~ "^## "v" " {on=1; next} /^## / {on=0} on' CHANGELOG.md > notes.md
+          # The changelog links ADRs by relative path; a release page needs absolute ones.
+          awk -v v="$version" '$0 ~ "^## "v" " {on=1; next} /^## / {on=0} on' CHANGELOG.md \
+            | sed -E "s#\]\((adr/[^)]+)\)#](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/\1)#g" > notes.md
           test -s notes.md || echo "Zit $version" > notes.md
       - name: Create the release
         env:
