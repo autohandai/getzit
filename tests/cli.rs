@@ -408,7 +408,9 @@ fn the_github_integrator_script_accepts_fetched_changes_and_publishes_them() {
     );
     dev.run(&["init"]).ok();
     let origin = dir.path().join("origin.git");
-    git(dir.path(), &["init", "-q", "--bare", origin.to_str().unwrap()]);
+    // Named like the branch pushed below, whatever this machine's init.defaultBranch is,
+    // so the clone checks it out as actions/checkout would.
+    git(dir.path(), &["init", "-q", "--bare", "-b", "main", origin.to_str().unwrap()]);
     git(&dev.root, &["remote", "add", "origin", origin.to_str().unwrap()]);
     git(&dev.root, &["push", "-q", "origin", "main"]);
     let caller = change(&dev, "codex", &[("src/shop.rs", "pub fn buy() { lib::price(3); }\n")]);
