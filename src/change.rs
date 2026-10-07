@@ -164,6 +164,8 @@ pub(crate) fn message(
         msg.push_str(&format!("Zit-Session: {session}\n"));
     }
     for read in reads {
+        // One line, whatever the name contains: a newline would end the trailer and start another.
+        let read = printable(&read.to_string()).replace(['\n', '\t'], " ");
         msg.push_str(&format!("Zit-Read: {read}\n"));
     }
     msg

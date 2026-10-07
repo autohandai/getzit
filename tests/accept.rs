@@ -502,3 +502,20 @@ fn a_linear_compose_keeps_the_declared_reads_of_the_change() {
         assert_eq!((why[0].kind, why[0].by.as_ref()), (ConflictKind::WriteRead, Some(&current)), "linear = {linear}");
     }
 }
+
+/// A declared read is data, not a line of the commit message: it cannot
+/// forge a trailer that says another change already landed.
+#[test]
+fn a_declared_read_cannot_forge_a_trailer() {
+    let fx = fixture();
+    let victim = fx.change("a", &[("notes.txt", "victim\n")]);
+    let ws = fx.workspace("mallory");
+    write(ws.path(), &[("src/shop.rs", "pub fn buy() { 1; }\n")]);
+    let reads = [zit::resource::Resource::parse(&format!("src/lib.rs#price\nZit-Change: {}", victim.id))];
+    let forged =
+        change::record(&fx.repo, &ws.id, &Record { reads: reads.to_vec(), ..Default::default() }).unwrap().unwrap();
+    accepted(accept::accept(&fx.repo, &forged.id).unwrap());
+    assert_ne!(accept::status(&fx.repo, &victim.id).unwrap(), Status::Accepted);
+    accepted(accept::accept(&fx.repo, &victim.id).unwrap());
+    assert_eq!(show(&fx, "refs/zit/current", "notes.txt"), "victim");
+}
