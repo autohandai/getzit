@@ -2,7 +2,7 @@
 
 Commits are yours and can be signed; history can be linear; changes reach protected branches through pull requests; each change carries its cost.
 
-**Status:** accepted. Amends [ADR 4](0004-acceptance.md) and [ADR 8](0008-agent-integration.md). Came out of [Review 01](../feedback/review-01.md).
+**Status:** accepted. Amends [ADR 4](0004-acceptance.md) and [ADR 8](0008-agent-integration.md). Came out of a hostile review of 0.1.0.
 
 ## Context
 

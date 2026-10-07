@@ -2,7 +2,7 @@
 
 Readers depend on interfaces; methods and imports are units of their own.
 
-**Status:** accepted. Amends [ADR 3](0003-resources-and-footprints.md). Came out of [Review 01](../feedback/review-01.md).
+**Status:** accepted. Amends [ADR 3](0003-resources-and-footprints.md). Came out of a hostile review of 0.1.0.
 
 ## Context
 

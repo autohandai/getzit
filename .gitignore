@@ -11,3 +11,6 @@ wrangler.json
 wrangler.toml
 .wrangler/
 .dev.vars
+
+# Private review notes: kept locally, never committed
+feedback/

@@ -2,7 +2,7 @@
 
 The gate comes from the accepting side, and agents can do work but not land it.
 
-**Status:** accepted. Amends [ADR 6](0006-evidence.md) and [ADR 8](0008-agent-integration.md). Came out of [Review 01](../feedback/review-01.md).
+**Status:** accepted. Amends [ADR 6](0006-evidence.md) and [ADR 8](0008-agent-integration.md). Came out of a hostile review of 0.1.0.
 
 ## Context
 
