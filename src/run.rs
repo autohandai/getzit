@@ -153,6 +153,7 @@ pub fn run(repo: &Repo, opts: &Run) -> Result<Report> {
     };
     let mut ws = workspace::materialise(repo, &new)?;
     ws.pid = Some(std::process::id());
+    ws.pid_started = workspace::process_start(std::process::id());
     ws.save()?;
 
     let summary_file = ws.summary_file();

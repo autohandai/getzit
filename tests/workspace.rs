@@ -273,6 +273,56 @@ fn stable_paths_can_be_set_in_git_config() {
     assert!(ws.path().ends_with("ws/slot-0/tree"), "{}", ws.path().display());
 }
 
+/// A pid can be reused; the owner's start time tells a live `zit run` from a
+/// stranger that got its number.
+#[test]
+fn an_owner_pid_with_another_start_time_is_gone() {
+    let fx = Fixture::new(FILES);
+    let mut agent = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+    let mut ws = fx.workspace("claude");
+    let save = |ws: &workspace::Workspace| {
+        fs::write(ws.path().parent().unwrap().join("meta.json"), serde_json::to_vec(ws).unwrap()).unwrap()
+    };
+    let alive = || zit::api::overview(&fx.repo).unwrap().workspaces[0].alive;
+
+    ws.pid = Some(agent.id());
+    ws.pid_started = workspace::process_start(agent.id());
+    assert!(ws.pid_started.is_some(), "the start time of a live process is known");
+    save(&ws);
+    assert_eq!(alive(), Some(true));
+    assert!(workspace::owner_alive(&ws));
+
+    ws.pid_started = Some(1);
+    save(&ws);
+    assert_eq!(alive(), Some(false), "same pid, different start time: a different process");
+    assert!(!workspace::owner_alive(&ws));
+    assert_eq!(zit::clean::clean(&fx.repo, false).unwrap().workspaces, 1, "clean does not mistake it for a run");
+
+    // A meta.json written before start times were recorded: the pid alone decides.
+    let ws = fx.workspace("codex");
+    let mut meta: serde_json::Value =
+        serde_json::from_slice(&fs::read(ws.path().parent().unwrap().join("meta.json")).unwrap()).unwrap();
+    meta["pid"] = serde_json::json!(agent.id());
+    meta.as_object_mut().unwrap().remove("pid_started");
+    fs::write(ws.path().parent().unwrap().join("meta.json"), serde_json::to_vec(&meta).unwrap()).unwrap();
+    assert_eq!(alive(), Some(true));
+    agent.kill().unwrap();
+    agent.wait().unwrap();
+    assert_eq!(alive(), Some(false));
+}
+
+/// `zit run` records its own start time with the workspace.
+#[test]
+fn run_records_the_owners_start_time() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = common::Cli::new(dir.path(), FILES);
+    cli.run(&["init"]).ok();
+    let script = "cat \"$(dirname \"$(git rev-parse --git-dir)\")/meta.json\"";
+    let out = cli.run(&["run", "--", "sh", "-c", script]).ok().stdout;
+    let meta: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(meta["pid"].is_number() && meta["pid_started"].is_number(), "{meta}");
+}
+
 fn both_with(files: &[(&str, &str)], test: impl Fn(Fixture)) {
     test(Fixture::with_strategy(files, Strategy::Clone));
     test(Fixture::with_strategy(files, Strategy::Checkout));

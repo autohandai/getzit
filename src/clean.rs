@@ -54,7 +54,7 @@ pub fn clean(repo: &Repo, force: bool) -> Result<Report> {
     if !force {
         let mut blocked = Vec::new();
         for ws in &spaces {
-            if ws.pid.is_some_and(workspace::process_alive) {
+            if workspace::owner_alive(ws) {
                 blocked.push(format!("{} ({}) is running", ws.id, ws.agent));
             } else if workspace::is_dirty(repo, ws).unwrap_or(true) {
                 blocked.push(format!("{} ({}) has unrecorded edits", ws.id, ws.agent));

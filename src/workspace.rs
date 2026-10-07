@@ -36,6 +36,10 @@ pub struct Workspace {
     pub created: u64,
     /// Process that owns the view, if any (`zit run`).
     pub pid: Option<u32>,
+    /// When `pid` started, as [`process_start`] reports it: a process with
+    /// that pid but another start time is a stranger that got its number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid_started: Option<u64>,
     /// A TCP port free when the view was made and held by no other live
     /// workspace, exported as `$ZIT_PORT` to agents and checks. Nothing
     /// reserves it: a program outside Zit may take it in the meantime.
@@ -134,6 +138,49 @@ pub fn process_alive(pid: u32) -> bool {
     probed == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
+/// When process `pid` started, as an opaque number that only another call
+/// on the same machine compares to (macOS: microseconds since the epoch,
+/// from `proc_pidinfo`; Linux: clock ticks since boot, field 22 of
+/// `/proc/<pid>/stat`). `None` when there is no such process or it cannot be
+/// inspected.
+#[cfg(target_os = "macos")]
+pub fn process_start(pid: u32) -> Option<u64> {
+    // SAFETY: `info` is a properly sized out-parameter for PROC_PIDTBSDINFO.
+    let (info, written) = unsafe {
+        let mut info: libc::proc_bsdinfo = std::mem::zeroed();
+        let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+        let written =
+            libc::proc_pidinfo(pid as libc::c_int, libc::PROC_PIDTBSDINFO, 0, &mut info as *mut _ as *mut _, size);
+        (info, written)
+    };
+    (written == std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int)
+        .then(|| info.pbi_start_tvsec * 1_000_000 + info.pbi_start_tvusec)
+}
+
+#[cfg(target_os = "linux")]
+pub fn process_start(pid: u32) -> Option<u64> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // Fields after the parenthesised command name; `starttime` is field 22 overall.
+    let after = stat.rsplit_once(')')?.1;
+    after.split_whitespace().nth(19)?.parse().ok()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub fn process_start(_pid: u32) -> Option<u64> {
+    None
+}
+
+/// Whether the `zit run` that owns `ws` still exists: its pid is alive and,
+/// when the start time was recorded and can be read, it is the same process.
+pub fn owner_alive(ws: &Workspace) -> bool {
+    let Some(pid) = ws.pid else { return false };
+    process_alive(pid)
+        && match (ws.pid_started, process_start(pid)) {
+            (Some(recorded), Some(found)) => recorded == found,
+            _ => true,
+        }
+}
+
 pub(crate) fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
@@ -226,6 +273,7 @@ pub(crate) fn materialise_in(
         session: new.session.map(str::to_string),
         created: now(),
         pid: None,
+        pid_started: None,
         port: free_port(repo),
         path: dir.join("tree"),
     };
@@ -302,6 +350,7 @@ fn reuse_slot(repo: &Repo, dir: &Path, base: &Oid, tree: &Oid, new: &NewWorkspac
         session: new.session.map(str::to_string),
         created: now(),
         pid: None,
+        pid_started: None,
         port: free_port(repo),
         ..retired
     };
