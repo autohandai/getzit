@@ -346,7 +346,7 @@ fn doctor_checks_the_machine_the_repository_and_the_agents() {
     assert_eq!(status("gh"), "pass");
     assert!(detail("gh").starts_with("gh version 2.80.0"));
     assert_eq!(status("languages"), "pass");
-    for lang in ["go", "javascript", "python", "rust", "typescript"] {
+    for lang in ["c#", "go", "java", "javascript", "python", "ruby", "rust", "typescript"] {
         assert!(detail("languages").contains(lang), "{}", detail("languages"));
     }
 

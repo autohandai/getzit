@@ -380,7 +380,17 @@ pub fn doctor(cwd: &std::path::Path) -> Doctor {
         None => probe("gh", Health::Warn, "not on PATH; `zit export --pr` needs it".into()),
     }
 
-    let languages = [("go", "go"), ("js", "javascript"), ("py", "python"), ("rs", "rust"), ("ts", "typescript")];
+    // Every grammar built in: an empty file parses when its language loads.
+    let languages = [
+        ("cs", "c#"),
+        ("go", "go"),
+        ("java", "java"),
+        ("js", "javascript"),
+        ("py", "python"),
+        ("rb", "ruby"),
+        ("rs", "rust"),
+        ("ts", "typescript"),
+    ];
     let built: Vec<&str> = languages
         .iter()
         .filter(|(ext, _)| crate::symbols::index(&format!("probe.{ext}"), b"").is_some())
