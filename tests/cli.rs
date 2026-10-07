@@ -1,7 +1,10 @@
 mod common;
 
-use common::{git, write, Cli};
+use common::{git, write, Cli, Fixture};
 use std::path::Path;
+use zit::change::{self, Record, Usage};
+use zit::workspace::{self, NewWorkspace};
+use zit::{accept, Oid};
 
 const LIB: &str = "pub fn price(x: u32) -> u32 {\n    x\n}\n\npub fn tax(x: u32) -> u32 {\n    x / 10\n}\n";
 
@@ -163,6 +166,313 @@ fn claim_exits_1_and_names_the_holder_when_refused() {
 
     let status = cli.run(&["status"]).ok();
     assert!(status.stdout.contains("claims src/lib.rs#price, src/shop.rs"), "{}", status.stdout);
+}
+
+/// A recorded change with an account and a reported cost, as `zit run` leaves one.
+fn costed(fx: &Fixture, agent: &str, intent: &str, summary: &str, usage: Option<Usage>, file: (&str, &str)) -> Oid {
+    let new = NewWorkspace { from: None, intent, agent, session: None };
+    let ws = workspace::materialise(&fx.repo, &new).unwrap();
+    write(ws.path(), &[file]);
+    let opts = Record { summary: Some(summary.to_string()), usage, ..Default::default() };
+    let change = change::record(&fx.repo, &ws.id, &opts).unwrap().unwrap();
+    workspace::dispose(&fx.repo, &ws.id).unwrap();
+    change.id
+}
+
+/// `zit log`: the accepted history, newest first, with what each change cost and the totals.
+#[test]
+fn log_lists_accepted_changes_with_their_cost_and_totals() {
+    let fx = Fixture::new(&[("a.txt", "a\n")]);
+    let cost = |i, o, c| Some(Usage { input_tokens: i, output_tokens: o, cost_usd: c });
+    let first = costed(
+        &fx,
+        "claude",
+        "Raise the price",
+        "Finance asked.\n\nMore detail.",
+        cost(1000, 50, Some(0.25)),
+        ("a.txt", "1\n"),
+    );
+    accept::accept(&fx.repo, &first).unwrap();
+    let second = costed(&fx, "codex", "Add tax", "Tax is law.", cost(300, 10, None), ("b.txt", "2\n"));
+    accept::accept(&fx.repo, &second).unwrap();
+    let unaccepted = costed(&fx, "pi", "Not yet", "Pending.", None, ("c.txt", "3\n"));
+    let cli = Cli { root: fx.root(), home: fx.dir.path().join("home") };
+
+    let log = cli.run(&["log", "--json"]).ok().json();
+    assert_eq!(log["schema"], 1);
+    let changes = log["changes"].as_array().unwrap();
+    assert_eq!(changes.len(), 3, "second, first, genesis: {changes:?}");
+    assert_eq!(changes[0]["id"], second.as_str());
+    assert_eq!(changes[0]["usage"]["input_tokens"], 300);
+    assert_eq!(changes[1]["id"], first.as_str());
+    assert_eq!(changes[1]["usage"]["cost_usd"], 0.25);
+    assert!(changes[2]["usage"].is_null(), "a plain git commit reports no cost");
+    assert!(!changes.iter().any(|c| c["id"] == unaccepted.as_str()), "only accepted history is listed");
+    assert_eq!(
+        log["totals"],
+        serde_json::json!({"changes": 3, "input_tokens": 1300, "output_tokens": 60, "cost_usd": 0.25})
+    );
+
+    let text = cli.run(&["log"]).ok().stdout;
+    assert!(text.contains(second.short()) && text.contains("codex") && text.contains("Add tax"), "{text}");
+    assert!(text.contains("Finance asked.") && !text.contains("More detail."), "first line of the account: {text}");
+    assert!(text.contains("1000 in, 50 out, $0.2500") && text.contains("300 in, 10 out"), "{text}");
+    assert!(text.contains("3 changes, 1300 tokens in, 60 out, $0.2500"), "{text}");
+
+    let limited = cli.run(&["log", "-n", "1", "--json"]).ok().json();
+    assert_eq!(limited["changes"].as_array().unwrap().len(), 1);
+    assert_eq!(limited["totals"]["input_tokens"], 300, "totals cover what is listed");
+}
+
+/// `zit diff`: what a change did, against its base by default or against current.
+#[test]
+fn diff_shows_a_change_against_its_base_or_against_current() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = cli(dir.path());
+    let landed = change(&cli, "claude", &[("src/shop.rs", "pub fn buy() { 1; }\n")]);
+    let b = change(&cli, "codex", &[("src/lib.rs", &LIB.replace("x / 10", "x / 5"))]);
+    cli.run(&["accept", &landed]).ok();
+
+    let base = cli.run(&["diff", &b]).ok().stdout;
+    assert!(base.contains("+    x / 5") && base.contains("-    x / 10"), "{base}");
+    assert!(!base.contains("shop.rs"), "against its own base, shop.rs is untouched: {base}");
+
+    let current = cli.run(&["diff", &b, "--against", "current"]).ok().stdout;
+    assert!(current.contains("-pub fn buy() { 1; }"), "current has shop.rs edits the change lacks: {current}");
+    assert!(current.contains("+    x / 5"), "{current}");
+
+    let stat = cli.run(&["diff", &b, "--stat"]).ok().stdout;
+    assert!(stat.contains("src/lib.rs") && stat.contains("1 file changed"), "{stat}");
+    assert!(!stat.contains("+    x / 5"), "a summary, not the patch: {stat}");
+
+    let json = cli.run(&["diff", &b, "--json"]).ok().json();
+    assert_eq!(json["schema"], 1);
+    assert_eq!(json["change"], b.as_str());
+    assert_eq!(json["against"], git(&cli.root, &["rev-parse", &format!("{b}^")]));
+    assert!(json["diff"].as_str().unwrap().contains("+    x / 5"));
+
+    assert_eq!(cli.run(&["diff", "nope"]).code, 2);
+}
+
+/// `zit completions SHELL` prints a completion script for bash, zsh or fish; no repository needed.
+#[test]
+fn completions_are_generated_for_each_shell() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = Cli::new(dir.path(), &[("a.txt", "a\n")]);
+    for (shell, marker) in [("bash", "_zit()"), ("zsh", "#compdef zit"), ("fish", "complete -c zit")] {
+        let out = cli.run_in(dir.path(), &["completions", shell]).ok().stdout;
+        assert!(out.contains(marker), "{shell}: {}", &out[..out.len().min(200)]);
+        assert!(out.contains("materialise") && out.contains("log"), "{shell} knows every subcommand");
+    }
+    assert_eq!(cli.run_in(dir.path(), &["completions", "powershell"]).code, 2, "only shells it is tested for");
+}
+
+fn fake_program(bin: &Path, name: &str, script: &str) {
+    std::fs::create_dir_all(bin).unwrap();
+    let path = bin.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
+    std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+}
+
+/// A PATH holding `bin`, git, and the usual system directories only.
+fn narrow_path(bin: &Path) -> String {
+    let path = std::env::var("PATH").unwrap();
+    let git_dir = std::env::split_paths(&path).find(|p| p.join("git").is_file()).expect("git on PATH");
+    let dirs = [bin.to_path_buf(), git_dir, "/usr/bin".into(), "/bin".into()];
+    std::env::join_paths(dirs).unwrap().into_string().unwrap()
+}
+
+fn doctor(cli: &Cli, cwd: &Path, path: &str, json: bool) -> common::Ran {
+    let mut args = vec!["doctor"];
+    if json {
+        args.push("--json");
+    }
+    let out = cli.command(cwd).env("PATH", path).args(args).output().unwrap();
+    common::Ran {
+        code: out.status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&out.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&out.stderr).to_string(),
+    }
+}
+
+/// `zit doctor`: one line per check, pass/warn/fail, exit 1 only when something fails.
+#[test]
+fn doctor_checks_the_machine_the_repository_and_the_agents() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = Cli::new(dir.path(), &[("zit.toml", "[[check]]\nname = \"t\"\nrun = \"test -f ok\"\n"), ("ok", "\n")]);
+    let bin = dir.path().join("bin");
+    fake_program(&bin, "claude", "echo '2.1.288 (Claude Code)'");
+    fake_program(&bin, "gh", "echo 'gh version 2.80.0 (2025-10-01)'");
+    let path = narrow_path(&bin);
+
+    // Before `zit init`: the repository check fails, and so does the command.
+    let before = doctor(&cli, &cli.root, &path, true);
+    assert_eq!(before.code, 1, "{}", before.stdout);
+    let report = before.json();
+    assert_eq!(report["schema"], 1);
+    let checks = report["checks"].as_array().unwrap().clone();
+    let find = |name: &str| checks.iter().find(|c| c["name"] == name).unwrap_or_else(|| panic!("no check {name}"));
+    assert_eq!(find("repository")["status"], "fail");
+    assert!(find("repository")["detail"].as_str().unwrap().contains("zit init"));
+
+    cli.run(&["init"]).ok();
+    let after = doctor(&cli, &cli.root, &path, true);
+    assert_eq!(after.code, 0, "{}\n{}", after.stdout, after.stderr);
+    let checks = after.json()["checks"].as_array().unwrap().clone();
+    let find = |name: &str| checks.iter().find(|c| c["name"] == name).unwrap_or_else(|| panic!("no check {name}"));
+    let status = |name: &str| find(name)["status"].as_str().unwrap().to_string();
+    let detail = |name: &str| find(name)["detail"].as_str().unwrap().to_string();
+    assert_eq!(status("git"), "pass");
+    assert!(detail("git").contains("git version 2."), "{}", detail("git"));
+    assert_eq!(status("home"), "pass");
+    assert!(detail("home").contains(cli.home.to_str().unwrap()), "{}", detail("home"));
+    assert!(["pass", "warn"].contains(&status("copy-on-write").as_str()));
+    assert!(!detail("copy-on-write").is_empty(), "names the file system");
+    assert!(["pass", "warn"].contains(&status("free space").as_str()));
+    assert!(detail("free space").contains("GB"), "{}", detail("free space"));
+    assert_eq!(status("repository"), "pass");
+    assert!(detail("repository").contains(&git(&cli.root, &["rev-parse", "--short=10", "HEAD"])));
+    assert_eq!(status("zit.toml"), "pass");
+    assert!(detail("zit.toml").contains("1 check"), "{}", detail("zit.toml"));
+    assert_eq!(status("agent claude"), "pass");
+    assert_eq!(detail("agent claude"), "2.1.288 (Claude Code)");
+    for missing in ["agent autohand", "agent codex", "agent pi"] {
+        assert_eq!(status(missing), "warn", "{missing}");
+        assert!(detail(missing).contains("not on PATH"), "{}", detail(missing));
+    }
+    assert_eq!(status("gh"), "pass");
+    assert!(detail("gh").starts_with("gh version 2.80.0"));
+    assert_eq!(status("languages"), "pass");
+    for lang in ["go", "javascript", "python", "rust", "typescript"] {
+        assert!(detail("languages").contains(lang), "{}", detail("languages"));
+    }
+
+    let text = doctor(&cli, &cli.root, &path, false);
+    assert_eq!(text.code, 0);
+    assert!(text.stdout.lines().any(|l| l.starts_with("pass  git ")), "{}", text.stdout);
+    assert!(text.stdout.lines().any(|l| l.starts_with("warn  agent codex")), "{}", text.stdout);
+    assert!(text.stdout.lines().all(|l| l.starts_with("pass  ") || l.starts_with("warn  ")), "{}", text.stdout);
+
+    // Outside any repository the machine checks still run; the repository check fails.
+    let outside = doctor(&cli, dir.path(), &path, true);
+    assert_eq!(outside.code, 1);
+    let checks = outside.json()["checks"].as_array().unwrap().clone();
+    let find = |name: &str| checks.iter().find(|c| c["name"] == name).unwrap();
+    assert_eq!(find("git")["status"], "pass");
+    assert_eq!(find("repository")["status"], "fail");
+    assert!(find("repository")["detail"].as_str().unwrap().contains("not a git repository"));
+}
+
+/// A check whose program is missing, or a zit.toml that does not parse, fails the doctor:
+/// every accept would be rejected.
+#[test]
+fn doctor_fails_on_a_missing_check_program_or_a_broken_zit_toml() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = Cli::new(dir.path(), &[("zit.toml", "[[check]]\nname = \"t\"\nrun = \"FOO=1 no-such-tool-zz --all\"\n")]);
+    cli.run(&["init"]).ok();
+    let path = narrow_path(&dir.path().join("bin"));
+    let ran = doctor(&cli, &cli.root, &path, false);
+    assert_eq!(ran.code, 1, "{}", ran.stdout);
+    let line = ran.stdout.lines().find(|l| l.starts_with("fail  zit.toml")).unwrap_or_else(|| panic!("{}", ran.stdout));
+    assert!(line.contains("no-such-tool-zz") && line.contains("check t"), "{line}");
+
+    let broken = tempfile::tempdir().unwrap();
+    let cli = Cli::new(broken.path(), &[("zit.toml", "[[check]\n")]);
+    cli.run(&["init"]).ok();
+    let ran = doctor(&cli, &cli.root, &path, true);
+    assert_eq!(ran.code, 1);
+    let checks = ran.json()["checks"].as_array().unwrap().clone();
+    let toml = checks.iter().find(|c| c["name"] == "zit.toml").unwrap();
+    assert_eq!(toml["status"], "fail");
+    assert!(toml["detail"].as_str().unwrap().contains("zit.toml"), "{toml}");
+}
+
+/// The GitHub Actions integrator's shell logic (integrations/github/integrate.sh), run here
+/// against a local bare "origin": fetch refs/zit/*, accept what can land in recorded order,
+/// export to the branch, push the branch and the graph back.
+#[test]
+fn the_github_integrator_script_accepts_fetched_changes_and_publishes_them() {
+    let dir = tempfile::tempdir().unwrap();
+    // The developers' side: changes recorded and pushed with the graph.
+    let dev = Cli::new(
+        dir.path(),
+        &[
+            ("src/lib.rs", LIB),
+            ("src/shop.rs", "pub fn buy() {}\n"),
+            ("zit.toml", "[[check]]\nname = \"t\"\nrun = \"test -f ok\"\n"),
+            ("ok", "\n"),
+        ],
+    );
+    dev.run(&["init"]).ok();
+    let origin = dir.path().join("origin.git");
+    git(dir.path(), &["init", "-q", "--bare", origin.to_str().unwrap()]);
+    git(&dev.root, &["remote", "add", "origin", origin.to_str().unwrap()]);
+    git(&dev.root, &["push", "-q", "origin", "main"]);
+    let caller = change(&dev, "codex", &[("src/shop.rs", "pub fn buy() { lib::price(3); }\n")]);
+    let good = change(&dev, "pi", &[("src/lib.rs", &LIB.replace("x / 10", "x / 5"))]);
+    let callee = change(&dev, "claude", &[("src/lib.rs", &LIB.replace("price(x: u32)", "price(x: u32, t: u32)"))]);
+    dev.run(&["accept", &callee]).ok();
+    git(&dev.root, &["push", "-q", "origin", "refs/zit/*:refs/zit/*"]);
+
+    // The integrator's side: a fresh clone, as actions/checkout leaves one.
+    let ci = dir.path().join("ci");
+    git(dir.path(), &["clone", "-q", origin.to_str().unwrap(), ci.to_str().unwrap()]);
+    git(&ci, &["config", "user.name", "integrator"]);
+    git(&ci, &["config", "user.email", "ci@example.com"]);
+    let outputs = dir.path().join("outputs.txt");
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("integrations/github/integrate.sh");
+    let ran = std::process::Command::new("bash")
+        .arg(&script)
+        .current_dir(&ci)
+        .env("ZIT", env!("CARGO_BIN_EXE_zit"))
+        .env("ZIT_HOME", dir.path().join("ci-home"))
+        .env("ZIT_TRUST_EVIDENCE", "false")
+        .env("GITHUB_OUTPUT", &outputs)
+        .output()
+        .unwrap();
+    let (out, err) = (String::from_utf8_lossy(&ran.stdout), String::from_utf8_lossy(&ran.stderr));
+    assert!(ran.status.success(), "stdout:\n{out}\nstderr:\n{err}");
+    let outputs = std::fs::read_to_string(&outputs).unwrap();
+    let output = |key: &str| {
+        outputs.lines().find_map(|l| l.strip_prefix(&format!("{key}="))).unwrap_or_else(|| panic!("{key} in {outputs}"))
+    };
+    assert_eq!(output("accepted"), good, "the compatible change landed");
+    assert_eq!(output("rejected"), format!("{caller}:stale"), "the stale one was left in the graph, with why");
+    let current = git(&ci, &["rev-parse", "refs/zit/current"]);
+    assert_eq!(output("current"), current);
+    assert_ne!(current, callee, "current moved past the pushed one");
+
+    let at_origin =
+        |rev: &str| git(dir.path(), &["--git-dir", origin.to_str().unwrap(), "rev-parse", "--verify", "--quiet", rev]);
+    assert_eq!(at_origin("refs/zit/current"), current, "the graph was pushed back");
+    assert_eq!(at_origin("refs/heads/main"), current, "and main exported");
+    assert_eq!(at_origin(&format!("refs/zit/changes/{caller}")), caller, "the rejected change stays for its author");
+    let gone = std::process::Command::new("git")
+        .args([
+            "--git-dir",
+            origin.to_str().unwrap(),
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/zit/changes/{good}"),
+        ])
+        .output()
+        .unwrap();
+    assert!(!gone.status.success(), "the accepted change's ref is removed from origin");
+    assert!(std::fs::read_to_string(ci.join("src/lib.rs")).unwrap().contains("x / 5"), "the checkout follows main");
+    assert!(out.contains(&good[..10]) && out.contains("accepted"), "{out}");
+}
+
+/// Integrations detect a format change by the `schema` field every `--json` report carries.
+#[test]
+fn json_reports_carry_a_schema_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = cli(dir.path());
+    let id = change(&cli, "claude", &[("src/shop.rs", "pub fn buy() { 1; }\n")]);
+    assert_eq!(cli.run(&["status", "--json"]).ok().json()["schema"], 1);
+    let shown = cli.run(&["show", &id, "--json"]).ok().json();
+    assert_eq!(shown["schema"], 1);
+    assert_eq!(shown["id"], id.as_str(), "the rest of the report is unchanged");
 }
 
 /// Installed next to `zit`, `git-zit` makes every command available as `git zit …`.

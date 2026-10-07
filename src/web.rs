@@ -39,6 +39,8 @@ struct Graph {
     mainline: Vec<Change>,
     changes: Vec<Forked<ChangeRow>>,
     workspaces: Vec<Forked<WorkspaceRow>>,
+    /// What the speculative changes cost together.
+    totals: api::Totals,
 }
 
 #[derive(Serialize)]
@@ -54,7 +56,9 @@ fn graph(repo: &Repo) -> Result<Graph> {
     let mut mainline = change::accepted(repo, MAINLINE)?;
     mainline.reverse();
     let fork = |id: &Oid| repo.merge_base(id, &current).ok().flatten();
+    let totals = api::Totals::of(overview.changes.iter().map(|row| &row.change));
     Ok(Graph {
+        totals,
         repo: repo
             .git_dir()
             .parent()
@@ -83,10 +87,7 @@ fn graph(repo: &Repo) -> Result<Graph> {
 
 fn inspect(repo: &Repo, id: &Oid) -> Result<Inspect> {
     let detail = api::detail(repo, id)?;
-    let mut diff = match detail.change.parents.first() {
-        Some(parent) => repo.git(&["diff", "--no-color", parent.as_str(), id.as_str()])?,
-        None => repo.git(&["show", "--no-color", "--format=", id.as_str()])?,
-    };
+    let mut diff = api::diff(repo, id, None, false)?.diff;
     if diff.len() > MAX_DIFF_BYTES {
         let cut = (0..=MAX_DIFF_BYTES).rev().find(|&i| diff.is_char_boundary(i)).unwrap_or(0);
         diff.truncate(cut);

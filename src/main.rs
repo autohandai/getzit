@@ -1,5 +1,5 @@
 use anyhow::{bail, Context};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use std::process::ExitCode;
 use zit::accept::{self, BatchOutcome, DryRun, Invalid, Outcome};
@@ -96,6 +96,22 @@ enum Cmd {
         /// Print the agent output kept by `zit run --log` instead.
         #[arg(long)]
         log: bool,
+    },
+    /// What a change did: its diff against its base, as `git diff` prints it.
+    Diff {
+        change: String,
+        /// Compare with this change (`current`, an id, any git revision) instead of the base.
+        #[arg(long, value_name = "CHANGE")]
+        against: Option<String>,
+        /// Only the summary of changed files.
+        #[arg(long)]
+        stat: bool,
+    },
+    /// Accepted history from current backwards: who, what, why, and what it cost.
+    Log {
+        /// Show at most this many changes [default: all].
+        #[arg(short = 'n', long = "max-count", value_name = "N")]
+        limit: Option<usize>,
     },
     /// Produce evidence for a change by running its state's checks.
     Check {
@@ -202,6 +218,14 @@ enum Cmd {
     },
     /// Interactive view of changes and workspaces.
     Ui,
+    /// Check this machine and repository: git, Zit's home, copy-on-write, free space,
+    /// the graph, zit.toml's programs, agents on PATH. Exit 1 if anything fails.
+    Doctor,
+    /// Print a shell completion script: `zit completions zsh > ~/.zfunc/_zit`.
+    Completions {
+        #[arg(value_enum)]
+        shell: Shell,
+    },
     /// Live graph in the browser: accepted line, speculative changes, workspaces, diffs.
     Web {
         /// Port to listen on (a free one is chosen if it is taken).
@@ -211,6 +235,25 @@ enum Cmd {
         #[arg(long)]
         no_open: bool,
     },
+}
+
+/// The shells `zit completions` is tested for.
+#[derive(Clone, Copy, ValueEnum)]
+enum Shell {
+    Bash,
+    Zsh,
+    Fish,
+}
+
+/// The script is always for `zit`; `git zit` completes through git's own machinery.
+fn completions(shell: Shell) {
+    use clap::CommandFactory;
+    let shell = match shell {
+        Shell::Bash => clap_complete::Shell::Bash,
+        Shell::Zsh => clap_complete::Shell::Zsh,
+        Shell::Fish => clap_complete::Shell::Fish,
+    };
+    clap_complete::generate(shell, &mut Cli::command(), "zit", &mut std::io::stdout());
 }
 
 fn default_agent() -> String {
@@ -224,6 +267,20 @@ fn emit<T: Serialize>(json: bool, value: &T, human: impl FnOnce()) -> anyhow::Re
         human();
     }
     Ok(())
+}
+
+/// The format of the `--json` reports integrations read (status, show, log,
+/// doctor). Bump it when a field changes meaning or goes away; adding fields
+/// keeps it.
+const SCHEMA: u32 = 1;
+
+/// `value` as a JSON object with `"schema": SCHEMA` at the top.
+fn versioned<T: Serialize>(value: &T) -> anyhow::Result<serde_json::Value> {
+    let mut shown = serde_json::to_value(value)?;
+    if let Some(object) = shown.as_object_mut() {
+        object.insert("schema".into(), SCHEMA.into());
+    }
+    Ok(shown)
 }
 
 fn print_invalid(repo: &Repo, invalid: &Invalid) {
@@ -294,9 +351,19 @@ const OK: ExitCode = ExitCode::SUCCESS;
 const NO: u8 = 1;
 
 fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
-    zit::git::require_git()?;
+    if let Cmd::Completions { shell } = cli.command {
+        completions(shell);
+        return Ok(OK);
+    }
     let json = cli.json;
     let cwd = std::env::current_dir()?;
+    // Runs before the git check: an old git is one of its findings.
+    if let Cmd::Doctor = cli.command {
+        let report = api::doctor(&cwd);
+        emit(json, &versioned(&report)?, || print!("{}", view::doctor_text(&report)))?;
+        return Ok(if report.failed() { ExitCode::from(NO) } else { OK });
+    }
+    zit::git::require_git()?;
     if let Cmd::Mcp { integrator } = cli.command {
         mcp::serve(&cwd, integrator, std::io::stdin().lock(), std::io::stdout().lock())?;
         return Ok(OK);
@@ -383,7 +450,7 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
         }
         Cmd::Status => {
             let overview = api::overview(&repo)?;
-            emit(json, &overview, || print!("{}", view::overview_text(&overview)))?;
+            emit(json, &versioned(&overview)?, || print!("{}", view::overview_text(&overview)))?;
         }
         Cmd::Show { change, log: true } => {
             let id = repo.resolve(&change)?;
@@ -394,7 +461,20 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
         }
         Cmd::Show { change, .. } => {
             let detail = api::detail(&repo, &repo.resolve(&change)?)?;
-            emit(json, &detail, || print!("{}", view::detail_text(&detail)))?;
+            emit(json, &versioned(&detail)?, || print!("{}", view::detail_text(&detail)))?;
+        }
+        Cmd::Diff { change, against, stat } => {
+            let against = against.as_deref().map(|rev| repo.resolve(rev)).transpose()?;
+            let diff = api::diff(&repo, &repo.resolve(&change)?, against.as_ref(), stat)?;
+            emit(json, &versioned(&diff)?, || {
+                if !diff.diff.is_empty() {
+                    println!("{}", diff.diff);
+                }
+            })?;
+        }
+        Cmd::Log { limit } => {
+            let log = api::log(&repo, limit)?;
+            emit(json, &versioned(&log)?, || print!("{}", view::log_text(&log)))?;
         }
         Cmd::Check { change, rerun, only } => {
             let verdicts = evidence::verify_only(&repo, &repo.resolve(&change)?, rerun, &only)?;
@@ -562,7 +642,7 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
             }
             server.run();
         }
-        Cmd::Mcp { .. } => unreachable!("handled above"),
+        Cmd::Mcp { .. } | Cmd::Completions { .. } | Cmd::Doctor => unreachable!("handled above"),
     }
     Ok(OK)
 }

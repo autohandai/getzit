@@ -80,6 +80,18 @@ fn all_tools() -> Value {
             &["change"],
         ),
         tool(
+            "zit_log",
+            "Accepted history from current backwards, newest first: each change's intent, agent, account and what it cost (tokens, USD), with totals over the changes listed.",
+            json!({"limit": {"type": "integer", "description": "At most this many changes; default all."}}),
+            &[],
+        ),
+        tool(
+            "zit_diff",
+            "What a change did, as `git diff` prints it: against its base by default, or against `current` or any other change. `stat` gives only the summary of changed files.",
+            json!({"change": change(), "against": s("Compare with this change instead of the base: `current`, an id, any git revision."), "stat": flag("Only the summary of changed files.")}),
+            &["change"],
+        ),
+        tool(
             "zit_check",
             "Run the checks declared in the state's zit.toml against a change. Results are content-addressed evidence; checks whose inputs are unchanged are reused, not re-run.",
             json!({"change": change(), "rerun": flag("Ignore existing evidence.")}),
@@ -154,6 +166,11 @@ fn call(cwd: &Path, client: &str, integrator: bool, name: &str, args: &Value) ->
             }
             "zit_status" => json!(api::overview(&repo)?),
             "zit_show" => json!(api::detail(&repo, &change()?)?),
+            "zit_log" => json!(api::log(&repo, args["limit"].as_u64().map(|n| n as usize))?),
+            "zit_diff" => {
+                let against = args["against"].as_str().map(|rev| repo.resolve(rev)).transpose()?;
+                json!(api::diff(&repo, &change()?, against.as_ref(), args["stat"].as_bool().unwrap_or(false))?)
+            }
             "zit_check" => json!(evidence::verify(&repo, &change()?, args["rerun"].as_bool().unwrap_or(false))?),
             "zit_accept" => {
                 let flag = |name: &str| args[name].as_bool().unwrap_or(false);

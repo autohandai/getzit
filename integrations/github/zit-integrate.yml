@@ -1,0 +1,56 @@
+# Example workflow: Zit as the integrator in GitHub Actions.
+#
+# Copy to .github/workflows/zit-integrate.yml in the repository the agents work
+# on. Developers and agents push their work with the graph:
+#
+#     git push origin 'refs/zit/*:refs/zit/*'
+#
+# Each run then fetches the graph, runs every check on the runner (fetched
+# evidence is not trusted unless `trust-evidence: true`), accepts the changes
+# that can land in the order they were recorded, fast-forwards `main` to the
+# result, and pushes `main` and the graph back. Rejected changes stay in the
+# graph with their reason, for `zit retry` by their author.
+#
+# The job needs `contents: write` to push. With branch protection on `main`,
+# export to another branch instead (`branch: zit/ready`) and open a pull
+# request from it: `zit export --branch zit/ready --pr` (docs/git.mdx).
+name: zit integrate
+
+on:
+  push:
+    # A push of the graph (`refs/zit/*`) does not start a workflow by itself:
+    # GitHub only runs workflows for branches and tags. So run on a schedule,
+    # by hand, or from a workflow the pusher triggers.
+    branches: [main]
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  # One integrator at a time: two runs accepting concurrently would race on current.
+  group: zit-integrate
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The whole history: changes are composed onto current, and checks run on every state.
+          fetch-depth: 0
+      # Whatever the checks in zit.toml need (toolchains, dependencies) goes here.
+      - uses: autohandai/getzit/integrations/github@main
+        id: zit
+        with:
+          version: latest
+          branch: main
+          trust-evidence: "false"
+      - name: Report
+        run: |
+          echo "current: ${{ steps.zit.outputs.current }}"
+          echo "accepted: ${{ steps.zit.outputs.accepted }}"
+          echo "rejected: ${{ steps.zit.outputs.rejected }}"
