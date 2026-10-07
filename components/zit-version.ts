@@ -1,6 +1,6 @@
 // The version readers can install: the latest GitHub release, which the release workflow also
 // publishes to crates.io. Read once per build. Falls back to Cargo.toml, with a warning, when
-// GitHub cannot be reached (the repository is private, so the build needs GITHUB_TOKEN).
+// GitHub cannot be reached. GITHUB_TOKEN, when set, avoids GitHub's anonymous rate limit.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 

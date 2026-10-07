@@ -12,7 +12,7 @@ export default defineConfig({
     sources: [
       filesystem({ root: "docs" }),
       // Each GitHub release, whose notes come from CHANGELOG.md, is a page under /changelog.
-      // The repository is private: the build reads GITHUB_TOKEN (see the deploy script).
+      // The build passes GITHUB_TOKEN when it has one (see the deploy script), for GitHub's rate limits.
       githubReleases({ prefix: "changelog", owner: "autohandai", repo: "getzit" }),
     ],
   },
