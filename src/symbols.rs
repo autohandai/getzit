@@ -306,7 +306,8 @@ fn index_markdown(text: &str) -> FileIndex {
         }
         let hashes = trimmed.bytes().take_while(|b| *b == b'#').count();
         if !fenced && (1..=6).contains(&hashes) && trimmed[hashes..].starts_with(' ') {
-            section = Some(trimmed[hashes..].trim().trim_end_matches('#').trim().to_string());
+            // A heading with no name is module-level text, not a section of its own.
+            section = Some(trimmed[hashes..].trim().trim_end_matches('#').trim().to_string()).filter(|n| !n.is_empty());
         }
         let body = bodies.entry(section.clone()).or_default();
         body.push_str(line);
@@ -317,10 +318,10 @@ fn index_markdown(text: &str) -> FileIndex {
         let hash = crate::hash(body.as_bytes());
         let unit = Unit { sig: hash.clone(), hash, refs: BTreeSet::new() };
         match name {
-            Some(name) if !name.is_empty() => {
+            Some(name) => {
                 ix.symbols.insert(name, unit);
             }
-            _ => ix.top = unit,
+            None => ix.top = unit,
         }
     }
     ix
@@ -689,5 +690,12 @@ mod tests {
         let changed = index("a.ts", b"export function f(a: boolean): void;\nexport function f(a: any) {}\n").unwrap();
         assert_ne!(overload.symbols["f"].sig, changed.symbols["f"].sig, "an overload is part of the interface");
         assert_eq!(overload.top, changed.top);
+    }
+
+    #[test]
+    fn an_empty_heading_does_not_hide_the_text_before_it() {
+        let a = index("a.md", b"intro\n\n# \ntext\n").unwrap();
+        let b = index("a.md", b"outro\n\n# \ntext\n").unwrap();
+        assert_ne!(a.top.hash, b.top.hash);
     }
 }
