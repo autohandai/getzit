@@ -21,7 +21,7 @@ The reports of `status`, `show`, `log`, `diff` and `doctor` carry `"schema": 1` 
 
 | Command | Does |
 |---|---|
-| `zit init [--from REV]` | Start the graph; `REV` (default `HEAD`) becomes current. Idempotent. On a repository with no commits: `HEAD has no commits yet: commit first, or run `zit init --from <rev>``. |
+| `zit init [--from REV]` | Start the graph; `REV` (default `HEAD`) becomes current. Idempotent. On a repository with no commits: ``HEAD has no commits yet: commit first, or run `zit init --from <rev>` ``. |
 | `zit status` | Current, every speculative change with its status and reason, every workspace. |
 | `zit show CHANGE [--log]` | One change: intent, agent, parents, writes (and `renamed old -> new` lines), declared reads, status, evidence. `--log` prints the agent output kept by `zit run --log` instead; with none, `zit: no log recorded for <id>: run the agent with `zit run --log``, exit 2. |
 | `zit diff CHANGE [--stat] [--against CHANGE]` | What a change did: its diff against its base, as `git diff` prints it. `--against` compares with `current`, an id or any git revision instead of the base; `--stat` prints only the summary of changed files. JSON: `{schema, change, against, diff}`. |
