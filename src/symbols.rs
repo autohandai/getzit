@@ -33,6 +33,7 @@ enum Lang {
     Js,
     Go,
     Java,
+    Ruby,
 }
 
 fn language(path: &str) -> Option<(Lang, tree_sitter::Language)> {
@@ -45,6 +46,7 @@ fn language(path: &str) -> Option<(Lang, tree_sitter::Language)> {
         "tsx" => (Lang::Js, tree_sitter_typescript::LANGUAGE_TSX.into()),
         "go" => (Lang::Go, tree_sitter_go::LANGUAGE.into()),
         "java" => (Lang::Java, tree_sitter_java::LANGUAGE.into()),
+        "rb" => (Lang::Ruby, tree_sitter_ruby::LANGUAGE.into()),
         _ => return None,
     })
 }
@@ -58,13 +60,22 @@ fn is_comment(kind: &str) -> bool {
     matches!(kind, "line_comment" | "block_comment" | "comment")
 }
 
-fn is_import(lang: Lang, kind: &str) -> bool {
+fn is_import(lang: Lang, node: tree_sitter::Node, text: &str) -> bool {
+    let kind = node.kind();
     match lang {
         Lang::Rust => matches!(kind, "use_declaration" | "extern_crate_declaration"),
         Lang::Python => matches!(kind, "import_statement" | "import_from_statement" | "future_import_statement"),
         Lang::Js => kind == "import_statement",
         Lang::Go => kind == "import_declaration",
         Lang::Java => kind == "import_declaration",
+        // `require 'x'` is a call like any other to the grammar.
+        Lang::Ruby => {
+            kind == "call"
+                && node.child_by_field_name("receiver").is_none()
+                && node
+                    .child_by_field_name("method")
+                    .is_some_and(|m| matches!(&text[m.byte_range()], "require" | "require_relative" | "load"))
+        }
     }
 }
 
@@ -157,6 +168,9 @@ fn methods<'t>(lang: Lang, node: tree_sitter::Node<'t>, text: &str) -> Vec<(Stri
             });
             (name_of(node).map(|(n, _)| n), body, &["method_declaration", "constructor_declaration"])
         }
+        (Lang::Ruby, "class" | "module") => {
+            (name_of(node).map(|(n, _)| n), node.child_by_field_name("body"), &["method", "singleton_method"])
+        }
         _ => return vec![],
     };
     let (Some(owner), Some(body)) = (owner, body) else { return vec![] };
@@ -207,9 +221,9 @@ fn signature(node: tree_sitter::Node, text: &str, cut: &[std::ops::Range<usize>]
 /// and no reads are inferred from it, so semantic staleness is not detected.
 pub fn unparsed_code(path: &str) -> bool {
     const CODE: &[&str] = &[
-        "kt", "kts", "scala", "cs", "fs", "c", "h", "cc", "cpp", "cxx", "hpp", "hh", "m", "mm", "swift", "rb", "php",
-        "pl", "lua", "dart", "ex", "exs", "erl", "hs", "ml", "clj", "zig", "nim", "jl", "r", "sql", "sh", "bash",
-        "vue", "svelte",
+        "kt", "kts", "scala", "cs", "fs", "c", "h", "cc", "cpp", "cxx", "hpp", "hh", "m", "mm", "swift", "php", "pl",
+        "lua", "dart", "ex", "exs", "erl", "hs", "ml", "clj", "zig", "nim", "jl", "r", "sql", "sh", "bash", "vue",
+        "svelte",
     ];
     let ext = path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
     language(path).is_none() && ext.is_some_and(|e| CODE.contains(&e.as_str()))
@@ -232,7 +246,7 @@ pub fn index(path: &str, src: &[u8]) -> Option<FileIndex> {
     let mut imports = BTreeSet::new();
     let nodes = top_level(lang, root);
     for node in &nodes {
-        if is_import(lang, node.kind()) {
+        if is_import(lang, *node, text) {
             imported_names(*node, text, &mut imports);
         }
     }
@@ -243,7 +257,7 @@ pub fn index(path: &str, src: &[u8]) -> Option<FileIndex> {
             leading.push(node);
             continue;
         }
-        let import = is_import(lang, node.kind());
+        let import = is_import(lang, node, text);
         let defs = if import { vec![] } else { definitions(lang, node, text) };
         // The identifier that declares a symbol is not a reference to it.
         let declared: Vec<usize> = defs.iter().filter_map(|d| d.declared_by).collect();
@@ -426,6 +440,12 @@ fn definitions(lang: Lang, node: tree_sitter::Node, text: &str) -> Vec<Def> {
             | "record_declaration"
             | "annotation_type_declaration",
         ) => named(node),
+        (Lang::Ruby, "class" | "module" | "method" | "singleton_method") => named(node),
+        (Lang::Ruby, "assignment") => node
+            .child_by_field_name("left")
+            .filter(|n| n.kind() == "constant")
+            .map(|n| vec![Def::at(n, text)])
+            .unwrap_or_default(),
         _ => vec![],
     }
 }
@@ -440,13 +460,18 @@ fn collect_identifiers(
 ) {
     walk(node, |n| {
         if n.child_count() == 0
-            && n.kind().ends_with("identifier")
+            && is_identifier(lang, n.kind())
             && !skip.contains(&n.id())
             && !member_of_a_value(lang, n, text, imports)
         {
             out.insert(text[n.byte_range()].to_string());
         }
     });
+}
+
+/// Ruby names classes, modules and constants with `constant`, not an identifier kind.
+fn is_identifier(lang: Lang, kind: &str) -> bool {
+    kind.ends_with("identifier") || (lang == Lang::Ruby && kind == "constant")
 }
 
 /// `cache.get` names a member of a value, not the top-level `get`. A member
@@ -461,11 +486,15 @@ fn member_of_a_value(lang: Lang, n: tree_sitter::Node, text: &str, imports: &BTr
         (Lang::Python, "identifier", "attribute") if is_field("attribute") => parent.child_by_field_name("object"),
         (Lang::Java, "identifier", "field_access") if is_field("field") => parent.child_by_field_name("object"),
         (Lang::Java, "identifier", "method_invocation") if is_field("name") => parent.child_by_field_name("object"),
+        (Lang::Ruby, "identifier", "call") if is_field("method") => parent.child_by_field_name("receiver"),
         _ => return false,
     };
     // An unqualified call (`price()`) names the top-level symbol.
     let Some(r) = receiver else { return false };
-    !(r.kind().ends_with("identifier") && imports.contains(&text[r.byte_range()]))
+    // A Ruby constant receiver (`Lib.price`) is a class or module, not a value.
+    let module = matches!(r.kind(), "constant" | "scope_resolution")
+        || (r.kind().ends_with("identifier") && imports.contains(&text[r.byte_range()]));
+    !module
 }
 
 #[cfg(test)]
@@ -494,6 +523,46 @@ mod tests {
         assert!(!ix.symbols["Shop"].refs.contains("Shop"), "declaring is not referencing");
         assert!(ix.symbols[IMPORTS].refs.contains("List"));
         assert!(ix.top.hash != ix.symbols["Shop"].hash, "the package line is module-level code");
+    }
+
+    #[test]
+    fn ruby_classes_modules_methods_and_requires_are_units() {
+        let ix = index(
+            "shop.rb",
+            b"require 'json'\nrequire_relative 'lib'\n# The shop.\nclass Shop < Base\n  include Comparable\n  attr_reader :n\n  def initialize(n)\n    @n = n\n  end\n  def price(item)\n    Lib.tax(item.cost) + helper(n)\n  end\n  def self.build\n    new(1)\n  end\nend\nmodule Util\n  LIMIT = 3\n  def self.max(a, b); a; end\nend\ndef free(x)\n  x\nend\nLIMIT = 2\nputs 1\n",
+        )
+        .unwrap();
+        assert_eq!(
+            names(&ix),
+            [IMPORTS, "LIMIT", "Shop", "Shop::build", "Shop::initialize", "Shop::price", "Util", "Util::max", "free"]
+        );
+        let refs = &ix.symbols["Shop::price"].refs;
+        assert!(refs.contains("Lib") && refs.contains("tax"), "a module's method is a reference: {refs:?}");
+        assert!(refs.contains("helper") && !refs.contains("cost"), "a value's member is not: {refs:?}");
+        let refs = &ix.symbols["Shop"].refs;
+        assert!(refs.contains("Base") && refs.contains("Comparable") && !refs.contains("Shop"), "{refs:?}");
+        assert!(ix.top.refs.contains("puts"));
+        let a = index("shop.rb", b"require 'json'\ndef f\n  1\nend\n").unwrap();
+        let b = index("shop.rb", b"require 'yaml'\ndef f\n  1\nend\n").unwrap();
+        assert_ne!(a.symbols[IMPORTS], b.symbols[IMPORTS]);
+        assert_eq!(a.symbols["f"], b.symbols["f"]);
+    }
+
+    #[test]
+    fn ruby_interface_is_the_text_without_bodies_and_comments() {
+        let src = "# Doc.\nclass Shop\n  attr_reader :n\n  # Price.\n  def price(item)\n    n\n  end\nend\n";
+        let a = index("shop.rb", src.as_bytes()).unwrap();
+        let body = index("shop.rb", src.replace("    n\n", "    n + 1\n").as_bytes()).unwrap();
+        let docs = index("shop.rb", src.replace("Doc.", "Docs.").replace("Price.", "The price.").as_bytes()).unwrap();
+        let param = index("shop.rb", src.replace("(item)", "(item, q)").as_bytes()).unwrap();
+        let attr = index("shop.rb", src.replace(":n", ":m").as_bytes()).unwrap();
+        assert_ne!(a.symbols["Shop::price"].hash, body.symbols["Shop::price"].hash);
+        assert_eq!(a.symbols["Shop::price"].sig, body.symbols["Shop::price"].sig);
+        assert_eq!(a.symbols["Shop"], body.symbols["Shop"]);
+        assert_eq!(a.symbols["Shop"].sig, docs.symbols["Shop"].sig);
+        assert_eq!(a.symbols["Shop::price"].sig, docs.symbols["Shop::price"].sig);
+        assert_ne!(a.symbols["Shop::price"].sig, param.symbols["Shop::price"].sig);
+        assert_ne!(a.symbols["Shop"].sig, attr.symbols["Shop"].sig);
     }
 
     #[test]
@@ -696,6 +765,7 @@ mod tests {
         assert!(index("a.json", b"{}").is_none());
         assert!(index("Makefile", b"all:").is_none());
         assert!(unparsed_code("Shop.kt") && !unparsed_code("Shop.java") && !unparsed_code("a.rs"));
+        assert!(!unparsed_code("shop.rb"));
         assert!(index("a.rs", &[0xff, 0xfe, 0x00]).is_none());
     }
 }
