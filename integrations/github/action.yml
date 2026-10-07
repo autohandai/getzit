@@ -1,0 +1,57 @@
+name: Zit integrate
+description: >-
+  Accept every change pushed to refs/zit/* that can land, in recorded order,
+  export the result to a branch, and push the graph back. Checks run on the
+  runner unless fetched evidence is trusted.
+author: Autohand AI LLC
+
+inputs:
+  version:
+    description: Zit release to install (for example 0.1.1), or `latest`.
+    default: latest
+  branch:
+    description: Branch that follows the accepted state; exported and pushed after accepting.
+    default: main
+  remote:
+    description: Remote to fetch refs/zit/* from and push to.
+    default: origin
+  trust-evidence:
+    description: >-
+      `true` reuses evidence pushed with the graph instead of running the
+      checks here. Only when every pusher is trusted (ADR 15).
+    default: "false"
+  token:
+    description: Token for the GitHub API when resolving `latest`; the job's token by default.
+    default: ${{ github.token }}
+
+outputs:
+  accepted:
+    description: Ids of the changes that landed, space-separated.
+    value: ${{ steps.integrate.outputs.accepted }}
+  rejected:
+    description: Changes left in the graph, as `id:reason` (stale, conflict, failed), space-separated.
+    value: ${{ steps.integrate.outputs.rejected }}
+  current:
+    description: The accepted state after this run (also the branch tip).
+    value: ${{ steps.integrate.outputs.current }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install zit
+      shell: bash
+      env:
+        ZIT_VERSION: ${{ inputs.version }}
+        GH_TOKEN: ${{ inputs.token }}
+      run: bash "$GITHUB_ACTION_PATH/install.sh"
+    - name: Accept, export, push
+      id: integrate
+      shell: bash
+      env:
+        ZIT_REMOTE: ${{ inputs.remote }}
+        ZIT_BRANCH: ${{ inputs.branch }}
+        ZIT_TRUST_EVIDENCE: ${{ inputs.trust-evidence }}
+      run: |
+        git config user.name "${GITHUB_ACTOR:-zit}"
+        git config user.email "${GITHUB_ACTOR:-zit}@users.noreply.github.com"
+        bash "$GITHUB_ACTION_PATH/integrate.sh"

@@ -387,6 +387,82 @@ fn doctor_fails_on_a_missing_check_program_or_a_broken_zit_toml() {
     assert!(toml["detail"].as_str().unwrap().contains("zit.toml"), "{toml}");
 }
 
+/// The GitHub Actions integrator's shell logic (integrations/github/integrate.sh), run here
+/// against a local bare "origin": fetch refs/zit/*, accept what can land in recorded order,
+/// export to the branch, push the branch and the graph back.
+#[test]
+fn the_github_integrator_script_accepts_fetched_changes_and_publishes_them() {
+    let dir = tempfile::tempdir().unwrap();
+    // The developers' side: changes recorded and pushed with the graph.
+    let dev = Cli::new(
+        dir.path(),
+        &[
+            ("src/lib.rs", LIB),
+            ("src/shop.rs", "pub fn buy() {}\n"),
+            ("zit.toml", "[[check]]\nname = \"t\"\nrun = \"test -f ok\"\n"),
+            ("ok", "\n"),
+        ],
+    );
+    dev.run(&["init"]).ok();
+    let origin = dir.path().join("origin.git");
+    git(dir.path(), &["init", "-q", "--bare", origin.to_str().unwrap()]);
+    git(&dev.root, &["remote", "add", "origin", origin.to_str().unwrap()]);
+    git(&dev.root, &["push", "-q", "origin", "main"]);
+    let caller = change(&dev, "codex", &[("src/shop.rs", "pub fn buy() { lib::price(3); }\n")]);
+    let good = change(&dev, "pi", &[("src/lib.rs", &LIB.replace("x / 10", "x / 5"))]);
+    let callee = change(&dev, "claude", &[("src/lib.rs", &LIB.replace("price(x: u32)", "price(x: u32, t: u32)"))]);
+    dev.run(&["accept", &callee]).ok();
+    git(&dev.root, &["push", "-q", "origin", "refs/zit/*:refs/zit/*"]);
+
+    // The integrator's side: a fresh clone, as actions/checkout leaves one.
+    let ci = dir.path().join("ci");
+    git(dir.path(), &["clone", "-q", origin.to_str().unwrap(), ci.to_str().unwrap()]);
+    git(&ci, &["config", "user.name", "integrator"]);
+    git(&ci, &["config", "user.email", "ci@example.com"]);
+    let outputs = dir.path().join("outputs.txt");
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("integrations/github/integrate.sh");
+    let ran = std::process::Command::new("bash")
+        .arg(&script)
+        .current_dir(&ci)
+        .env("ZIT", env!("CARGO_BIN_EXE_zit"))
+        .env("ZIT_HOME", dir.path().join("ci-home"))
+        .env("ZIT_TRUST_EVIDENCE", "false")
+        .env("GITHUB_OUTPUT", &outputs)
+        .output()
+        .unwrap();
+    let (out, err) = (String::from_utf8_lossy(&ran.stdout), String::from_utf8_lossy(&ran.stderr));
+    assert!(ran.status.success(), "stdout:\n{out}\nstderr:\n{err}");
+    let outputs = std::fs::read_to_string(&outputs).unwrap();
+    let output = |key: &str| {
+        outputs.lines().find_map(|l| l.strip_prefix(&format!("{key}="))).unwrap_or_else(|| panic!("{key} in {outputs}"))
+    };
+    assert_eq!(output("accepted"), good, "the compatible change landed");
+    assert_eq!(output("rejected"), format!("{caller}:stale"), "the stale one was left in the graph, with why");
+    let current = git(&ci, &["rev-parse", "refs/zit/current"]);
+    assert_eq!(output("current"), current);
+    assert_ne!(current, callee, "current moved past the pushed one");
+
+    let at_origin =
+        |rev: &str| git(dir.path(), &["--git-dir", origin.to_str().unwrap(), "rev-parse", "--verify", "--quiet", rev]);
+    assert_eq!(at_origin("refs/zit/current"), current, "the graph was pushed back");
+    assert_eq!(at_origin("refs/heads/main"), current, "and main exported");
+    assert_eq!(at_origin(&format!("refs/zit/changes/{caller}")), caller, "the rejected change stays for its author");
+    let gone = std::process::Command::new("git")
+        .args([
+            "--git-dir",
+            origin.to_str().unwrap(),
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/zit/changes/{good}"),
+        ])
+        .output()
+        .unwrap();
+    assert!(!gone.status.success(), "the accepted change's ref is removed from origin");
+    assert!(std::fs::read_to_string(ci.join("src/lib.rs")).unwrap().contains("x / 5"), "the checkout follows main");
+    assert!(out.contains(&good[..10]) && out.contains("accepted"), "{out}");
+}
+
 /// Integrations detect a format change by the `schema` field every `--json` report carries.
 #[test]
 fn json_reports_carry_a_schema_version() {
