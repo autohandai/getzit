@@ -250,9 +250,14 @@ fn main() -> ExitCode {
         Ok(cli) => cli,
         Err(e) => e.exit(),
     };
+    let json = cli.json;
     match execute(cli) {
         Ok(code) => code,
         Err(e) => {
+            // A machine reading stdout gets an answer there too, never an empty document.
+            if json {
+                println!("{}", serde_json::json!({ "error": format!("{e:#}") }));
+            }
             eprintln!("zit: {e:#}");
             ExitCode::from(2)
         }

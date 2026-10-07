@@ -214,6 +214,18 @@ fn an_old_git_is_refused_with_the_version_needed() {
     assert!(err.contains("git 2.38 or newer") && err.contains("2.30.1"), "{err}");
 }
 
+/// With --json, an error is still a JSON document on stdout (and the message on stderr).
+#[test]
+fn an_error_under_json_is_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = Cli::new(dir.path(), &[("a.txt", "a\n")]);
+    let ran = cli.run(&["status", "--json"]);
+    assert_eq!(ran.code, 2);
+    let error = ran.json()["error"].as_str().unwrap().to_string();
+    assert!(error.contains("zit init"), "{error}");
+    assert!(ran.stderr.contains("zit init"), "{}", ran.stderr);
+}
+
 /// `$ZIT_HOME` may be relative to where zit is run (and contain spaces): git is pointed at
 /// files under it by path, from the repository's git directory and from workspaces.
 #[test]
