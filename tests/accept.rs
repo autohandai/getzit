@@ -520,6 +520,28 @@ fn a_declared_read_cannot_forge_a_trailer() {
     assert_eq!(show(&fx, "refs/zit/current", "notes.txt"), "victim");
 }
 
+/// Work continues from a change after it landed linearly: the next change
+/// in the same workspace is judged by its own edits, not its parent's again.
+#[test]
+fn a_change_built_on_a_linearly_landed_change_is_not_stale_against_it() {
+    let fx = fixture();
+    let other = fx.change("b", &[("src/shop.rs", "pub fn buy() { 1; }\n")]);
+    let ws = fx.workspace("a");
+    write(ws.path(), &[("notes.txt", "1\n")]);
+    let c1 = change::record(&fx.repo, &ws.id, &Record::default()).unwrap().unwrap();
+    accepted(accept::accept(&fx.repo, &other.id).unwrap());
+    let policy = accept::Policy { linear: true, ..Default::default() };
+    accepted(accept::accept_with(&fx.repo, &c1.id, &policy).unwrap());
+
+    write(ws.path(), &[("notes.txt", "2\n")]);
+    let c2 = change::record(&fx.repo, &ws.id, &Record::default()).unwrap().unwrap();
+    assert_eq!(c2.parents, vec![c1.id.clone()]);
+    assert_eq!(accept::status(&fx.repo, &c2.id).unwrap(), Status::Verified);
+    let (current, _) = accepted(accept::accept_with(&fx.repo, &c2.id, &policy).unwrap());
+    assert_eq!(show(&fx, current.as_str(), "notes.txt"), "2");
+    assert_eq!(change::load(&fx.repo, &current).unwrap().parents.len(), 1);
+}
+
 /// A session id is data too: it cannot end its trailer and start another.
 #[test]
 fn a_session_id_cannot_forge_a_trailer() {
