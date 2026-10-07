@@ -7,7 +7,7 @@ use crate::footprint;
 use crate::git::{Oid, Repo};
 use crate::resource::Resource;
 use crate::workspace;
-use crate::Result;
+use crate::{Error, Result};
 use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -77,10 +77,12 @@ pub fn claim(repo: &Repo, workspace: &str, resources: &[Resource]) -> Result<Cla
     use std::io::Write;
     use std::os::fd::AsRawFd;
     let ws = workspace::get(repo, workspace)?;
+    let resources: Vec<Resource> = resources.iter().map(|r| ws.relative(r)).collect::<Result<_>>()?;
     // The slow part happens before the lock; only claims are re-read under it.
     let mut held = work_held(repo)?;
     // One claimant at a time decides, across processes.
-    let lock = std::fs::File::create(repo.home().join("ws/.claims.lock"))?;
+    let lock_file = repo.home().join("ws/.claims.lock");
+    let lock = std::fs::File::create(&lock_file).map_err(|e| Error::io_at(&lock_file, e))?;
     // SAFETY: `lock` is an open descriptor we own; it unlocks when dropped.
     if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) } != 0 {
         return Err(std::io::Error::last_os_error().into());
@@ -100,7 +102,7 @@ pub fn claim(repo: &Repo, workspace: &str, resources: &[Resource]) -> Result<Cla
         return Ok(Claimed::Refused(taken));
     }
     let mut file = std::fs::OpenOptions::new().create(true).append(true).open(ws.claims_file())?;
-    for resource in resources {
+    for resource in &resources {
         writeln!(file, "{resource}")?;
     }
     Ok(Claimed::Granted)

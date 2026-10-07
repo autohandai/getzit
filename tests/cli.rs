@@ -214,6 +214,91 @@ fn an_old_git_is_refused_with_the_version_needed() {
     assert!(err.contains("git 2.38 or newer") && err.contains("2.30.1"), "{err}");
 }
 
+/// With --json, an error is still a JSON document on stdout (and the message on stderr).
+#[test]
+fn an_error_under_json_is_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = Cli::new(dir.path(), &[("a.txt", "a\n")]);
+    let ran = cli.run(&["status", "--json"]);
+    assert_eq!(ran.code, 2);
+    let error = ran.json()["error"].as_str().unwrap().to_string();
+    assert!(error.contains("zit init"), "{error}");
+    assert!(ran.stderr.contains("zit init"), "{}", ran.stderr);
+}
+
+/// A wrong `$ZIT_GIT` is named, so it is not mistaken for a missing git.
+#[test]
+fn a_wrong_zit_git_is_named() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = Cli::new(dir.path(), &[("a.txt", "a\n")]);
+    let out = cli.command(&cli.root).env("ZIT_GIT", "/no/such/git").args(["status"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("/no/such/git") && err.contains("ZIT_GIT"), "{err}");
+}
+
+/// A repository with no commits cannot be initialised; say so instead of "unknown revision: HEAD".
+#[test]
+fn init_before_the_first_commit_says_what_is_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("repo");
+    std::fs::create_dir(&root).unwrap();
+    git(&root, &["init", "-q", "-b", "main"]);
+    let cli = Cli { root, home: dir.path().join("home") };
+    let ran = cli.run(&["init"]);
+    assert_eq!(ran.code, 2);
+    assert!(ran.stderr.contains("no commits"), "{}", ran.stderr);
+}
+
+/// A git error names the command and git's reason, not the store's plumbing arguments.
+#[test]
+fn a_git_error_does_not_print_the_git_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = cli(dir.path());
+    let ran = cli.run(&["export", "--branch", "bad name"]);
+    assert_eq!(ran.code, 2);
+    assert!(ran.stderr.contains("update-ref") && ran.stderr.contains("bad name"), "{}", ran.stderr);
+    assert!(!ran.stderr.contains("--git-dir"), "{}", ran.stderr);
+}
+
+/// An unwritable `$ZIT_HOME` is named in the error, not just "Permission denied".
+#[test]
+fn an_unwritable_zit_home_is_named() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let cli = Cli::new(dir.path(), &[("a.txt", "a\n")]);
+    cli.run(&["init"]).ok();
+    let sealed = dir.path().join("sealed");
+    std::fs::create_dir(&sealed).unwrap();
+    std::fs::set_permissions(&sealed, PermissionsExt::from_mode(0o500)).unwrap();
+    let home = sealed.join("home");
+    let out = cli.command(&cli.root).env("ZIT_HOME", &home).args(["materialise"]).output().unwrap();
+    std::fs::set_permissions(&sealed, PermissionsExt::from_mode(0o700)).unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains(&home.display().to_string()) && err.contains("ermission denied"), "{err}");
+}
+
+/// `$ZIT_HOME` may be relative to where zit is run (and contain spaces): git is pointed at
+/// files under it by path, from the repository's git directory and from workspaces.
+#[test]
+fn a_relative_zit_home_is_resolved_against_the_working_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = Cli::new(dir.path(), &[("a.txt", "a\n")]);
+    cli.run(&["init"]).ok();
+    let run = |args: &[&str]| {
+        let out = cli.command(&cli.root).env("ZIT_HOME", "rel home").args(args).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap()
+    };
+    let ws = run(&["materialise", "--json"]);
+    let path = Path::new(ws["path"].as_str().unwrap()).to_path_buf();
+    assert!(path.starts_with(cli.root.canonicalize().unwrap().join("rel home")), "{}", path.display());
+    write(&path, &[("b.txt", "b\n")]);
+    run(&["record", "--json", "--workspace", ws["id"].as_str().unwrap()]);
+    assert_eq!(run(&["status", "--json"])["changes"].as_array().unwrap().len(), 1);
+}
+
 /// Code in a language Zit cannot parse is one resource with no inferred reads; recording says so.
 #[test]
 fn recording_code_zit_cannot_parse_says_so() {

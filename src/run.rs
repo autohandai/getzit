@@ -161,6 +161,7 @@ pub fn run(repo: &Repo, opts: &Run) -> Result<Report> {
     ws.pid = Some(std::process::id());
     ws.pid_started = workspace::process_start(std::process::id());
     ws.save()?;
+    let _owner = ws.hold()?;
 
     let (summary_file, intent_file) = (ws.summary_file(), ws.intent_file());
     let args = opts.command[1..].iter().map(|a| {

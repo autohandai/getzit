@@ -95,7 +95,7 @@ impl Workspace {
     /// not collide on fixed temp-file names.
     pub fn temp_dir(&self) -> Result<PathBuf> {
         let dir = self.dir().join("tmp");
-        fs::create_dir_all(&dir)?;
+        fs::create_dir_all(&dir).map_err(|e| Error::io_at(&dir, e))?;
         Ok(dir)
     }
 
@@ -121,6 +121,33 @@ impl Workspace {
         claims.sort();
         claims.dedup();
         claims
+    }
+
+    /// `resource` with its path as the workspace's git names it: relative to
+    /// the workspace root, no `.` or `..`, no trailing slash. Agents pass
+    /// absolute paths and `./a`; one file must be one resource however it is spelt.
+    pub(crate) fn relative(&self, resource: &Resource) -> Result<Resource> {
+        use std::path::Component;
+        let given = Path::new(resource.path());
+        let relative = given.strip_prefix(&self.path).unwrap_or(given);
+        let mut parts: Vec<&str> = Vec::new();
+        for component in relative.components() {
+            match component {
+                Component::Normal(name) => parts.push(name.to_str().unwrap_or_default()),
+                Component::CurDir => {}
+                Component::ParentDir if parts.pop().is_some() => {}
+                _ => return Err(Error::msg(format!("`{resource}` is not a path inside the workspace"))),
+            }
+        }
+        if parts.is_empty() {
+            return Err(Error::msg(format!("`{resource}` names no file")));
+        }
+        let path = parts.join("/");
+        Ok(match resource {
+            Resource::File(_) => Resource::File(path),
+            Resource::Top(_) => Resource::Top(path),
+            Resource::Symbol(_, name) => Resource::Symbol(path, name.clone()),
+        })
     }
 
     pub fn declared_reads(&self) -> Vec<Resource> {
@@ -187,6 +214,50 @@ pub fn owner_alive(ws: &Workspace) -> bool {
         }
 }
 
+/// Held by the `zit run` that owns a workspace, for as long as it lives.
+pub struct Owner(#[allow(dead_code)] fs::File);
+
+/// Try a non-blocking `flock` for a moment before giving up: a process being
+/// spawned anywhere (macOS) holds every open descriptor, locks included,
+/// until it execs, so a lock busy for milliseconds is nobody's.
+fn flock_soon(file: &fs::File, operation: libc::c_int) -> bool {
+    use std::os::fd::AsRawFd;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
+    // SAFETY: `file` is an open descriptor we own; a lock taken goes with it.
+    while unsafe { libc::flock(file.as_raw_fd(), operation | libc::LOCK_NB) } != 0 {
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    true
+}
+
+impl Workspace {
+    /// Become the workspace's running owner. The kernel releases it however
+    /// the process ends, so a reused pid never looks like a live owner.
+    pub fn hold(&self) -> Result<Owner> {
+        let file = fs::File::create(self.dir().join("run.lock"))?;
+        if !flock_soon(&file, libc::LOCK_EX) {
+            return Err(Error::msg(format!("workspace {} is already running", self.id)));
+        }
+        Ok(Owner(file))
+    }
+}
+
+/// Whether the workspace has a live owner: its `zit run` holds the run lock, or
+/// the recorded pid and start time still name a running process. A pid alone
+/// proves nothing, since the system reuses them.
+pub fn alive(ws: &Workspace) -> bool {
+    running(ws) || (ws.pid_started.is_some() && owner_alive(ws))
+}
+
+/// Is a `zit run` holding the workspace right now?
+pub fn running(ws: &Workspace) -> bool {
+    let Ok(file) = fs::File::open(ws.dir().join("run.lock")) else { return false };
+    !flock_soon(&file, libc::LOCK_SH)
+}
+
 pub(crate) fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
@@ -240,7 +311,7 @@ pub fn stable_paths(repo: &Repo, base: &Oid) -> Result<bool> {
 
 /// As `materialise`, for a change whose state is already known.
 pub(crate) fn materialise_at(repo: &Repo, base: Oid, tree: Oid, new: &NewWorkspace) -> Result<Workspace> {
-    fs::create_dir_all(root(repo))?;
+    fs::create_dir_all(root(repo)).map_err(|e| Error::io_at(&root(repo), e))?;
     if stable_paths(repo, &base)? {
         return materialise_slot(repo, base, tree, new);
     }
@@ -670,6 +741,8 @@ mod cache {
     /// Atomically add `src` (a pristine `tree/` + `index`) to the cache as
     /// `tree`. With `replace`, an existing entry for `tree` is swapped out.
     fn publish(repo: &Repo, tree: &Oid, src: &Path, replace: bool) {
+        // Eviction removes `.tmp-*` leftovers under the exclusive lock: ours is not a leftover.
+        let _shared = Lock::acquire(repo, libc::LOCK_SH);
         let entry = root(repo).join(tree.as_str());
         let tmp = root(repo).join(format!(".tmp-{}", fresh_id()));
         if clonefile(src, &tmp).is_err() {
@@ -750,12 +823,17 @@ mod cache {
     }
 }
 
-pub fn get(repo: &Repo, id: &str) -> Result<Workspace> {
+/// The directory of workspace `id`, which may or may not exist.
+fn dir_of(repo: &Repo, id: &str) -> Result<PathBuf> {
     // Ids are generated here; anything else (a path, say) names no workspace.
     if id.is_empty() || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
         return Err(Error::UnknownWorkspace(id.to_string()));
     }
-    let meta = fs::read(root(repo).join(id).join("meta.json")).map_err(|_| Error::UnknownWorkspace(id.to_string()))?;
+    Ok(root(repo).join(id))
+}
+
+pub fn get(repo: &Repo, id: &str) -> Result<Workspace> {
+    let meta = fs::read(dir_of(repo, id)?.join("meta.json")).map_err(|_| Error::UnknownWorkspace(id.to_string()))?;
     Ok(serde_json::from_slice(&meta)?)
 }
 
@@ -781,11 +859,17 @@ pub fn containing(repo: &Repo, cwd: &Path) -> Option<Workspace> {
 /// Delete the view. Recorded changes are unaffected. A slot keeps its
 /// files for the next workspace made there (see [`stable_paths`]).
 pub fn dispose(repo: &Repo, id: &str) -> Result<()> {
-    let ws = get(repo, id)?;
-    if id.starts_with(SLOT) {
-        return retire_slot(&ws);
+    // By id, not by what meta.json says: a damaged workspace must still be removable.
+    let dir = dir_of(repo, id)?;
+    if !dir.is_dir() {
+        return Err(Error::UnknownWorkspace(id.to_string()));
     }
-    fs::remove_dir_all(ws.dir())?;
+    if id.starts_with(SLOT) {
+        if let Ok(ws) = get(repo, id) {
+            return retire_slot(&ws);
+        }
+    }
+    fs::remove_dir_all(dir)?;
     Ok(())
 }
 
@@ -803,7 +887,9 @@ pub struct Orphans {
 pub fn dispose_orphaned(repo: &Repo, force: bool) -> Result<Orphans> {
     let mut report = Orphans::default();
     for ws in list(repo)? {
-        if ws.pid.is_none() || owner_alive(&ws) {
+        // Destructive, so both signals must say the owner is gone: no run lock held and
+        // no live process with the recorded pid and start time.
+        if ws.pid.is_none() || running(&ws) || owner_alive(&ws) {
             continue;
         }
         let who = (ws.id.clone(), ws.agent.clone());
@@ -900,8 +986,9 @@ pub fn in_flight(repo: &Repo, ws: &Workspace) -> Result<crate::footprint::Footpr
 pub fn declare_reads(repo: &Repo, id: &str, reads: &[Resource]) -> Result<()> {
     use std::io::Write;
     let ws = get(repo, id)?;
+    let reads: Vec<Resource> = reads.iter().map(|r| ws.relative(r)).collect::<Result<_>>()?;
     let mut file = fs::OpenOptions::new().create(true).append(true).open(ws.reads_file())?;
-    for read in reads {
+    for read in &reads {
         writeln!(file, "{read}")?;
     }
     Ok(())
@@ -939,6 +1026,37 @@ mod tests {
         assert_eq!(fs::read_to_string(out("w4/tree/b")).unwrap(), "keep\n");
         cache::publish_and_evict(&repo, &second, &out("w4"), false);
         assert_eq!(cache::clone_into(&repo, &second, &out("w5")).unwrap(), Source::Exact);
+    }
+
+    /// Eviction deletes leftover `.tmp-*` directories under the exclusive lock. A
+    /// publish in another process builds its entry in one of those, so it must hold
+    /// the shared lock, or eviction can empty the directory as it is renamed into place.
+    #[test]
+    fn publishing_holds_the_cache_lock() {
+        use std::os::fd::AsRawFd;
+        let dir = tempfile::tempdir().unwrap();
+        if !copy_on_write(dir.path()) {
+            eprintln!("skipped: no copy-on-write where the temp directory is");
+            return;
+        }
+        sh(dir.path(), "git init -q -b main . && echo one > a && git add -A && git -c user.name=t -c user.email=t@t commit -qm one");
+        let repo = Repo::open(dir.path(), &dir.path().join("home")).unwrap();
+        let tree = repo.tree_of(&repo.resolve("HEAD").unwrap()).unwrap();
+        let src = dir.path().join("w1");
+        assert_eq!(cache::clone_into(&repo, &tree, &src).unwrap(), Source::Scratch);
+        let entry = repo.home().join("trees").join(tree.as_str());
+
+        let lock = fs::File::create(repo.home().join("trees/.lock")).unwrap();
+        assert_eq!(unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) }, 0);
+        let publisher = std::thread::spawn({
+            let (repo, tree) = (repo.clone(), tree.clone());
+            move || cache::publish_and_evict(&repo, &tree, &src, false)
+        });
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(!entry.exists(), "published while another process held the cache exclusively");
+        drop(lock);
+        publisher.join().unwrap();
+        assert!(entry.exists());
     }
 }
 

@@ -14,3 +14,6 @@ wrangler.toml
 
 # Private review notes: kept locally, never committed
 feedback/
+
+# Claude Code session state and lane worktrees
+.claude/

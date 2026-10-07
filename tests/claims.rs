@@ -47,6 +47,26 @@ fn a_claim_excludes_overlapping_claims_by_other_live_workspaces() {
     assert_eq!(claim::claim(&fx.repo, &a.id, &res(&["Cargo.toml"])).unwrap(), Claimed::Granted);
 }
 
+/// One file is one claim however an agent spells its path: `./a`, `b/../a`,
+/// the absolute path of the file in the workspace. Paths outside it are refused.
+#[test]
+fn a_claim_names_a_file_the_way_git_does_however_it_is_spelt() {
+    let fx = fixture();
+    let (a, b) = (fx.workspace("a"), fx.workspace("b"));
+    let in_b = b.path().join("src/lib.rs").display().to_string();
+    assert_eq!(
+        claim::claim(&fx.repo, &a.id, &res(&["./Cargo.toml", "docs/../src/lib.rs#price"])).unwrap(),
+        Claimed::Granted
+    );
+    assert_eq!(a.claims(), res(&["Cargo.toml", "src/lib.rs#price"]));
+    assert!(matches!(claim::claim(&fx.repo, &b.id, &res(&["Cargo.toml"])).unwrap(), Claimed::Refused(_)));
+    assert!(matches!(claim::claim(&fx.repo, &b.id, &res(&[&format!("{in_b}#price")])).unwrap(), Claimed::Refused(_)));
+    assert!(matches!(claim::claim(&fx.repo, &b.id, &res(&["src/lib.rs#tax"])).unwrap(), Claimed::Granted));
+    for outside in ["../x", "/etc/hosts", ".", ""] {
+        assert!(claim::claim(&fx.repo, &b.id, &res(&[outside])).is_err(), "{outside:?}");
+    }
+}
+
 #[test]
 fn a_refused_claim_takes_nothing() {
     let fx = fixture();

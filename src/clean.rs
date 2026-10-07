@@ -54,9 +54,10 @@ pub fn clean(repo: &Repo, force: bool) -> Result<Report> {
     if !force {
         let mut blocked = Vec::new();
         for ws in &spaces {
-            if workspace::owner_alive(ws) {
+            if workspace::alive(ws) {
                 blocked.push(format!("{} ({}) is running", ws.id, ws.agent));
-            } else if workspace::is_dirty(repo, ws).unwrap_or(true) {
+            } else if ws.path().is_dir() && workspace::is_dirty(repo, ws).unwrap_or(true) {
+                // A view deleted by hand holds no edits to lose.
                 blocked.push(format!("{} ({}) has unrecorded edits", ws.id, ws.agent));
             }
         }

@@ -49,17 +49,28 @@ fn clean_refuses_to_delete_unrecorded_work() {
     assert!(!ws.path().exists());
 }
 
+/// A view someone deleted by hand has no unrecorded edits to protect.
+#[test]
+fn clean_does_not_mistake_a_hand_deleted_view_for_unrecorded_edits() {
+    let fx = Fixture::new(&[("a.txt", "a\n")]);
+    let ws = fx.workspace("claude");
+    std::fs::remove_dir_all(ws.path()).unwrap();
+    assert_eq!(zit::clean::clean(&fx.repo, false).unwrap().workspaces, 1);
+    assert!(workspace::list(&fx.repo).unwrap().is_empty());
+}
+
 #[test]
 fn clean_refuses_to_pull_a_workspace_from_under_a_running_agent() {
     let fx = Fixture::new(&[("a.txt", "a\n")]);
     let mut ws = fx.workspace("claude");
-    let mut agent = std::process::Command::new("sleep").arg("30").spawn().unwrap();
-    ws.pid = Some(agent.id());
+    ws.pid = Some(std::process::id());
     std::fs::write(ws.path().parent().unwrap().join("meta.json"), serde_json::to_vec(&ws).unwrap()).unwrap();
+    let owner = ws.hold().unwrap();
+    assert!(workspace::running(&ws));
     let err = zit::clean::clean(&fx.repo, false).unwrap_err().to_string();
     assert!(err.contains("running"), "{err}");
-    agent.kill().unwrap();
-    agent.wait().unwrap();
+    drop(owner);
+    assert!(!workspace::running(&ws));
     assert_eq!(zit::clean::clean(&fx.repo, false).unwrap().workspaces, 1);
     assert!(workspace::list(&fx.repo).unwrap().is_empty());
 }
@@ -106,6 +117,18 @@ fn dispose_orphaned_removes_workspaces_whose_owner_is_gone() {
     assert_eq!(forced["kept"], serde_json::json!([]));
     assert!(!std::path::Path::new(&dirty_orphan).exists());
     assert!(std::path::Path::new(&owned).exists() && std::path::Path::new(&unowned).exists());
+}
+
+/// A `zit run` that died (SIGKILL, a crash) leaves its pid in meta.json; when the
+/// system hands that pid to another process, the workspace is not running.
+#[test]
+fn a_reused_pid_is_not_a_running_agent() {
+    let fx = Fixture::new(&[("a.txt", "a\n")]);
+    let mut ws = fx.workspace("claude");
+    ws.pid = Some(std::process::id());
+    std::fs::write(ws.path().parent().unwrap().join("meta.json"), serde_json::to_vec(&ws).unwrap()).unwrap();
+    assert!(!workspace::running(&ws));
+    assert_eq!(zit::clean::clean(&fx.repo, false).unwrap().workspaces, 1);
 }
 
 /// A verification in progress holds its view's lock; clean waits for nobody and refuses instead.

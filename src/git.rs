@@ -56,7 +56,13 @@ pub const MIN_GIT: (u32, u32) = (2, 38);
 
 /// Fail early, naming the version needed, when git is older than [`MIN_GIT`].
 pub fn require_git() -> Result<()> {
-    let out = git_command().arg("--version").output().map_err(|e| Error::msg(format!("cannot run git: {e}")))?;
+    let out = git_command().arg("--version").output().map_err(|e| {
+        let program = match std::env::var_os("ZIT_GIT") {
+            Some(given) => format!("{} ($ZIT_GIT)", Path::new(&given).display()),
+            None => "git (set $ZIT_GIT to a git 2.38+ binary that is not on PATH)".to_string(),
+        };
+        Error::msg(format!("cannot run {program}: {e}"))
+    })?;
     let text = String::from_utf8_lossy(&out.stdout);
     let version = text.split_whitespace().nth(2).unwrap_or_default();
     let mut parts = version.split('.').map(|p| p.parse::<u32>().unwrap_or(0));
@@ -105,13 +111,29 @@ impl Drop for Trace {
     }
 }
 
+/// A failed command's arguments as a user reads them: the store's plumbing
+/// (`--git-dir`, `--work-tree`, `-c key=value`) left out.
+fn shown_args(cmd: &Command) -> String {
+    let mut args = cmd.get_args().map(|a| a.to_string_lossy());
+    let mut shown = Vec::new();
+    while let Some(arg) = args.next() {
+        match arg.as_ref() {
+            "--git-dir" | "--work-tree" | "-c" => {
+                args.next();
+            }
+            _ => shown.push(arg.into_owned()),
+        }
+    }
+    shown.join(" ")
+}
+
 /// Run to completion; trimmed stdout on success.
 pub(crate) fn run(cmd: &mut Command) -> Result<String> {
     let _trace = Trace::start(cmd);
     let out = cmd.stdin(Stdio::null()).output()?;
     if !out.status.success() {
         return Err(Error::Git {
-            args: cmd.get_args().map(|a| a.to_string_lossy()).collect::<Vec<_>>().join(" "),
+            args: shown_args(cmd),
             stderr: String::from_utf8_lossy(&out.stderr).trim().to_string(),
         });
     }
@@ -149,7 +171,7 @@ impl Repo {
     /// Open the repository containing `cwd`; local state lives under
     /// `$ZIT_HOME` (default `~/.zit`).
     pub fn discover(cwd: &Path) -> Result<Repo> {
-        let home = match std::env::var_os("ZIT_HOME") {
+        let home = match std::env::var_os("ZIT_HOME").filter(|h| !h.is_empty()) {
             Some(h) => PathBuf::from(h),
             None => PathBuf::from(std::env::var_os("HOME").ok_or_else(|| Error::msg("HOME is not set"))?).join(".zit"),
         };
@@ -176,6 +198,9 @@ impl Repo {
             other => other,
         };
         let key = format!("{}-{}", name.unwrap_or("repo"), crate::hash(git_dir.as_os_str().as_encoded_bytes()));
+        // Workspaces point git at files under home by path; commands then run from other directories.
+        let home_root =
+            if home_root.is_absolute() { home_root.to_path_buf() } else { std::env::current_dir()?.join(home_root) };
         Ok(Repo { git_dir, home: home_root.join(key), strategy: Strategy::Clone, alternate: None })
     }
 
@@ -238,7 +263,7 @@ impl Repo {
         let out = child.wait_with_output()?;
         if !out.status.success() {
             return Err(Error::Git {
-                args: cmd.get_args().map(|a| a.to_string_lossy()).collect::<Vec<_>>().join(" "),
+                args: shown_args(&cmd),
                 stderr: String::from_utf8_lossy(&out.stderr).trim().to_string(),
             });
         }
@@ -251,7 +276,11 @@ impl Repo {
         if let Ok(cur) = self.current() {
             return Ok(cur);
         }
-        let genesis = self.resolve(rev.unwrap_or("HEAD"))?;
+        let rev = rev.unwrap_or("HEAD");
+        let genesis = self.resolve(rev).map_err(|e| match rev {
+            "HEAD" => Error::msg("HEAD has no commits yet: commit first, or run `zit init --from <rev>`"),
+            _ => e,
+        })?;
         self.git(&["update-ref", CURRENT, genesis.as_str(), ""])?;
         self.current()
     }

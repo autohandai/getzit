@@ -130,6 +130,17 @@ fn declared_reads_are_carried_into_the_change() {
     assert_eq!(c.reads, vec![Resource::parse("README.md")]);
 }
 
+/// A declared read names a file the way git does, or it never matches the write that makes it stale.
+#[test]
+fn declared_reads_are_named_the_way_git_names_files() {
+    let fx = Fixture::new(FILES);
+    let ws = fx.workspace("claude");
+    let absolute = ws.path().join("src/a.rs#a").display().to_string();
+    workspace::declare_reads(&fx.repo, &ws.id, &[Resource::parse("./README.md"), Resource::parse(&absolute)]).unwrap();
+    assert_eq!(ws.declared_reads(), vec![Resource::parse("README.md"), Resource::parse("src/a.rs#a")]);
+    assert!(workspace::declare_reads(&fx.repo, &ws.id, &[Resource::parse("../secret")]).is_err());
+}
+
 #[test]
 fn materialising_a_new_state_reuses_the_cached_one() {
     let fx = Fixture::new(FILES);
@@ -149,6 +160,18 @@ fn a_workspace_id_is_never_a_path() {
     assert!(workspace::dispose(&fx.repo, &sneaky).is_err());
     assert!(workspace::get(&fx.repo, &sneaky).is_err());
     assert!(ws.path().exists());
+}
+
+/// A workspace whose meta.json is damaged still goes away on dispose; its id is what names it.
+#[test]
+fn a_workspace_with_a_damaged_meta_file_can_still_be_disposed() {
+    let fx = Fixture::new(FILES);
+    let ws = fx.workspace("claude");
+    fs::write(ws.path().parent().unwrap().join("meta.json"), "{not json").unwrap();
+    assert!(workspace::get(&fx.repo, &ws.id).is_err());
+    workspace::dispose(&fx.repo, &ws.id).unwrap();
+    assert!(!ws.path().parent().unwrap().exists());
+    assert!(matches!(workspace::dispose(&fx.repo, &ws.id), Err(zit::Error::UnknownWorkspace(_))));
 }
 
 #[test]
@@ -298,14 +321,15 @@ fn an_owner_pid_with_another_start_time_is_gone() {
     assert!(!workspace::owner_alive(&ws));
     assert_eq!(zit::clean::clean(&fx.repo, false).unwrap().workspaces, 1, "clean does not mistake it for a run");
 
-    // A meta.json written before start times were recorded: the pid alone decides.
+    // A meta.json with a pid but no start time and no run lock: a pid alone proves
+    // nothing, since the system reuses them.
     let ws = fx.workspace("codex");
     let mut meta: serde_json::Value =
         serde_json::from_slice(&fs::read(ws.path().parent().unwrap().join("meta.json")).unwrap()).unwrap();
     meta["pid"] = serde_json::json!(agent.id());
     meta.as_object_mut().unwrap().remove("pid_started");
     fs::write(ws.path().parent().unwrap().join("meta.json"), serde_json::to_vec(&meta).unwrap()).unwrap();
-    assert_eq!(alive(), Some(true));
+    assert_eq!(alive(), Some(false));
     agent.kill().unwrap();
     agent.wait().unwrap();
     assert_eq!(alive(), Some(false));

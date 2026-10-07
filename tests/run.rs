@@ -158,6 +158,33 @@ fn a_known_agent_needs_no_command() {
     assert!(zit::run::preset("unknown", "x", &writable).is_none());
 }
 
+/// While the agent runs, its workspace is alive to `status` and protected from `clean`.
+#[test]
+fn a_running_agents_workspace_is_alive_and_not_cleaned() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = cli(dir.path());
+    let marker = dir.path().join("started");
+    let script = format!("touch {}; exec sleep 60", marker.display());
+    let mut child = cli
+        .command(&cli.root)
+        .args(["run", "--json", "--", "sh", "-c", &script])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    while !marker.exists() {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let s = status(&cli);
+    assert_eq!(s["workspaces"][0]["alive"], true, "{s}");
+    let refused = cli.run(&["clean"]);
+    assert_eq!(refused.code, 2);
+    assert!(refused.stderr.contains("running"), "{}", refused.stderr);
+    unsafe { libc::kill(child.id() as i32, libc::SIGTERM) };
+    child.wait().unwrap();
+    assert_eq!(status(&cli)["workspaces"], serde_json::json!([]));
+}
+
 /// An agent that ignores the signal cannot hold its work hostage.
 #[test]
 fn an_agent_that_ignores_the_signal_is_killed_and_its_work_recorded() {
