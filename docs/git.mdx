@@ -16,6 +16,7 @@ Refs under `refs/zit/`, the objects they point to, and a local ledger in `.git/z
 | `refs/zit/current` | the accepted change (a commit) |
 | `refs/zit/changes/<id>` | a speculative change (a commit) |
 | `refs/zit/evidence/<key>` | an evidence record (a blob) |
+| `refs/zit/logs/<id>` | the agent output kept by `zit run --log` (a blob) |
 
 It creates or moves a branch only when you `export` or `sync` to it, register worktrees, or touch your checkout — except `export`/`sync` to a branch you have checked out, which fast-forwards its files.
 
@@ -95,13 +96,58 @@ linear = true
 
 A change accepted onto a moved current then becomes one commit on top of it, not a merge commit; it carries a `Zit-Change:` trailer, so accepting it again is recognised as done. A change built on current is a fast-forward either way.
 
+What a linear compose keeps and what it means for the graph:
+
+- **Accepting the tip of a chain accepts the chain.** With `c1 ← c2` both speculative, `zit accept --linear c2` lands both edits in one commit; the `Zit-Change` trailers on `base..current` mark `c1` as landed too, and the transaction retires every `refs/zit/changes/*` merged into it. Before, `c1` stayed listed as speculative and then stale.
+- **Building on a linearly landed change works.** A change made on `c1` after `c1` landed linearly is judged by its own edits: staleness compares what it wrote since `c1` with what current wrote since the commit that landed `c1`, and the text merge uses `c1`'s tree as the base. Git 2.38 has no `merge-tree --merge-base`, so Zit makes three throwaway deterministic commits for that merge.
+- **Declared reads are carried.** The compose commit copies the `Zit-Read` trailers of the changes it lands, so a later write to something they declared is still a conflict.
+
+Finding what landed linearly scans `base..current` for trailers; the scan grows with that span.
+
 ### Who committed, and signatures
 
 The author of a change is its agent; the committer is you, from git's `user.name` and `user.email`. With `commit.gpgsign` set (any spelling git accepts as true), every commit Zit writes is signed with your key, as git is configured to sign. Tested with an SSH key in `tests/teams.rs`.
 
+### Batches
+
+```sh
+zit accept A B C      # these, composed in order, checked once, landed together
+zit accept --batch    # every change whose status is verified
+```
+
+The checks run once on the combined state and current moves once. A member that is stale, does not merge or does not parse is skipped with its reason and the rest land; a check that fails on the combined state lands nothing, because Zit cannot say which member broke it (`next: accept one at a time`). Each change keeps its own commit and reason in the exported history. Output and JSON on the [CLI reference](/cli#accepting-several-changes).
+
 ### CI
 
 Zit's checks run on the integrator's machine, in a reused build directory: fast, not hermetic. Keep CI as the authority; Zit's checks are the pre-filter that keeps broken combinations out of the queue. To integrate in CI instead, run `zit accept` in one job with `zit.trustFetchedEvidence` off, so the job runs every check itself.
+
+#### GitHub Actions
+
+[`integrations/github`](https://github.com/autohandai/getzit/tree/main/integrations/github) is a composite action that makes a job the integrator: it installs a released `zit`, fetches `refs/zit/*` and the branch, accepts every speculative change in the order it was recorded (`zit accept --json`, one at a time), exports to the branch, pushes the branch and the graph back, and deletes the accepted `refs/zit/changes/<id>` on the remote. If `refs/zit/current` has never been pushed, the first run starts the graph at the branch (`zit init --from refs/remotes/<remote>/<branch>`).
+
+```yaml
+- uses: autohandai/getzit/integrations/github@main
+  id: zit
+  with:
+    version: latest        # a release, e.g. 0.1.1; the tarball is checked against its SHA-256
+    branch: main           # exported and pushed after accepting
+    remote: origin
+    trust-evidence: "false"
+```
+
+| Input | Default | Meaning |
+|---|---|---|
+| `version` | `latest` | release to install |
+| `branch` | `main` | follows current: `zit export --branch` after accepting, then pushed |
+| `remote` | `origin` | where `refs/zit/*` is fetched from and pushed to |
+| `trust-evidence` | `false` | `true` sets `zit.trustFetchedEvidence`, so evidence pushed with the graph is reused; off, every check runs on the runner |
+| `token` | the job's token | only to resolve `latest` through the GitHub API |
+
+Outputs: `accepted` (ids, space-separated), `rejected` (`id:reason`, one of `stale`, `conflict`, `failed`), `current`. The job needs `permissions: contents: write`, `fetch-depth: 0`, and whatever the checks need installed. A rejected change does not fail the job; it stays in the graph for its author to `zit retry`. The job fails only when a step fails (fetch, export, push).
+
+A push to `refs/zit/*` alone starts no workflow: GitHub runs workflows for branches and tags only. The example workflow `zit-integrate.yml` therefore runs on a schedule and by `workflow_dispatch` (`gh workflow run zit-integrate`), with a concurrency group so one integrator runs at a time.
+
+What is tested: `integrate.sh` against a local bare origin (`tests/cli.rs`: a compatible change lands, a stale one stays with its reason, `main` and `refs/zit/current` arrive at origin, the landed change's ref is removed there); `install.sh` run by hand against release 0.1.1 on this Mac. Not tested: the action and workflow on GitHub Actions itself, `install.sh` on Linux or x86_64 macOS, `trust-evidence: true` end to end, the first-run `init` branch. The scripts need git, bash and python3, and read `ZIT`, `ZIT_REMOTE`, `ZIT_BRANCH`, `ZIT_TRUST_EVIDENCE`, `ZIT_VERSION`, `ZIT_DIR`.
 
 ## Inspecting with git
 

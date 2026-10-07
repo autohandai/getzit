@@ -24,6 +24,25 @@ cargo install zit --locked
 
 They are the same program. Git runs any `git-<name>` on your `PATH` as `git <name>`, so Zit works wherever git does. This page uses `git zit`.
 
+Then check the machine. `doctor` runs anywhere, before a repository has a graph:
+
+```console
+$ git zit doctor
+pass  git             git version 2.48.1
+pass  home            ~/.zit/shop-8bdbd4d96eb6bdd8 (writable)
+pass  copy-on-write   apfs: workspaces are clones
+pass  free space      5.8 GB free on the volume holding ~/.zit/shop-8bdbd4d96eb6bdd8
+fail  repository      zit is not initialised in this repository; run `zit init`
+pass  agent autohand  0.9.9-alpha.ae34d3f (ae34d3f)
+pass  agent claude    2.1.290 (Claude Code)
+pass  agent codex     codex-cli 0.159.2
+pass  agent pi        0.84.4
+pass  gh              gh version 2.65.0 (2025-01-06)
+pass  languages       c#, go, java, javascript, python, ruby, rust, typescript
+```
+
+`fail` on `repository` is expected until step 2; a missing agent or `gh` is a `warn`, not a failure. Exit 1 while anything fails.
+
 ```console
 $ git zit -h
 Usage: git zit [OPTIONS] <COMMAND>

@@ -68,7 +68,7 @@ sequenceDiagram
 
 **The idea.** The unit of conflict decides how much concurrency survives. Files are too coarse: two agents editing different functions of one file would always conflict. Lines are too fine and carry no meaning.
 
-**In zit.** Each changed file is parsed (tree-sitter) into top-level symbols. A symbol is written if the hash of its text changed. A symbol is read if a written symbol mentions its name. This is a deliberate over-approximation:
+**In zit.** Each changed file is parsed (tree-sitter) into top-level symbols: eight languages (Rust, Python, JavaScript, TypeScript, Go, Java, Ruby, C#), Markdown by heading, and TOML and JSON manifests by top-level key. A symbol is written if the hash of its text changed. A symbol is read if a written symbol mentions its name. A renamed file is compared unit by unit across the rename, so a move writes nothing. This is a deliberate over-approximation:
 
 - It needs no type checker or build, so it works on code that does not compile yet.
 - It matches by name, so it sometimes refuses changes that were fine. Measured: 21–23% of changes in the scripted benchmark (before the interface-only rule of ADR 16; not re-measured); see [Benchmarks](/benchmarks).
@@ -94,6 +94,8 @@ sequenceDiagram
 
 **In zit.** A change's status (verified, stale, …) is a function of the graph and the evidence, computed when asked. When current moves, every speculative change's status changes with it, and nothing had to be notified.
 
+Because it is a pure function of (change, current, evidence), its result can be cached under exactly those inputs. `zit status` writes each answer to `cache/status/<id>` with the current id and a fingerprint of the evidence refs, and reuses it while both match; a different key is simply not an answer. Nothing is invalidated, because nothing stored claims to be true on its own. Measured on 100 changes over a 200-file project: a repeated `status` went from 462 ms to 52 ms and from 304 git calls to 5 (`bench/status.sh`, [Benchmarks](/benchmarks#7-status-and-git-processes)). The first `status` after current moves still evaluates every change.
+
 ## 7. Contention management: ask before, validate after
 
 **The idea.** Optimistic schemes are efficient when conflicts are rare and wasteful when they are common, because every loser has already done its work. Databases and transactional memory handle this by putting a cheap, early signal in front of validation: declare intent, and back off if someone else has it. Collaboration research found the same for people: Crystal (Brun et al., 2011) showed that telling developers about conflicts with unmerged work early makes them cheap to avoid.
@@ -118,16 +120,18 @@ The graph lives in the repository's git object store. Workspaces and caches live
 | Zit home: `ws/<id>/` | Working tree, git index, `meta.json`, `claims`, `reads`, `summary.txt`, `tmp/`, `inflight.json` | No | `zit dispose <id>` or `zit clean` |
 | Zit home: `trees/` | Cached checkouts, including installed dependencies | No | Cache eviction or `zit clean` |
 | Zit home: `verify/` | Reused verification views and their build files | No | Replacement of a view or `zit clean` |
-| Zit home: `cache/footprint-v2/` | Computed writes, inferred reads, declared reads and interface changes | No | `zit clean` |
+| Zit home: `cache/footprint-v3/` | Computed writes, inferred reads, declared reads, renames and interface changes, one file per `base-tip` span plus `reads.json` | No | `zit clean` |
+| Zit home: `cache/status/` | Each change's last status with the current and evidence it was derived from | No | `zit clean` |
 | Zit home: `shared/` | Shared build and package caches, exposed to agents and checks as `$ZIT_CACHE_DIR` | No | `zit clean` |
+| `$ZIT_HOME/git-ok/` | One marker per git binary found new enough (keyed by path, size, modification time) | No | Manual removal; `zit clean` keeps it |
 
-**The git record.** `refs/zit/current` points to the accepted current commit. `refs/zit/changes/<id>` keeps a recorded speculative change. `refs/zit/evidence/<key>` points to a JSON blob containing a check result.
+**The git record.** `refs/zit/current` points to the accepted current commit. `refs/zit/changes/<id>` keeps a recorded speculative change. `refs/zit/evidence/<key>` points to a JSON blob containing a check result. `refs/zit/logs/<id>` points to a blob with the last 64 KB of an agent's output when `zit run --log` kept it.
 
 A change commit contains its resulting tree, parents, author and committer identities and dates. Its message contains the intent and the author's account of what was done and why. Trailers carry `Zit-Agent`, optional `Zit-Session`, declared `Zit-Read` resources, and reported `Zit-Tokens` and `Zit-Cost-USD` when available. Linear acceptance of a composed change adds `Zit-Change`, naming the original change.
 
 An evidence blob contains the check name, cache key, state id, pass/fail result, exit code, duration in milliseconds, timestamp and up to 4,000 bytes from the end of combined stdout and stderr. Results with exit code `-1` (including timeouts) are not persisted. The local ledger marks which check keys this clone has run; fetched evidence is otherwise untrusted unless `zit.trustFetchedEvidence` is enabled.
 
-**Local state and lifetime.** Workspace metadata records its id, base commit and tree, optional merge parent, intent, agent, session, creation time, owner pid and path. `summary.txt` is the agent's summary file (`$ZIT_SUMMARY_FILE`). Each workspace has a separate `tmp/`, passed as `$TMPDIR`.
+**Local state and lifetime.** Workspace metadata records its id, base commit and tree, optional merge parent, intent, agent, session, creation time, owner pid and its start time, the port chosen for it, and path. `summary.txt` is the agent's summary file (`$ZIT_SUMMARY_FILE`). Each workspace has a separate `tmp/`, passed as `$TMPDIR`.
 
 Claims last until disposal. Declared reads are copied into a change and their local file is removed after recording it. `zit run` normally records the work and disposes the workspace; `--keep` leaves it in place. Other workspaces stay until disposed or cleaned.
 
@@ -165,14 +169,14 @@ For *n* speculative changes against one current:
 | Verification | only checks whose inputs changed | the checks' own cost |
 | Acceptance | one ref compare-and-swap | nothing |
 
-Acceptance is a single line: changes land one at a time, each verified against the state it will actually join. That is the throughput limit, and it is set by how long the checks take, not by zit.
+Acceptance is a single line: each accept verifies the state it will actually produce. A batch (`zit accept A B C`, `zit accept --batch`) composes several changes in order and verifies the combined state once, so the checks are paid once for the batch instead of once per change; a failing check rejects the whole batch, since one verification cannot say which member broke it. The throughput limit is still how long the checks take, not zit.
 
 **What limits a thousand agents.** From the measurements so far, in order:
 
 1. **Wasted work**, when agents share a task. Addressed by claims (idea 7).
 2. **Build state per agent.** On a compiled project each agent rebuilds the project at its own path. Verification no longer does (ADR 10); agent workspaces still do. Not solved.
-3. **Check time on the accepted line.** Evidence reuse removes checks whose inputs did not change (idea 4). What remains is serial. Verifying several non-conflicting changes as one batch, as merge queues do, is not built.
-4. **Zit's own overhead**: about ten git processes per accept, a few milliseconds each. Last, not first.
+3. **Check time on the accepted line.** Evidence reuse removes checks whose inputs did not change (idea 4). Batches verify several changes with one run of the checks; what a batch cannot do is say which member broke a failing check, and a conflict graph that picks the members automatically is not built.
+4. **Zit's own overhead**: 7 git processes for a record, 9 for a fast-forward accept, 16 for a composing accept (counted with `bench/calls.sh`, including `cat-file --batch` sessions; 10, 14 and 29 before this pass), a few milliseconds each. Last, not first.
 
 The largest runs so far are 1,000 scripted changes from 100 scripted agents ([Benchmarks](/benchmarks)) and 20 git developers with 30 real agents on one repository ([Lessons](/lessons)). Nothing larger is claimed.
 

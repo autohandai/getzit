@@ -3,7 +3,7 @@ title: Benchmarks
 description: Zit measured against git worktrees, on one machine, including where it is slower.
 ---
 
-Every number on this page is generated from `bench/results/*.json` by `bench/report.py`. Reproduce: sections 1–3 with `bench/run.sh`, 1b with `.github/workflows/bench-linux.yml`, 4 with `bench/run-agents.sh`, 5 with `bench/space.sh`, 6 with `bench/sim/simulate.py`.
+Every number in sections 1–6 is generated from `bench/results/*.json` by `bench/report.py`. Reproduce: sections 1–3 with `bench/run.sh`, 1b with `.github/workflows/bench-linux.yml`, 4 with `bench/run-agents.sh`, 5 with `bench/space.sh`, 6 with `bench/sim/simulate.py`. Section 7 is from the four scripts it names, run by hand.
 
 ## How to read this
 
@@ -178,6 +178,46 @@ For scale, the machine this ran on had 57 linked worktrees of other projects usi
 
 Ended without a change, round 1: 3 correctly found their task already done, 1 waited for a claim and never started, 3 were lost when the machine's disk filled. Round 2: all 3 correctly found their task already done. Round 2's `failed` rejections are changes written against a validator that another agent made stricter while they worked; see [Lessons](/lessons).
 
+## 7. Status and git processes
+
+Measured on the same Mac during the pass that added the status memo and cut git processes, with the machine loaded by other work. Each script was run against the binary before and after the change, interleaved A/B; the ratios are reliable, the absolute times are not. Every script takes a scratch directory and `$ZIT_BIN`.
+
+**`bench/status.sh`**: 100 speculative changes on a 200-file Python project with one check; `zit status` cold (first call) and warm (median of 5), with every change on current and again after one accept.
+
+| | Before | After |
+|---|---:|---:|
+| Warm, all on current (ms) | 462 | 52 |
+| Warm, after one accept (ms) | 713 | 53 |
+| Cold, all on current (ms) | 413 | 308 |
+| Cold, after one accept (ms) | 652 | 464 |
+| Git processes per warm status | 304 / 400 | 5 |
+
+The warm numbers are the memo (each change's status reused while current and the evidence are unchanged); the cold ones are fewer git processes. The first `status` after current moves still evaluates every change.
+
+**`bench/calls.sh`**: every git process started (counted through a wrapper `git`, so `cat-file --batch` sessions are included) by one `record`, one fast-forward `accept` and one composing `accept`, on a 400-module Python project with one check.
+
+| Operation | Before | After |
+|---|---:|---:|
+| `record` (1 file) | 10 | 7 |
+| `accept`, fast-forward | 14 | 9 |
+| `accept`, composing | 29 | 16 |
+
+ADR 7's table counts with `ZIT_TRACE` on a smaller project and gives lower numbers; this one is what the operating system sees.
+
+**`bench/startup.sh`**: `zit --version` and `zit status` on an empty graph, median of 20 interleaved runs.
+
+| | Before | After |
+|---|---:|---:|
+| `zit status`, empty graph (ms) | 64.6 | 40.2 |
+| Git processes | 5 | 3 |
+| `zit --version` (ms) | ≈ 3 | ≈ 3 |
+
+`--version` starts no git process and exits in argument parsing; the tree-sitter grammars have no start-up cost. The git version check is remembered per binary under `$ZIT_HOME/git-ok/`.
+
+**`bench/awareness.sh`**: `zit status` with 30 open workspaces that all have unrecorded edits, cold: 216 → 169 ms, 94 → 63 git processes (the object directory is found without a `rev-parse` per workspace).
+
+Also in this pass, not scripted: a `record` of 200 changed files went from about 520 to about 345 ms (median of 4) by parsing the files on several threads once a change touches 8 or more.
+
 ## What these numbers say
 
 **On APFS, creating workspaces is 5.4x to 8.1x faster with copy-on-write clones**, and uses far less disk (98 MB against 1,390 MB for 10 workspaces of 30,000 files). Without cloning, zit creates workspaces at the same speed as `git worktree`. Deleting workspaces takes about as long either way.
@@ -206,7 +246,7 @@ Ended without a change, round 1: 3 correctly found their task already done, 1 wa
 - Left behind at the end: 1545 branches in the worktree arm, 0 speculative changes or workspaces in zit.
 - `zit status` over 1000 speculative changes: 1,675 ms.
 
-**Where the integration time goes.** Zit makes about 10 git calls to accept a change where a merge makes 1 or 2, and it verifies the composed state in a fresh workspace rather than in place (ADR 7). The strict mode's extra refusals add redos on top; `--allow-stale` removes those and shows the remaining per-accept overhead.
+**Where the integration time goes.** Zit makes 9 git processes for a fast-forward accept and 16 for a composing one (section 7; sections 2–3 were measured before that pass, when it was 14 and 29) where a merge makes 1 or 2, and it verifies the composed state in a fresh workspace rather than in place (ADR 7). The strict mode's extra refusals add redos on top; `--allow-stale` removes those and shows the remaining per-accept overhead.
 
 **Where the final trees differ.** In the 100-change run, strict Zit's final tree differs from the others in one function. Two agents made the identical signature change. Git merges identical edits silently; strict Zit calls the second one a write-write conflict, and the scripted agent's redo wrote a different body. Both trees pass every check. The 1,000-change trees were not inspected.
 
@@ -216,3 +256,4 @@ Ended without a change, round 1: 3 correctly found their task already done, 1 wa
 - Real-agent and workflow runs on Linux; XFS (tested in CI, not benchmarked); Linux with real dependencies.
 - Repositories above 30,000 files, and more than 100 concurrent agents or 1,000 speculative changes.
 - Checks that take minutes. Here a check takes tens of milliseconds, which makes Zit's fixed per-accept cost as visible as it can be.
+- Sections 2–3 with batches (`zit accept --batch`) or with the status memo and fewer git processes of section 7; those runs predate both.

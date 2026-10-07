@@ -5,6 +5,24 @@ description: What is planned for Zit, why, and what each item depends on. Plans,
 
 Each item below is a known gap: it is listed on [Limits](/limits) or came out of a hostile review of the project. Status is as of <ZitVersion />. Nothing here is built until it says so, and the order is the current priority, not a schedule.
 
+## Delivered since 0.1.1
+
+On `main`, not yet in a release. Each was on this page or on [Limits](/limits) as a gap.
+
+| Item | What landed | Where |
+|---|---|---|
+| Batches | `zit accept A B C` and `zit accept --batch`: compose in order, check once, land together; a failing check rejects the batch without bisecting | [CLI](/cli#accepting-several-changes) |
+| Parse-check the composed state | merged text with syntax errors neither side had is refused (`[accept] parse_check`) | [zit.toml](/checks#the-parse-check) |
+| Renames | a renamed file is compared unit by unit; a pure move writes nothing | [Limits](/limits#semantics) |
+| More languages | Java, Ruby, C#; TOML and JSON manifests by top-level key; TypeScript overloads and abstract signatures | [Specification](/spec#3-footprint) |
+| Stable-path workspaces | `[workspace] stable_paths` or `zit.stablePaths`: reusable `ws/slot-N` | [zit.toml](/checks#stable-workspace-paths) |
+| A port per workspace | `ZIT_PORT`, free at materialisation, not reserved | [Agents](/agents) |
+| An agent's output with the change | `zit run --log`, `zit show --log`, `refs/zit/logs/<id>`; the agent's output, not the commands it ran | [Agents](/agents#what-the-agent-printed) |
+| `zit doctor` | git, home, copy-on-write, free space, graph, `zit.toml` programs, agents, grammars | [CLI](/cli#the-machine) |
+| An integrator for CI | `integrations/github`: a composite action; tested as a script, not yet on Actions | [Working with git](/git#github-actions) |
+| Status memo | repeated `zit status` reuses each change's status until current or the evidence changes | [How it works](/science#6-derived-status-no-invalidation-protocol) |
+| Usage from Pi | tokens and Pi's price from `pi --mode json` | [Agents](/agents#what-it-cost) |
+
 ## Distribution
 
 | Item | Why | Status |
@@ -19,7 +37,7 @@ Each item below is a known gap: it is listed on [Limits](/limits) or came out of
 | Item | Why | Status |
 |---|---|---|
 | Resolve references by path and import, not only by name | A mention of `Config` depends on every `Config` in the repository ([Limits](/limits#semantics)) | Not started |
-| More languages with symbol granularity (Java, C#, C++, Kotlin, Ruby, PHP, Swift) | Files in those languages are one resource with no inferred reads | Not started |
+| More languages with symbol granularity (C, C++, Kotlin, PHP, Swift, Scala) | Files in those languages are one resource with no inferred reads; Java, Ruby and C# are done | Not started |
 | Re-measure false refusals | The 21–23% figure predates the interface-only staleness rule (ADR 16) | Not started |
 | Signed evidence | Fetched check results are untrusted by default; trusting them (`zit.trustFetchedEvidence`) trusts whoever can push refs | Not started |
 | Run `[[derive]]` and `[prepare]` only from trusted states | A change's own `zit.toml` commands run when you accept or materialise it | Not started |
@@ -31,10 +49,8 @@ Each item below is a known gap: it is listed on [Limits](/limits) or came out of
 | Item | Why | Status |
 |---|---|---|
 | Claims across machines | Claims and live write sets are local to one machine | Not started |
-| Verify non-conflicting changes as one batch | Changes are verified one at a time; merge queues batch ([Compared](/compare)) | Not started |
-| An integrator for CI (for example a GitHub Action) | Today you run `zit accept` in a job yourself | Not started |
-| Stable-path workspaces for compiled projects | Each workspace is at a new path, so Cargo and similar tools rebuild per workspace (about 1.9 GB after ten Rust agents, Lesson 01) | Not started |
-| Usage from Autohand Code and Pi | Only Claude Code (tokens and dollars) and Codex (tokens) report it to `zit run` | Not started |
+| Run the GitHub integrator on GitHub Actions | `integrations/github` is tested as a script against a bare origin; the action, `install.sh` on Linux and `trust-evidence: true` are not | Not started |
+| Usage from Autohand Code | Autohand 0.9.9-alpha reports nothing parseable; Claude Code, Codex and Pi do | Not started |
 
 ## Evidence
 
@@ -51,16 +67,14 @@ Candidates from [Prior art and objections](/prior-art), each answering a weaknes
 
 | Item | Why | Size |
 |---|---|---|
-| Parse-check the composed state before running checks | Text from `git merge-tree` can be syntactically wrong (Mori and Hashimoto, 2026) | Small |
 | Report false refusals and false accepts against test oracles | Merge-tool evaluations that ignore incorrect clean merges overstate quality (Schesch et al., 2024) | Medium |
 | Replay public agent-conflict data: AgenticFlict, CooperBench, STALE | Measured accuracy on other people's data instead of our own runs | Medium |
-| A conflict graph from footprints, to verify independent changes together | Uber's SubmitQueue commits independent changes in parallel; Zit verifies one at a time | Large |
+| A conflict graph from footprints, to pick a batch automatically | Uber's SubmitQueue commits independent changes in parallel; Zit's batch takes the changes you name (or every verified one) and cannot say which member broke a failing check | Large |
 | A structure-aware merge for adjacent insertions | Zit's most common remaining rejection; semistructured merge removes it (Apel et al. 2011; Cavalcanti et al. 2017) | Large |
-| Detect renames before deciding staleness | A rename is a delete plus an add, which stales every reader (RefFilter, 2025) | Medium |
 | Compose open workspaces against each other in the background | Crystal's speculative merging warns before anyone records | Medium |
 | Measure how much parallelism refused claims give up | Pre-write admission serialised 93.3% of clean cases in Claim Plane (2026) | Small |
-| A port and namespace per workspace | Agents share ports and machine-wide state today | Small to medium |
-| An optional log of the commands an agent ran | Zit keeps the final message and cost, not what was run | Small |
+| A namespace per workspace | Each workspace has a port (`ZIT_PORT`); other machine-wide state is still shared | Medium |
+| A log of the commands an agent ran | `zit run --log` keeps the agent's output; what it ran is still not recorded | Small |
 | Select checks from footprints instead of declared `inputs` | Check inputs are trusted, not verified | Medium |
 
 To propose or take on an item, open an issue ([CONTRIBUTING.md](https://github.com/autohandai/getzit/blob/main/CONTRIBUTING.md)).

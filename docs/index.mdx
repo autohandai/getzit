@@ -3,7 +3,7 @@ title: Zit
 description: A git extension for many developers and coding agents changing one repository at the same time. Copy-on-write workspaces instead of worktrees, changes checked against what landed meanwhile, and each change's reason kept.
 ---
 
-**Zit is a git extension for repositories that several people and coding agents change at the same time.** Each session works in its own copy-on-write copy of the code instead of a git worktree. Sessions on the same machine can see what the others are changing and claim work before starting it. Changes land one at a time, each checked against what landed since it started and against the checks you declare. Your branches, history and remotes stay plain git; teammates who never install Zit are not affected.
+**Zit is a git extension for repositories that several people and coding agents change at the same time.** Each session works in its own copy-on-write copy of the code instead of a git worktree. Sessions on the same machine can see what the others are changing and claim work before starting it. Changes land one at a time or as a batch checked once, each judged against what landed since it started and against the checks you declare. Your branches, history and remotes stay plain git; teammates who never install Zit are not affected.
 
 <ZitDiagram />
 
@@ -20,8 +20,8 @@ Claude Code and Cursor document running several agents on one repository in para
 
 1. **Copy-on-write workspaces.** A workspace is a clone of the cached checkout of its state (APFS on macOS; btrfs or XFS with reflink on Linux, all tested in CI). Files are shared on disk until a session edits one; the workspace itself writes only its git metadata, about 10 MB for a 30,000-file repository against 133 MB for a worktree, measured on APFS. With `[prepare]` in `zit.toml`, installed dependencies are shared the same way. On other file systems a workspace is a plain checkout.
 2. **Claims and live write sets.** `zit claim src/lib.rs#price` reserves a file, a symbol or a Markdown section. A claim on something another open workspace holds, or is writing, is refused with who holds it. This works between workspaces on one machine.
-3. **Accept.** `zit accept` composes a change onto the current state with `git merge-tree`. It refuses the change if the text does not merge, if it changed the same function, type or section as a change that landed since it started, or if it uses a symbol whose interface (signature, fields, constants) changed in the meantime; then the combined state must pass the checks in current's `zit.toml` and the change's own. Only then does `refs/zit/current` move, by compare-and-swap.
-4. **Recorded reasons and cost.** A change is a git commit whose body is its author's account when one is given: `zit run` stores an agent's final message, `zit record --summary` takes one, and a plain commit's body counts. `zit run` also stores the tokens and dollars the agent reports (Claude Code reports both, Codex tokens only).
+3. **Accept.** `zit accept` composes a change onto the current state with `git merge-tree`. It refuses the change if the text does not merge, if the merged text no longer parses, if it changed the same function, type or section as a change that landed since it started, or if it uses a symbol whose interface (signature, fields, constants) changed in the meantime; then the combined state must pass the checks in current's `zit.toml` and the change's own. Only then does `refs/zit/current` move, by compare-and-swap. Symbols are known for Rust, Python, JavaScript, TypeScript, Go, Java, Ruby and C#, Markdown sections, and TOML and JSON manifest keys. Several changes can land as one batch, checked once.
+4. **Recorded reasons and cost.** A change is a git commit whose body is its author's account when one is given: `zit run` stores an agent's final message, `zit record --summary` takes one, and a plain commit's body counts. `zit run` also stores the tokens and dollars the agent reports (Claude Code and Pi report both, Codex tokens only); `zit log` sums them over the accepted history.
 
 The design is called CPSG, the Causal Program State Graph: states are git trees, changes are git commits, and the graph is `refs/zit/*` beside your branches. [How it works](/science) has the ideas and their sources; [Limits](/limits) has what Zit does not do.
 
@@ -31,6 +31,7 @@ The latest release is <ZitVersion /> ([changelog](/changelog)). Zit needs git 2.
 
 ```sh
 cargo install zit --locked        # from crates.io; needs Rust 1.88+. Installs zit and git-zit
+zit doctor                        # git version, copy-on-write, free space, agents on PATH
 ```
 
 Prebuilt binaries for macOS (arm64, x86_64) and Linux (x86_64, arm64) are on the [releases page](https://github.com/autohandai/getzit/releases), each with a SHA-256 checksum. The source is at [github.com/autohandai/getzit](https://github.com/autohandai/getzit).
@@ -69,7 +70,7 @@ git zit export --branch main                  # publish current to a branch (or 
 | **Autohand Code** | `autohand --zit "<intent>"` runs a whole session, interactive or `-p`, in a Zit workspace; its file tools claim each file before writing it | Built and run end to end; ships in the next Autohand Code release |
 | **Claude Code** | `zit run --agent claude --intent "…"`, or `zit mcp` as an MCP server | Run end to end; reports tokens and cost |
 | **Codex** | `zit run --agent codex --intent "…"`, or `zit mcp` | Run end to end; reports tokens |
-| **Pi** | the `pi-zit` extension (`/zit <intent>`), or `zit run --agent pi` | On npm as `pi-zit`; commands tested in Pi 0.84.4; no live model turn yet |
+| **Pi** | the `pi-zit` extension (`/zit <intent>`), or `zit run --agent pi` | On npm as `pi-zit`; commands tested in Pi 0.84.4; reports tokens and price, parsed from a recorded Pi session; no live model turn through the extension yet |
 | **Any CLI** | `zit run --agent <name> -- <command>` | |
 
 Set-up for each:

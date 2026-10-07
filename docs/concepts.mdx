@@ -41,7 +41,7 @@ Zit-Session: 4f1c…
 Zit-Read: src/shop.rs
 ```
 
-What a change **wrote** is never declared. It is computed from the difference between its state and its parent's, at symbol granularity: `src/lib.rs#price`, not "src/lib.rs changed".
+What a change **wrote** is never declared. It is computed from the difference between its state and its parent's, at symbol granularity: `src/lib.rs#price`, not "src/lib.rs changed". Eight languages are parsed this way (Rust, Python, JavaScript, TypeScript, Go, Java, Ruby, C#); Markdown by heading; manifests by top-level key (`Cargo.toml#dependencies`, `package.json#scripts`). A file git detects as renamed is compared unit by unit across the move: changed units are written at the new path, dropped ones at the old, and a pure move writes nothing.
 
 What a change **read** comes from two places: identifiers mentioned in the symbols it wrote (inferred), and resources the agent declared.
 
@@ -83,7 +83,7 @@ Git would merge those two changes without complaint: they touch different files.
 
 ## Status
 
-Status is computed, never stored (ADR 2).
+Status is computed, never stored (ADR 2). `zit status` keeps a memo of each answer with the current and evidence it was computed from, and reuses it only while both are the same; a memo is never a source of truth, only a cached result of the same function.
 
 ```mermaid
 stateDiagram-v2
@@ -118,4 +118,4 @@ A check result is stored under a key made of the check and the content of its de
 
 ## Acceptance
 
-`zit accept` is the only thing that moves current. It composes if needed, verifies the composed state, and moves current atomically. A rejected change is left exactly as it was (ADR 4).
+`zit accept` is the only thing that moves current. It composes if needed, verifies the composed state, and moves current atomically. A rejected change is left exactly as it was (ADR 4). Several changes can be accepted as one batch: composed in order, verified once on the combined state, current moved once; each keeps its own commit.

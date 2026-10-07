@@ -24,11 +24,12 @@ Run it in the repository. It refreshes every second and a half, and follows your
 | A dashed red line | From a stale change to the accepted change that invalidated it. |
 | Nodes below the line | Open workspaces. Outlined until they hold edits, then filled. |
 | A dotted amber line | Two pieces of unaccepted work are writing or claiming the same thing. |
-| The table | The same changes and workspaces, with the first reason for each. |
+| The table | The same changes and workspaces, with the first reason for each. The **Tokens** column is what the agent reported, `1,000 in / 50 out`; **Cost** is `$0.2500`; both empty when it reported nothing. |
+| The total row | Sticks under the listed changes: `N changes (K without a reported cost)`, the tokens and dollars summed over the rows shown; it follows the filter. |
 
 ## Using it
 
-- **Select** a node or a row to see the intent, the agent, what was written, every reason it is invalid, the evidence and the diff. For a workspace: what it has claimed, what it is writing right now, and who else is writing the same thing.
+- **Select** a node or a row to see the intent, the agent, what was written, every reason it is invalid, the evidence, the diff and, when the agent reported it, a `cost` row (`1,000 in / 50 out · $0.2500`). For a workspace: what it has claimed, what it is writing right now, and who else is writing the same thing.
 - **The next command** for the selection is shown with a copy button: `zit accept …` for a verified change, `zit retry …` for a stale or conflicting one, `zit check … --rerun` for a failed one, `cd …` for a workspace.
 - **Filter** with the chips in the header (verified, checks pending, invalid, workspaces) or by typing after `/`: agent, id, intent or file.
 - **Keys:** `j` and `k` move through the table, `/` filters, `Esc` clears.
@@ -36,6 +37,6 @@ Run it in the repository. It refreshes every second and a half, and follows your
 
 ## What it does not do
 
-It is read-only: it answers `GET` only, and only to requests addressed to `localhost`. Accepting, retrying and discarding stay in the CLI and the terminal UI (`zit ui`). It listens on the loopback interface only; if the port is taken, a free one is chosen and printed.
+It is read-only: it answers `GET` only, and only to requests addressed to `localhost`. Accepting, retrying and discarding stay in the CLI and the terminal UI (`zit ui`). It listens on the loopback interface only; if the port is taken, a free one is chosen and printed. The page builds its DOM through `textContent` only (a test asserts no `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write` or `srcdoc`, and that an account containing `<script>` round-trips as text), so what an agent printed is shown, not run. The diff is served by the same code as `zit diff`.
 
 Typography is Autohand Sans and Autohand Mono, served by `zit` itself (SIL Open Font License 1.1).

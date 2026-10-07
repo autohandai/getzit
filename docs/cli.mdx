@@ -5,39 +5,114 @@ description: Every Zit command.
 
 Every command works as `zit <command>` or `git zit <command>`; `git-zit` is installed next to `zit` for that. For help use `git zit -h` or `git zit help` (git turns `--help` into a manual-page lookup).
 
-All commands take `--json`. Changes can be named by any unique id prefix, any git revision, or `current`.
+All commands take `--json`. Changes can be named by any unique id prefix, any git revision, or `current`. A name that matches nothing is `zit: unknown revision: <name>`; a prefix that matches more than one object is `zit: ambiguous revision: <name> names more than one object; give more characters`. Both exit 2.
+
+Under `--json`, a failure is a JSON document on stdout, `{"error": "<message>"}`, with the same message on stderr and exit code 2:
+
+```console
+$ zit show --json nope
+{"error":"unknown revision: nope"}
+zit: unknown revision: nope
+```
+
+The reports of `status`, `show`, `log`, `diff` and `doctor` carry `"schema": 1` at the top level. The number changes when a field changes meaning or goes away; added fields keep it. The reports of `record`, `accept`, `check` and `run` have no `schema` field.
 
 ## Graph
 
 | Command | Does |
 |---|---|
-| `zit init [--from REV]` | Start the graph; `REV` (default `HEAD`) becomes current. Idempotent. |
+| `zit init [--from REV]` | Start the graph; `REV` (default `HEAD`) becomes current. Idempotent. On a repository with no commits: `HEAD has no commits yet: commit first, or run `zit init --from <rev>``. |
 | `zit status` | Current, every speculative change with its status and reason, every workspace. |
-| `zit show CHANGE` | One change: intent, agent, parents, writes, declared reads, status, evidence. |
-| `zit check CHANGE [--rerun]` | Run the state's checks that have no evidence. Exit 1 if any fails. |
-| `zit accept CHANGE [--allow-stale] [--rerun] [--linear]` | Make it part of current. Exit 1 if rejected, with the reason. `--rerun` runs every check again; `--linear` composes as one commit instead of a merge. |
+| `zit show CHANGE [--log]` | One change: intent, agent, parents, writes (and `renamed old -> new` lines), declared reads, status, evidence. `--log` prints the agent output kept by `zit run --log` instead; with none, `zit: no log recorded for <id>: run the agent with `zit run --log``, exit 2. |
+| `zit diff CHANGE [--stat] [--against CHANGE]` | What a change did: its diff against its base, as `git diff` prints it. `--against` compares with `current`, an id or any git revision instead of the base; `--stat` prints only the summary of changed files. JSON: `{schema, change, against, diff}`. |
+| `zit log [-n N]` | Accepted history from current backwards: who, what, why, and what it cost. `-n`, `--max-count` limits it (default all). |
+| `zit check CHANGE [--rerun] [--only NAME]…` | Run the state's checks that have no evidence. Exit 1 if any fails. `--only` runs just the named checks (repeatable); a name no check has is `zit: no check named `nope`; declared: ui, api`, exit 2. |
+| `zit accept [CHANGES]… [--batch] [--dry-run] [--allow-stale] [--rerun] [--linear]` | Make a change part of current, or several as one batch (below). Exit 1 if rejected, with the reason. `--rerun` runs every check again; `--linear` composes as one commit instead of a merge. |
 | `zit retry CHANGE` | New workspace on current with the change's edits applied; prints its path. |
-| `zit discard CHANGE…` | Remove speculative changes from the graph. |
+| `zit discard CHANGE…` | Remove speculative changes from the graph. All or nothing: every name is resolved before anything is removed. A change that is not speculative (current, an accepted change, a plain commit) is `zit: not a speculative change: <id>`, exit 2. JSON: `{"discarded": [ids]}`. |
+
+### `zit log`
+
+```console
+$ zit log -n 2
+0562dfa1f2   1s  claude      Add a note to README.md
+                 Added a note to README.md and nothing else.
+                 34012 in, 1840 out, $0.1865
+a46dcab1f4   2s  r           readme note
+2 changes, 34012 tokens in, 1840 out, $0.1865
+```
+
+Per change: id, age, agent, the first line of the intent; then the first line of the account and the usage when the agent reported them. The last line sums the listed changes; the dollar figure appears only when at least one change reported a cost. JSON: `{schema, changes: [change…], totals: {changes, input_tokens, output_tokens, cost_usd}}`, `cost_usd` null when nothing reported one. The text form prints an age, not a timestamp; the JSON has `time`.
+
+### Accepting several changes
+
+```sh
+zit accept A B C      # these three, composed in order, checked once, landed together
+zit accept --batch    # every change whose status is verified, in status order
+```
+
+The changes are composed onto current one after another. The checks run once, on the combined state. Current moves once, by compare-and-swap; if it moved meanwhile the whole batch is retried. Each change keeps its own commit and reason in history (a compose commit, or with `--linear` one commit carrying `Zit-Change`).
+
+A change that cannot join is skipped and reported, with its reason: already accepted, stale (including against an earlier member of the batch, which `by` names), text conflict, parse failure. The rest still land:
+
+```console
+$ zit accept caaf76d83e 0ac25d008f
+landed   0ac25d008f  readme note 2
+skipped  caaf76d83e  invalid: stale
+    shop.py#price written here and by e4d5ff04cd
+current is 0ac25d008f (1 landed, 1 skipped; checks: 0 run, 1 reused)
+```
+
+`--batch` picks the changes whose status is already `verified`: a change that is stale, conflicting, failed or still without evidence is not in the batch and is not listed as skipped. Run `zit check` on changes first, or name them.
+
+When a check fails on the combined state, nothing lands, and Zit cannot say which change is responsible:
+
+```console
+$ zit accept 723d3c69cb 828ccb6228
+rejected: failed checks: t on the combined state of 723d3c69cb, 828ccb6228; nothing landed
+next: accept one at a time to find the change responsible: `zit accept <change>`
+```
+
+Exit 1. JSON: `{"outcome": "accepted", "current", "landed": [ids], "skipped": [{change, reason, detail}], "verdicts"}` or `{"outcome": "rejected", "failed": [checks], "tried": [ids], "skipped": […]}`. `--allow-stale`, `--rerun` and `--linear` apply to the batch; `--batch` and `--dry-run` cannot be combined.
+
+### `zit accept --dry-run`
+
+Composes and validates one change without landing it or running anything: staleness, the text merge, the parse check, then which checks (current's and the change's) would run and which have evidence to reuse.
+
+```console
+$ zit accept --dry-run 7318b6ae71
+would accept 7318b6ae717d5ff675b63a8460cefa67dedb7221 (fast-forward); checks: t (run)
+```
+
+`composed onto current` instead of `fast-forward` when current has moved; `already accepted`; or `rejected: …` with exit 1, as `accept` would print. JSON: `{"outcome": "would-accept", "composed": bool, "checks": [{check, run}]}`, `{"outcome": "already-accepted"}` or the rejection. `--rerun` marks every check as `run`; `--allow-stale` applies. `[[derive]]` commands are not run, so a check whose input is a generated file may show `run` where a real accept would reuse evidence.
+
+### Rejections
+
+`rejected: stale`, `rejected: conflict (text does not merge)` and `rejected: failed checks: …` are described on [Concepts](/concepts#staleness) and [zit.toml](/checks). One more: `rejected: does not parse after composing: <paths>` when the merged text of a file has syntax errors that neither side had ([zit.toml](/checks#the-parse-check)).
 
 ## Workspaces
 
 | Command | Does |
 |---|---|
-| `zit materialise [--from CHANGE] [--intent TEXT] [--agent NAME] [--session ID]` | Create a workspace; prints its path. |
+| `zit materialise [--from CHANGE] [--intent TEXT] [--agent NAME] [--session ID]` | Create a workspace; prints its path. Refuses when the volume holding Zit's home has less than `zit.minFreeMB` free ([zit.toml](/checks#free-space)). |
 | `zit claim [--workspace ID] RESOURCE…` | Claim what you intend to write. Exit 1, naming the holder, if other unaccepted work already holds it. |
 | `zit claim [--workspace ID] --edit PATH --content FILE [--dry-run]` | Claim exactly what writing `FILE` over `PATH` in the workspace would change, as Zit indexes it: the functions, types, methods, imports or Markdown sections that differ, or the whole file if it is new or unparsed. `--dry-run` only lists them. For agent tools that guard their own writes. |
 | `zit read [--workspace ID] RESOURCE…` | Declare observed resources: `path`, `path#Symbol`, `path#`. |
 | `zit record [--workspace ID] [--intent TEXT] [--summary TEXT] [--read RESOURCE]… [--dispose]` | Snapshot into a change; prints its id. `--summary` is what was done and why. |
-| `zit dispose ID… \| --all` | Delete workspaces. Recorded changes are unaffected. |
+| `zit dispose ID… \| --all \| --orphaned [--force]` | Delete workspaces. Recorded changes are unaffected. Needs ids or `--all`; with neither it is a usage error (exit 2). `--orphaned` deletes every workspace whose `zit run` is gone and that has no unrecorded edits; `--force` also those with edits. Workspaces without an owner (made by hand or over MCP) are never touched by `--orphaned`. |
 | `zit clean [--force]` | Delete every local copy Zit made for the repository: workspaces, cached checkouts, verification views, caches. Refuses while a workspace has unrecorded edits or a running agent, or while a clone or verification is in progress, unless `--force`. The graph is untouched. |
 
 Inside a workspace, `record`, `read` and `claim` need no `--workspace`. `status` lists, for each workspace, what it has claimed, what it is writing right now, and overlaps with other unaccepted work.
+
+Paths given to `claim` and `read` are named the way git names files, relative to the workspace root, however they are spelt: `./Cargo.toml`, `docs/../Cargo.toml` and the absolute path are one claim, `Cargo.toml`. A path that leaves the workspace (`../x`, `/etc/hosts`) is `zit: `../x` is not a path inside the workspace`; `.` or an empty string is `zit: `.` names no file`. Both exit 2.
+
+`zit dispose --orphaned` prints `disposed <id> (<agent>)`, `kept <id> (<agent>): unrecorded edits; record it or pass --force`, or `no orphaned workspaces`. JSON: `{disposed, kept}`.
 
 ## Agents
 
 | Command | Does |
 |---|---|
-| `zit run [--agent NAME] [--intent TEXT] [--session ID] [--from CHANGE] [--keep] [--accept] [--timeout SECONDS] [-- COMMAND…]` | Run a command in a fresh workspace and record its work, its final message and its cost, however it ends. With `--agent autohand\|claude\|codex\|pi` and no command, a preset. |
+| `zit run [--agent NAME] [--intent TEXT] [--session ID] [--from CHANGE] [--keep] [--accept] [--timeout SECONDS] [--log] [-- COMMAND…]` | Run a command in a fresh workspace and record its work, its final message and its cost, however it ends. With `--agent autohand\|claude\|codex\|pi` and no command, a preset. `--log` keeps the last 64 KB of the agent's output (stdout and stderr) with the change; `zit show --log` prints it. |
 | `zit mcp [--integrator]` | Serve the graph over the Model Context Protocol on stdio. `--integrator` adds `zit_accept` and `zit_discard`. |
 | `zit ui` | Interactive list of changes and workspaces, in the terminal. |
 | `zit web [--port 4747] [--no-open]` | [Live graph in the browser](/web). Read-only. |
@@ -50,6 +125,44 @@ With `--agent autohand`, `claude`, `codex` or `pi` and no command, `run` uses th
 |---|---|
 | `zit export [--branch main] [--pr [--base main] [--remote origin]]` | Fast-forward the branch to current. `--pr` pushes it and opens a pull request into `--base` with every change's reason (needs `gh`); with `--pr`, `--branch` must name a branch other than `--base`, e.g. `zit/ready`. |
 | `zit sync [--branch main]` | Accept the branch into current, then export. |
+
+## The machine
+
+| Command | Does |
+|---|---|
+| `zit doctor` | Check this machine and repository: git, Zit's home, copy-on-write, free space, the graph, zit.toml's programs, agents on PATH. Exit 1 if anything fails. Runs before the git-version gate and outside a repository. |
+| `zit completions bash\|zsh\|fish` | Print a shell completion script: `zit completions zsh > ~/.zfunc/_zit`. Needs no repository. Completes `zit`, not `git zit`. |
+
+`zit doctor` prints one line per probe, `<pass|warn|fail>  <name>  <detail>`:
+
+```console
+$ zit doctor
+pass  git             git version 2.48.1
+pass  home            ~/.zit/shop-0cdd0290da587241 (writable)
+pass  copy-on-write   apfs: workspaces are clones
+pass  free space      5.1 GB free on the volume holding ~/.zit/shop-0cdd0290da587241
+fail  repository      zit is not initialised in this repository; run `zit init`
+pass  agent autohand  0.9.9-alpha.ae34d3f (ae34d3f)
+pass  agent claude    2.1.290 (Claude Code)
+pass  agent codex     codex-cli 0.159.2
+pass  agent pi        0.84.4
+pass  gh              gh version 2.65.0 (2025-01-06)
+pass  languages       c#, go, java, javascript, python, ruby, rust, typescript
+```
+
+| Probe | Fails when | Warns when |
+|---|---|---|
+| `git` | missing, or older than 2.38 | |
+| `home` | Zit's home is not writable | |
+| `copy-on-write` | | the file system has no clonefile/`FICLONE`: `workspaces are plain checkouts` |
+| `free space` | | under 1 GB free on the volume holding Zit's home |
+| `repository` | not a git repository, not initialised, or `refs/zit/current` missing | |
+| `zit.toml` | it does not parse, or a `run`, `derive` or `prepare` program is not on PATH: `` `prog` (check t) is not on PATH `` | |
+| `agent autohand`, `claude`, `codex`, `pi` | | not on PATH; otherwise the first line of `--version` (5 s timeout) |
+| `gh` | | not on PATH (honours `ZIT_GH`) |
+| `languages` | a built-in grammar fails to load | |
+
+A program is looked up by its first word; a program given with a `/` in it is accepted without being checked. JSON: `{schema, checks: [{name, status, detail}]}`.
 
 ## The UI
 
@@ -64,4 +177,4 @@ With `--agent autohand`, `claude`, `codex` or `pi` and no command, `run` uses th
 | `t` | retry it |
 | `d` | discard the change, or dispose the workspace |
 | `r` | refresh |
-| `q` | quit |
+| `q`, Ctrl-C | quit |

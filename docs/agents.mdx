@@ -3,7 +3,7 @@ title: Agents
 description: Run Autohand Code, Claude Code, Codex, Pi or any other agent CLI against the graph, by wrapping the process or over MCP.
 ---
 
-Two ways in. `zit run` was run against the real CLIs on the machine this was built on: autohand 0.9.9-alpha, Claude Code 2.1.288, codex-cli 0.159.2. The Pi preset (pi 0.84.4) is tested for its command line; its live run stopped at Pi's own provider login ("API key expired"), so it has not yet recorded a change end to end.
+Two ways in. `zit run` was run against the real CLIs on the machine this was built on: autohand 0.9.9-alpha, Claude Code 2.1.288, codex-cli 0.159.2. The Pi preset (pi 0.84.4) is tested for its command line and its output parsing, against an event stream recorded from a real Pi session; a Pi run that records a change end to end through `zit run` has not been done.
 
 <AgentLogos />
 
@@ -32,9 +32,9 @@ With no command after `--`, these presets are used, with `--intent` as the promp
 | `autohand` | `autohand -p <intent> --yes --output-format stream-json` |
 | `claude` | `claude -p <intent> --permission-mode acceptEdits --output-format json` |
 | `codex` | `codex exec --json --sandbox workspace-write --output-last-message $ZIT_SUMMARY_FILE --add-dir ~/.zit/<repo>-<hash> <intent>` |
-| `pi` | `pi -p <intent>` |
+| `pi` | `pi --mode json -p <intent>` |
 
-The first three run in the agent's JSON mode. `zit run` reads the agent's final message and what the turn cost from that output and prints the final message when the agent is done, instead of the raw events. The same happens when you give such a command yourself (`-- claude -p … --output-format json`).
+All four run in the agent's JSON mode. `zit run` reads the agent's final message and what the turn cost from that output and prints the final message when the agent is done, instead of the raw events. The same happens when you give such a command yourself (`-- claude -p … --output-format json`, `-- pi --mode json …`).
 
 Anything else: give the command yourself.
 
@@ -48,6 +48,7 @@ zit run --agent my-bot --intent "Fix the flaky test" -- my-bot --task fix-flaky
 | `--accept` | accept the recorded change, unless the agent was interrupted or timed out |
 | `--timeout SECONDS` | stop the agent after this long; its partial work is still recorded; exit code 124 |
 | `--keep` | leave the workspace in place |
+| `--log` | keep the last 64 KB of the agent's output (stdout and stderr) with the change; `zit show --log` prints it |
 | `--json` | print a report; the agent's stdout goes to stderr |
 
 ### What it cost
@@ -62,9 +63,18 @@ usage    34012 tokens in, 1840 out, $0.1865
 |---|---|
 | Claude Code | tokens in (cached ones included) and out, and dollars |
 | Codex | tokens in and out, summed over its turns; no price |
-| Autohand Code, Pi | nothing yet |
+| Pi | tokens in (`input` + `cacheRead` + `cacheWrite`) and out, summed over its assistant messages, and the price Pi computes (`usage.cost.total`); its last text is the account. The fixture, from a real Pi 0.84.4 session on a free OpenRouter model: 6321 in, 67 out, $0 |
+| Autohand Code | nothing yet: 0.9.9-alpha prints `{"type":"result","content":"ok"}` on stdout and a rounded total on stderr, neither with tokens |
 
-The numbers are the agent's own; Zit adds nothing. They are stored as `Zit-Tokens` and `Zit-Cost-USD` trailers, so `git log` keeps them too.
+The numbers are the agent's own; Zit adds nothing. They are stored as `Zit-Tokens` and `Zit-Cost-USD` trailers, so `git log` keeps them too. `zit log` sums them over the accepted history, and the [web view](/web) over the changes it lists.
+
+### What the agent printed
+
+`zit run --log` keeps the last 64 KB of the agent's stdout and stderr as a blob under `refs/zit/logs/<change id>`; `zit show <change> --log` prints it (`--json`: `{change, log}`). Without one, `zit show --log` exits 2: `no log recorded for <id>: run the agent with `zit run --log``. The two streams are interleaved as they arrived; their relative order is not guaranteed. `zit discard` does not delete the log ref.
+
+### The agent sets the intent
+
+`zit run` exports `ZIT_INTENT_FILE`, a path inside the workspace. If the agent writes anything but whitespace there, that text is the recorded change's intent instead of `--intent`. In a command given after `--`, the placeholder `{ZIT_INTENT_FILE}` is replaced by the path.
 
 ### What the agent says is kept
 
@@ -77,6 +87,8 @@ The agent's environment:
 | `ZIT_WORKSPACE` | its workspace id, so `zit claim`, `zit read` and `zit record` need no `--workspace` |
 | `TMPDIR` | a temp directory of its own, deleted with the workspace |
 | `ZIT_SUMMARY_FILE` | where it may write its account of the work |
+| `ZIT_INTENT_FILE` | where it may write the change's intent, overriding `--intent` |
+| `ZIT_PORT` | a TCP port on 127.0.0.1 that was free when the workspace was made, chosen to differ from other live workspaces' and views'. Not reserved: another program can take it |
 | `ZIT_CACHE_DIR` | a directory shared by every agent and check of this repository, for build caches |
 
 ## Many agents, one task
@@ -116,7 +128,7 @@ sequenceDiagram
 
 The work is in the graph before `zit run` returns. Once it is recorded, a further signal stops Zit itself (for example during the checks of `--accept`). At a terminal, Ctrl-C reaches the agent directly; Zit only forwards it if the agent is still running a second later, so the agent never sees it twice in a row.
 
-If Zit itself is killed with `SIGKILL`, the workspace remains. `zit status` lists it as `owner gone`; `zit record --workspace <id>` salvages it.
+If Zit itself is killed with `SIGKILL`, the workspace remains. `zit status` lists it as `owner gone`; `zit record --workspace <id>` salvages it, and `zit dispose --orphaned` deletes every such workspace that has no unrecorded edits (`--force`: those too). A workspace is "running" while its `zit run` holds a lock on `ws/<id>/run.lock`; its owner is "alive" while the pid exists and has the start time recorded in `meta.json`, so a reused pid does not make a dead run look live.
 
 ## Autohand Code: `autohand --zit`
 
@@ -181,7 +193,7 @@ The Pi extension in [`integrations/pi`](https://github.com/autohandai/getzit/tre
 pi install npm:pi-zit          # or a local checkout: pi install /path/to/getzit/integrations/pi
 ```
 
-Tested with Pi 0.84.4 and the real `zit` binary (17 tests, and the commands driven through Pi's RPC mode); a turn with a live model has not been run yet.
+Tested with Pi 0.84.4 and the real `zit` binary (19 tests, and the commands driven through Pi's RPC mode); a turn with a live model has not been run yet. Dismissing the intent prompt (Escape) cancels `/zit` instead of opening a workspace with an empty intent. If recording on quit fails and there is no UI to show it, the error goes to stderr and the workspace is kept.
 
 ### Tools
 
@@ -193,13 +205,17 @@ Tested with Pi 0.84.4 and the real `zit` binary (17 tests, and the commands driv
 | `zit_record` | snapshot a workspace into a change; returns what it wrote |
 | `zit_status` | current, speculative changes, workspaces |
 | `zit_show` | one change in full |
+| `zit_log` | accepted history with what each change cost (`limit`) |
+| `zit_diff` | a change's diff against its base (`change`; `against`, `stat`) |
 | `zit_check` | run a change's checks |
 | `zit_accept` | accept, or get the exact reason for rejection (`--integrator` only) |
 | `zit_retry` | workspace on current with a rejected change's edits applied |
 | `zit_discard` | remove a speculative change (`--integrator` only) |
 | `zit_dispose` | delete a workspace |
 
-The agent name recorded on a change defaults to the MCP client's own name.
+Thirteen tools; eleven without `--integrator`. The agent name recorded on a change defaults to the MCP client's own name.
+
+Errors: a tool that fails returns a result with `isError: true` and the message, for example `resources must be a list of strings` when `zit_claim` is given anything else. At the protocol level, a line that is not valid JSON or not UTF-8 gets `-32700` and the server keeps serving; a message that is not a JSON-RPC request object gets `-32600`; an unknown method `-32601`. JSON-RPC batches are answered as batches (an empty batch is `-32600`; a batch of notifications gets no reply).
 
 ## Things to know
 

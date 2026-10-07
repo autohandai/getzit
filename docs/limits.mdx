@@ -6,54 +6,65 @@ description: What version 0.1 does not do, and where its guarantees stop.
 ## Platform
 
 - macOS and Linux. CI runs every test on macOS (arm64), Linux (x86_64, plain checkouts; failures there do not fail the build), and Linux on btrfs and on XFS with copy-on-write required. The code is Unix-only (signals, `libc`); there is no Windows support.
-- **Copy-on-write needs a file system that supports it:** APFS on macOS; btrfs or XFS with reflink on Linux (`FICLONE` reflinks), each tested in CI with copy-on-write required. Other file systems with `FICLONE`, such as bcachefs, are not tested. On ext4 and others, a workspace is a plain checkout: its files are new copies, and `[prepare]` installs dependencies again in each one. On a CI runner, ten reflink workspaces of a 30,000-file repository added no measurable disk on btrfs, against 24 MB for worktrees; on ext4 both used 1.27 GB ([Benchmarks](/benchmarks)).
-- Requires git 2.38 or newer (`merge-tree --write-tree`); Zit checks and names the version it needs.
+- **Copy-on-write needs a file system that supports it:** APFS on macOS; btrfs or XFS with reflink on Linux (`FICLONE` reflinks), each tested in CI with copy-on-write required. Other file systems with `FICLONE`, such as bcachefs, are not tested. On ext4 and others, a workspace is a plain checkout: its files are new copies, and `[prepare]` installs dependencies again in each one. On a CI runner, ten reflink workspaces of a 30,000-file repository added no measurable disk on btrfs, against 24 MB for worktrees; on ext4 both used 1.27 GB ([Benchmarks](/benchmarks)). `zit doctor` only warns about this; it does not fail.
+- Requires git 2.38 or newer (`merge-tree --write-tree`); Zit checks and names the version it needs. A git found new enough is remembered under `$ZIT_HOME/git-ok/` by path, size and modification time, so the check runs once per binary.
+- `ZIT_HOME` may be relative (resolved against the working directory) and may contain spaces; empty means unset.
 
 ## Semantics
 
 - **Prose merges like git.** Two edits to one Markdown section are accepted when their text merges; Zit does not judge them further. Code is stricter: two edits to one function are refused even when the text merges.
 - **Adjacent insertions conflict.** Two contributors adding different lines at the same place in a list is a text conflict, as in git. In the 50-contributor simulation this was the most common remaining rejection ([Lessons](/lessons)).
-- **Inferred reads match by name.** A change that mentions `Config` depends on every symbol called `Config` in any file; a method `Type::method` is depended on by code that names `Type`. Paths are not resolved. Member calls on values (`cache.get()`) are not references; member calls on imported modules (`lib.price()`, `fmt.Println`) are. It cannot see dynamic dispatch, reflection, or names built from strings.
-- **Only an interface change makes a reader stale.** An inferred reader goes stale when a symbol's interface changes (its text without function bodies and comments: signatures, fields, constants), not when only a body changes. A body change that breaks a caller's behaviour is left to the checks. Declared reads (`zit read`) still see any change. The scripted benchmark's 21–23% false refusals were measured before this rule; not re-measured yet.
-- **Five languages have symbol granularity**: Rust, Python, JavaScript, TypeScript/TSX, Go, plus Markdown by heading. Top-level items and methods (`Type::method`) are units; nested functions are part of their parent. Every other file (Java, C#, C++, Kotlin, Ruby, PHP, Swift, manifests, lockfiles) is one resource with no inferred reads, so semantic staleness is not detected for it; `zit record` says so for source files it cannot parse.
+- **Inferred reads match by name.** A change that mentions `Config` depends on every symbol called `Config` in any file; a method `Type::method` is depended on by code that names `Type`. Paths are not resolved. Member calls on values (`cache.get()`) are not references; member calls on imported modules (`lib.price()`, `fmt.Println`, `Util.max()` with `Util` imported) are. It cannot see dynamic dispatch, reflection, or names built from strings.
+- **Only an interface change makes a reader stale.** An inferred reader goes stale when a symbol's interface changes (its text without function bodies and comments: signatures, fields, constants), not when only a body changes. A body change that breaks a caller's behaviour is left to the checks. Declared reads (`zit read`) still see any change. Whitespace and line endings are part of a signature: a CRLF conversion changes every interface in the file. The scripted benchmark's 21–23% false refusals were measured before this rule; not re-measured yet.
+- **Eight languages have symbol granularity**: Rust, Python, JavaScript, TypeScript/TSX, Go, Java, Ruby and C#, plus Markdown by heading and manifests: TOML tables (`Cargo.toml#dependencies`) and the top-level keys of a JSON object (`package.json#scripts`), hashed from the parsed value, so formatting, key order and comments are not content. Top-level items and methods (`Type::method`) are units; nested functions are part of their parent. Every other source file (C, C++, Kotlin, PHP, Swift, Scala, …) is one resource with no inferred reads, so semantic staleness is not detected for it; `zit record` says so for source files it cannot parse. `zit doctor` lists the grammars that loaded.
+- Per language, what is part of a larger unit rather than its own: anonymous default exports in JavaScript and TypeScript (module-level, `path#`); Java lambda bodies (counted as interface) and static nested classes (part of the outer type); Ruby `class << self` and `define_method` (module-level or part of the class), and a singleton and an instance method of one name share one unit; C# properties with their accessor bodies, operators, destructors and events (part of the type). In Markdown, setext headings (underlined) are not sections, and an empty heading (`# `) is module-level. In manifests, only the top level is a unit (`[profile.release]` is under `#profile`; `Cargo.lock` is in practice one unit, `Cargo.lock#package`), a comment-only change records no write, and an unparseable manifest is a whole-file resource.
 - **Imports are their own unit** (`path#(imports)`): two changes that both add imports compose when their text merges.
-- **Renames are a delete plus an add.**
-- **Check `inputs` are trusted**, not verified.
+- **Renames are compared unit by unit** when git's rename detection (50% similarity) pairs the paths: changed and added units are written at the new path, dropped units at the old, and a pure move writes nothing. Copies are not detected, a file below 50% similarity is a delete plus an add, `zit record` prints `wrote` lines only (`zit show` adds `renamed old -> new`), and a change that declared a read at a path it then renamed itself is not followed.
+- **Check `inputs` are trusted**, not verified. They must be paths; a pattern is refused.
+- **The parse check sees files whole**, only in the eight languages, and only files that both sides changed since their merge base. It runs at accept, not in `status`, and current's `zit.toml` can turn it off.
+- A change that only alters a file's mode has an empty footprint.
+- Trailer values (`Zit-Agent`, `Zit-Session`, `Zit-Read`) are kept to one line: control characters are dropped, newlines and tabs become spaces, so a value cannot forge another trailer.
 - Symlinks and submodules are whole-file resources. Git LFS is untested.
 
 ## Operations
 
-- **Per-operation overhead is higher than raw git** because every git operation is a process (ADR 7). Numbers in [Benchmarks](/benchmarks).
-- `zit status` computes every speculative change's status each time; its cost grows with their number.
-- The checks of one verification run sequentially. Verification views keep ignored files between checks (ADR 10).
-- **Each agent workspace is at a new path**, so on a compiled project every agent rebuilds the project once, and a shared build directory accumulates output for paths that no longer exist. Measured: about 1.9 GB after ten agents on a Rust project ([Lessons](/lessons)).
+- **Per-operation overhead is higher than raw git** because every git operation is a process (ADR 7): 7 for a record, 9 for a fast-forward accept, 16 for a composing accept, counted with `bench/calls.sh` on a 400-module project with one check. Numbers in [Benchmarks](/benchmarks).
+- `zit status` remembers each change's status with the current and evidence it was derived from (`cache/status/<id>`) and reuses it while both are unchanged. The first `status` after current moves, or after any evidence changes, evaluates every change again; its cost grows with their number. An evaluation that errored is not remembered.
+- `zit status` with N running agents spends up to N × 250 ms probing their run locks (macOS holds a spawned process's descriptors briefly).
+- The checks of one verification run one at a time unless `[accept] jobs` says otherwise; concurrent checks share the view and `$TMPDIR`, so a check that writes tracked files needs `serial = true`. Verification views keep ignored files between checks (ADR 10).
+- **Each agent workspace is at a new path** unless `[workspace] stable_paths` or `zit.stablePaths` is set, so on a compiled project every agent rebuilds the project once, and a shared build directory accumulates output for paths that no longer exist. Measured: about 1.9 GB after ten agents on a Rust project ([Lessons](/lessons)). With stable paths, agents inherit the previous occupant's ignored files, including stale caches, and slots persist until `zit clean` ([zit.toml](/checks#stable-workspace-paths)).
 - **Claims are voluntary and local.** They are not replicated, and an agent that has neither claimed nor started writing is invisible. What open workspaces are writing is reused for up to 2 seconds, so a claim may be decided on a slightly old picture.
-- `TMPDIR` is private per workspace; ports and other machine-wide state are shared between agents.
-- Discarded changes stay in the object database until `git gc` removes them.
-- A workspace orphaned by `SIGKILL` is listed, not cleaned up automatically.
+- `TMPDIR` is private per workspace. `ZIT_PORT` is a port that was free when the workspace was made and differs from other live workspaces'; it is not reserved, so another program can take it. Other machine-wide state is shared between agents.
+- Discarded changes stay in the object database until `git gc` removes them. `zit discard` does not delete a change's `refs/zit/logs/<id>`.
+- A workspace orphaned by `SIGKILL` is listed, not cleaned up automatically; `zit dispose --orphaned` removes those without unrecorded edits. `zit dispose <id>` deletes a workspace even while its agent is running.
+- **Liveness is a lock and a start time.** A workspace is running while its `zit run` holds `ws/<id>/run.lock`; its owner is alive while the pid exists with the start time recorded at launch. Workspaces recorded before `pid_started` existed are judged by pid alone.
 - **Interactive `zit run` signals only the agent.** Run headless (no terminal on stdin), the agent leads its own process group, and whatever it started is stopped before its work is recorded. With a terminal, the agent must stay in the terminal's group to read it; children it leaves running are not stopped.
 - `zit run` passes stdin through. Some agents (Codex) wait for stdin to close when it is not a terminal; use `</dev/null` in scripts.
+- `zit run --log` keeps the last 64 KB only, and the relative order of stdout and stderr lines is not preserved.
 - A workspace shares the repository's refs. Branches, stashes or tags an agent creates with git inside a workspace appear in the real repository.
 - The terminal Ctrl-C path of `zit run` (delayed forwarding) is implemented but has no automated test; the non-terminal `SIGINT`/`SIGTERM` paths do.
-
-- **No free-space check.** When the disk fills, git cannot write and agents' work is not landed (accepted states are not damaged). Seen once, in Lesson 02.
+- A check with `timeout = 0` always fails. `zit retry` merges from git's merge base, not from a linearly landed ancestor.
+- `zit accept --dry-run` does not run `[[derive]]`, so a check whose input is a generated file may be reported as `run` where the accept would reuse evidence.
+- A batch that fails its checks lands nothing and does not say which member is responsible. `--batch` takes only changes already `verified`; everything else is left out silently, not reported as skipped.
+- **The free-space guard is a threshold, not a reservation.** Zit refuses to build a workspace or a view when the volume holding its home has less than `zit.minFreeMB` (default 512) free; an agent can still fill the disk afterwards, and then git cannot write and its work is not landed (accepted states are not damaged). The 512 MB default has no test that exercises it. `zit doctor` warns under 1 GB.
+- Cache eviction reads file birth times; on a Linux file system that has none, entries may be skipped. Not reproduced on macOS.
 - **`[prepare]` needs copy-on-write to save space.** Without it, the install still runs, once per workspace.
 - **Sandboxed agents need Zit's home.** Agents that sandbox their commands must be allowed to write to Zit's home (`~/.zit`), and only that: Zit never needs them to write the repository's git directory, whose hooks and config would let them run code outside the sandbox. The `codex` preset grants this repository's directory under it.
 - **The presets let agents act without asking.** `claude` runs with `--permission-mode acceptEdits`, `autohand` with `--yes`, `codex` in its `workspace-write` sandbox. They edit only their workspace, but run whatever commands their own settings allow.
 - **`zit clean` sees only what Zit can see.** It refuses while a workspace has a live `zit run` or unrecorded edits, or a clone or verification holds its lock; an MCP agent that has not written anything yet is invisible to it.
-- **Liveness is a pid.** A workspace whose `zit run` died may look alive if its pid is reused.
+- `zit doctor` only warns about a missing copy-on-write, low free space, and agents or `gh` not on PATH; it checks a `zit.toml` program by its first word and accepts a program given with a `/` unverified.
 
 ## Not built
 
 - No server, accounts or access control: whoever can write the repository's refs can accept. Agents using MCP cannot: `zit_accept` and `zit_discard` are offered only by `zit mcp --integrator`.
 - No signed evidence. Check results fetched from a remote are not trusted unless you set `zit.trustFetchedEvidence` ([Another machine](/git#another-machine)); with it set, they are trusted without proof of who produced them.
-- No batching: changes are verified and land one at a time ([Compared](/compare)).
-- No CI integration beyond running `zit accept` in a job yourself ([Teams and review](/git#teams-and-review)).
+- Batching is one combined verification, not a conflict graph: a batch is composed in the order given and a failing check rejects the whole batch without bisecting it ([Compared](/compare)).
+- The GitHub Actions integrator ([CI](/git#ci)) is tested as a script against a local bare origin and has not been run on GitHub Actions itself; a push to `refs/zit/*` cannot trigger it.
 - No replication protocol beyond `git fetch`/`git push` of `refs/zit/*`, and no automatic reconciliation of two machines that both moved current.
 - No remote, container or VM materialisers.
 - No dependency tracking on build artifacts, database schemas or runtime assumptions; resources are files and symbols.
 - No automatic tracking of what an agent read. Reads are inferred from written code or declared.
-- **Cost is what the agent reports.** Claude Code reports tokens and dollars, Codex tokens only, Autohand and Pi nothing yet. No way for an agent to set the intent of the change `zit run` records for it.
+- **Cost is what the agent reports.** Claude Code reports tokens and dollars, Pi tokens and its own price, Codex tokens only, Autohand Code nothing yet.
 - **"Landed" means it composed and passed the checks**, not that it was good. Quality has been scored once, by a blind model judge ([Lessons](/lessons)), not by people.
 - No shared place for a question about the task that every agent should see answered once.
 - The largest run measured is in [Benchmarks](/benchmarks). Nothing larger is claimed.
