@@ -200,6 +200,20 @@ fn emit<T: Serialize>(json: bool, value: &T, human: impl FnOnce()) -> anyhow::Re
     Ok(())
 }
 
+/// The format of the `--json` reports integrations read (status, show, log,
+/// doctor). Bump it when a field changes meaning or goes away; adding fields
+/// keeps it.
+const SCHEMA: u32 = 1;
+
+/// `value` as a JSON object with `"schema": SCHEMA` at the top.
+fn versioned<T: Serialize>(value: &T) -> anyhow::Result<serde_json::Value> {
+    let mut shown = serde_json::to_value(value)?;
+    if let Some(object) = shown.as_object_mut() {
+        object.insert("schema".into(), SCHEMA.into());
+    }
+    Ok(shown)
+}
+
 fn print_invalid(repo: &Repo, invalid: &Invalid) {
     match invalid {
         Invalid::Stale(why) => {
@@ -352,11 +366,11 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
         }
         Cmd::Status => {
             let overview = api::overview(&repo)?;
-            emit(json, &overview, || print!("{}", view::overview_text(&overview)))?;
+            emit(json, &versioned(&overview)?, || print!("{}", view::overview_text(&overview)))?;
         }
         Cmd::Show { change } => {
             let detail = api::detail(&repo, &repo.resolve(&change)?)?;
-            emit(json, &detail, || print!("{}", view::detail_text(&detail)))?;
+            emit(json, &versioned(&detail)?, || print!("{}", view::detail_text(&detail)))?;
         }
         Cmd::Check { change, rerun } => {
             let verdicts = evidence::verify(&repo, &repo.resolve(&change)?, rerun)?;

@@ -165,6 +165,18 @@ fn claim_exits_1_and_names_the_holder_when_refused() {
     assert!(status.stdout.contains("claims src/lib.rs#price, src/shop.rs"), "{}", status.stdout);
 }
 
+/// Integrations detect a format change by the `schema` field every `--json` report carries.
+#[test]
+fn json_reports_carry_a_schema_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = cli(dir.path());
+    let id = change(&cli, "claude", &[("src/shop.rs", "pub fn buy() { 1; }\n")]);
+    assert_eq!(cli.run(&["status", "--json"]).ok().json()["schema"], 1);
+    let shown = cli.run(&["show", &id, "--json"]).ok().json();
+    assert_eq!(shown["schema"], 1);
+    assert_eq!(shown["id"], id.as_str(), "the rest of the report is unchanged");
+}
+
 /// Installed next to `zit`, `git-zit` makes every command available as `git zit …`.
 #[test]
 fn zit_is_a_git_extension() {
