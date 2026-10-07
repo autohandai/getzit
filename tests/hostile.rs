@@ -194,3 +194,33 @@ fn mcp_answers_invalid_requests_with_32600() {
     assert_eq!(mcp.read()["error"]["code"], -32600);
     assert_eq!(mcp.request(9, "ping", json!({}))["result"], json!({}), "still serving");
 }
+
+/// A JSON-RPC batch (allowed by protocol 2025-03-26) is answered with a batch; its
+/// notifications get no entry, and an empty batch is an invalid request.
+#[test]
+fn mcp_answers_batches_with_batches() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = cli(dir.path());
+    let mut mcp = Mcp::start(&cli, &[]);
+    mcp.send(
+        json!([
+            {"jsonrpc": "2.0", "id": 1, "method": "ping"},
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            {"jsonrpc": "2.0", "id": 2, "method": "nope"},
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "zit_show", "arguments": {"change": "current"}}}
+        ])
+        .to_string()
+        .as_bytes(),
+    );
+    let replies = mcp.read();
+    let replies = replies.as_array().unwrap_or_else(|| panic!("not a batch: {replies}"));
+    assert_eq!(replies.len(), 3, "{replies:?}");
+    assert_eq!(replies[0]["id"], 1);
+    assert_eq!(replies[0]["result"], json!({}));
+    assert_eq!(replies[1]["error"]["code"], -32601);
+    assert_eq!(replies[2]["result"]["isError"], false, "{}", replies[2]);
+    mcp.send(b"[]");
+    assert_eq!(mcp.read()["error"]["code"], -32600);
+    mcp.send(br#"[{"jsonrpc": "2.0", "method": "notifications/initialized"}]"#);
+    assert_eq!(mcp.request(9, "ping", json!({}))["result"], json!({}), "a batch of notifications gets no reply");
+}

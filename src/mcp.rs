@@ -197,6 +197,14 @@ pub fn serve(cwd: &Path, integrator: bool, input: impl BufRead, mut output: impl
         }
         let reply = match serde_json::from_str::<Value>(&line) {
             Err(e) => Some(json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": e.to_string()}})),
+            // A batch (protocol 2025-03-26) is answered with a batch; all notifications, no reply.
+            Ok(Value::Array(batch)) if !batch.is_empty() => {
+                let mut replies = Vec::new();
+                for msg in &batch {
+                    replies.extend(handle(cwd, integrator, &mut client, msg)?);
+                }
+                (!replies.is_empty()).then(|| Value::Array(replies))
+            }
             Ok(msg) => handle(cwd, integrator, &mut client, &msg)?,
         };
         if let Some(reply) = reply {
