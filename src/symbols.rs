@@ -155,12 +155,14 @@ fn methods<'t>(lang: Lang, node: tree_sitter::Node<'t>, text: &str) -> Vec<(Stri
         .collect()
 }
 
-/// The unit's interface: its text without function bodies or comments.
-fn signature(node: tree_sitter::Node, text: &str) -> String {
+/// The unit's interface: its text without function bodies or comments, nor
+/// the byte ranges in `cut` (the methods of a type, units of their own).
+fn signature(node: tree_sitter::Node, text: &str, cut: &[std::ops::Range<usize>]) -> String {
     if is_comment(node.kind()) {
         return String::new();
     }
-    let mut cuts: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut cuts: Vec<std::ops::Range<usize>> =
+        cut.iter().filter(|c| c.start >= node.start_byte() && c.end <= node.end_byte()).cloned().collect();
     walk(node, |n| {
         let k = n.kind();
         if is_comment(k) {
@@ -238,7 +240,7 @@ pub fn index(path: &str, src: &[u8]) -> Option<FileIndex> {
         for (name, method, declared_by) in &methods {
             let (body, sig, refs) = texts.entry(Some(name.clone())).or_default();
             body.push_str(&text[method.byte_range()]);
-            sig.push_str(&signature(*method, text));
+            sig.push_str(&signature(*method, text, &[]));
             collect_identifiers(lang, *method, text, &[*declared_by], &imports, refs);
         }
         for key in keys {
@@ -247,10 +249,7 @@ pub fn index(path: &str, src: &[u8]) -> Option<FileIndex> {
                 let rest = without(*part, text, &cut);
                 body.push_str(&rest);
                 body.push('\n');
-                sig.push_str(&match cut.is_empty() {
-                    true => signature(*part, text),
-                    false => rest,
-                });
+                sig.push_str(&signature(*part, text, &cut));
                 sig.push('\n');
                 let mut found = BTreeSet::new();
                 collect_identifiers(lang, *part, text, &declared, &imports, &mut found);
@@ -278,7 +277,7 @@ pub fn index(path: &str, src: &[u8]) -> Option<FileIndex> {
         let (body, sig, refs) = texts.entry(None).or_default();
         body.push_str(&text[part.byte_range()]);
         body.push('\n');
-        sig.push_str(&signature(part, text));
+        sig.push_str(&signature(part, text, &[]));
         collect_identifiers(lang, part, text, &[], &imports, refs);
     }
 
@@ -651,5 +650,21 @@ mod tests {
         )
         .unwrap();
         assert_eq!(names(&ix), ["Foo", "Foo::c", "Foo::drop", "Foo::into_iter"]);
+    }
+
+    #[test]
+    fn comments_inside_a_type_with_methods_are_not_its_interface() {
+        let rs = "/// Shape.\nimpl Shape {\n    // helper\n    const K: u8 = 1;\n    fn area(&self) -> u32 { 1 }\n}\n";
+        let a = index("a.rs", rs.as_bytes()).unwrap();
+        let b = index("a.rs", rs.replace("// helper", "// a helper").replace("/// Shape.", "/// A shape.").as_bytes())
+            .unwrap();
+        assert_eq!(a.symbols["Shape"].sig, b.symbols["Shape"].sig);
+        assert_ne!(a.symbols["Shape"].hash, b.symbols["Shape"].hash);
+        let py = "class Shape:\n    # helper\n    K = 1\n    def area(self):\n        return 1\n";
+        let a = index("a.py", py.as_bytes()).unwrap();
+        let b = index("a.py", py.replace("# helper", "# a helper").as_bytes()).unwrap();
+        assert_eq!(a.symbols["Shape"].sig, b.symbols["Shape"].sig);
+        let c = index("a.py", py.replace("K = 1", "K = 2").as_bytes()).unwrap();
+        assert_ne!(a.symbols["Shape"].sig, c.symbols["Shape"].sig);
     }
 }
