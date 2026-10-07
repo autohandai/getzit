@@ -60,3 +60,15 @@ fn errors_are_json_when_json_was_asked_for() {
     assert_eq!(ran.code, 2);
     assert!(ran.json()["error"].as_str().unwrap().contains("unknown workspace"), "{}", ran.stdout);
 }
+
+/// `zit discard A nope` must not discard A: all names are checked before anything is removed.
+#[test]
+fn discard_is_all_or_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = cli(dir.path());
+    let a = change(&cli, "a", &[("a.txt", "1\n")]);
+    let ran = cli.run(&["discard", &a, "nope"]);
+    assert_eq!(ran.code, 2);
+    let status = cli.run(&["status", "--json"]).ok().json();
+    assert_eq!(status["changes"][0]["id"], a.as_str(), "{status}");
+}

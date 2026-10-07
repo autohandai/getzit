@@ -396,10 +396,12 @@ fn execute(cli: Cli) -> anyhow::Result<ExitCode> {
             emit(json, &ws, || print_workspace(&ws))?;
         }
         Cmd::Discard { changes } => {
-            for rev in &changes {
-                change::discard(&repo, &repo.resolve(rev)?)?;
+            // Resolve everything first: one bad name must not discard the others.
+            let ids = changes.iter().map(|rev| repo.resolve(rev)).collect::<Result<Vec<_>, _>>()?;
+            for id in &ids {
+                change::discard(&repo, id)?;
             }
-            emit(json, &serde_json::json!({"discarded": changes}), || {})?;
+            emit(json, &serde_json::json!({"discarded": ids}), || {})?;
         }
         Cmd::Dispose { ids, all } => {
             let ids = if all { workspace::list(&repo)?.into_iter().map(|w| w.id).collect() } else { ids };
