@@ -389,8 +389,16 @@ fn definitions(lang: Lang, node: tree_sitter::Node, text: &str) -> Vec<Def> {
         (Lang::Js, "export_statement") => {
             node.child_by_field_name("declaration").map(|d| definitions(lang, d, text)).unwrap_or_default()
         }
+        // `declare ...` wraps its declaration; `namespace N {}` is an expression statement.
+        (Lang::Js, "ambient_declaration" | "expression_statement") => node
+            .named_child(0)
+            .filter(|d| node.kind() == "ambient_declaration" || d.kind() == "internal_module")
+            .map(|d| definitions(lang, d, text))
+            .unwrap_or_default(),
         (Lang::Js, "lexical_declaration" | "variable_declaration") => specs(node, &["variable_declarator"]),
-        (Lang::Js, k) if k.ends_with("_declaration") || k == "internal_module" => named(node),
+        (Lang::Js, k) if k.ends_with("_declaration") || k == "function_signature" || k == "internal_module" => {
+            named(node)
+        }
         (Lang::Go, "method_declaration") => node
             .child_by_field_name("receiver")
             .and_then(|r| r.named_child(0))
@@ -666,5 +674,20 @@ mod tests {
         assert_eq!(a.symbols["Shape"].sig, b.symbols["Shape"].sig);
         let c = index("a.py", py.replace("K = 1", "K = 2").as_bytes()).unwrap();
         assert_ne!(a.symbols["Shape"].sig, c.symbols["Shape"].sig);
+    }
+
+    #[test]
+    fn typescript_overloads_and_ambient_declarations_are_symbols() {
+        let ix = index(
+            "a.ts",
+            b"export function f(a: string): void;\nexport function f(a: number): void;\nexport function f(a: any) {}\ndeclare function g(): void;\ndeclare const K: number;\nexport declare class D {}\nnamespace N {}\n",
+        )
+        .unwrap();
+        assert_eq!(names(&ix), ["D", "K", "N", "f", "g"]);
+        assert!(!ix.symbols["f"].refs.contains("f"));
+        let overload = index("a.ts", b"export function f(a: string): void;\nexport function f(a: any) {}\n").unwrap();
+        let changed = index("a.ts", b"export function f(a: boolean): void;\nexport function f(a: any) {}\n").unwrap();
+        assert_ne!(overload.symbols["f"].sig, changed.symbols["f"].sig, "an overload is part of the interface");
+        assert_eq!(overload.top, changed.top);
     }
 }
