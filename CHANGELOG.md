@@ -4,6 +4,8 @@ All notable changes to Zit. Versions follow [Semantic Versioning](https://semver
 
 ## Unreleased
 
+## 0.1.1 - 2026-10-07
+
 - CI runs every test on XFS with reflinks as well as btrfs.
 - `zit claim --edit PATH --content FILE [--dry-run]` claims exactly what an edit would change, by Zit's own index, so agent tools can claim per symbol instead of per file.
 - Linux reflink clones keep each file's modification time, as macOS clones do. Before, a cloned checkout could look modified to git, so Zit fell back to a fresh checkout and reinstalled dependencies (4 of 40 runs on XFS; 0 of 40 after).

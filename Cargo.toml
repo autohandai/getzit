@@ -1,6 +1,6 @@
 [package]
 name = "zit"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.88"
 description = "A git extension for many developers and coding agents changing one repository at once: copy-on-write workspaces, changes checked against what they read and wrote, and every change's reason kept."
