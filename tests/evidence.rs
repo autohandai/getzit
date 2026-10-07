@@ -265,6 +265,27 @@ fn parallel_evidence_is_the_same_evidence() {
     assert_eq!(essentials(&parallel)[1].2, false);
 }
 
+/// Nothing is materialised, workspace or verification view, when the volume
+/// holding Zit's home has less than `zit.minFreeMB` free; 0 turns the guard off.
+#[test]
+fn materialising_is_refused_when_the_volume_is_nearly_full() {
+    let fx = Fixture::new(&[("zit.toml", "[[check]]\nname = \"t\"\nrun = \"true\"\n"), ("a.txt", "a\n")]);
+    let current = fx.repo.current().unwrap();
+    let new = || zit::workspace::NewWorkspace { from: None, intent: "x", agent: "a", session: None };
+    // No volume is this large: 999 TB.
+    common::git(&fx.root(), &["config", "zit.minFreeMB", "999999999"]);
+    let err = workspace::materialise(&fx.repo, &new()).unwrap_err().to_string();
+    assert!(err.contains("zit.minFreeMB") && err.contains("MB free"), "{err}");
+    assert!(workspace::list(&fx.repo).unwrap().is_empty(), "nothing half-made");
+    let err = evidence::verify(&fx.repo, &current, false).unwrap_err().to_string();
+    assert!(err.contains("zit.minFreeMB"), "{err}");
+
+    common::git(&fx.root(), &["config", "zit.minFreeMB", "0"]);
+    let ws = workspace::materialise(&fx.repo, &new()).unwrap();
+    workspace::dispose(&fx.repo, &ws.id).unwrap();
+    assert!(evidence::verify(&fx.repo, &current, false).unwrap()[0].evidence.passed);
+}
+
 /// A misplaced or misspelt key in zit.toml is an error, not silently ignored.
 #[test]
 fn an_unknown_key_in_zit_toml_is_an_error() {

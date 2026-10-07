@@ -498,6 +498,8 @@ struct View {
 impl View {
     fn acquire(repo: &Repo, change: &Oid, state: &Oid) -> Result<View> {
         use std::os::fd::AsRawFd;
+        // Moving a view in place writes files too.
+        crate::clean::require_free_space(repo)?;
         let root = repo.home().join("verify");
         std::fs::create_dir_all(&root)?;
         for slot in 0..MAX_VIEWS {

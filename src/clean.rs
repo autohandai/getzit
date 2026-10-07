@@ -36,6 +36,37 @@ fn lock_by(file: &fs::File, deadline: std::time::Instant) -> bool {
     true
 }
 
+/// Free space Zit insists on before it materialises anything, in MB, unless
+/// `git config zit.minFreeMB` says otherwise (0 disables the guard).
+pub const DEFAULT_MIN_FREE_MB: i64 = 512;
+
+/// Refuse to write a workspace or verification view when the volume holding
+/// Zit's home has less than `zit.minFreeMB` free. A full disk makes git
+/// fail halfway through and leaves agents' work unlanded.
+pub fn require_free_space(repo: &Repo) -> Result<()> {
+    let min_mb = repo
+        .git(&["config", "--int", "zit.minFreeMB"])
+        .ok()
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .unwrap_or(DEFAULT_MIN_FREE_MB);
+    if min_mb <= 0 {
+        return Ok(());
+    }
+    // The home may not exist yet: measure the nearest directory that does.
+    let home = repo.home();
+    let Some(free) = home.ancestors().find(|p| p.exists()).and_then(free_bytes) else {
+        return Ok(());
+    };
+    let free_mb = free / 1_000_000;
+    if free_mb < min_mb {
+        return Err(Error::msg(format!(
+            "refusing to materialise: {free_mb} MB free on the volume holding {}, less than zit.minFreeMB = {min_mb} (`git config zit.minFreeMB 0` disables this guard)",
+            home.display()
+        )));
+    }
+    Ok(())
+}
+
 fn free_bytes(path: &Path) -> Option<i64> {
     use std::os::unix::ffi::OsStrExt;
     let path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
