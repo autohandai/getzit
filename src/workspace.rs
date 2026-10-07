@@ -86,7 +86,7 @@ impl Workspace {
     /// not collide on fixed temp-file names.
     pub fn temp_dir(&self) -> Result<PathBuf> {
         let dir = self.dir().join("tmp");
-        fs::create_dir_all(&dir)?;
+        fs::create_dir_all(&dir).map_err(|e| Error::io_at(&dir, e))?;
         Ok(dir)
     }
 
@@ -185,7 +185,7 @@ pub fn materialise(repo: &Repo, new: &NewWorkspace) -> Result<Workspace> {
 
 /// As `materialise`, for a change whose state is already known.
 pub(crate) fn materialise_at(repo: &Repo, base: Oid, tree: Oid, new: &NewWorkspace) -> Result<Workspace> {
-    fs::create_dir_all(root(repo))?;
+    fs::create_dir_all(root(repo)).map_err(|e| Error::io_at(&root(repo), e))?;
     let (id, dir) = loop {
         let id = fresh_id();
         let dir = root(repo).join(&id);

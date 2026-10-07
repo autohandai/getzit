@@ -89,6 +89,11 @@ impl Error {
     pub(crate) fn msg(text: impl Into<String>) -> Error {
         Error::Other(text.into())
     }
+
+    /// An I/O error naming the path it happened at: `Io` alone says only "Permission denied".
+    pub(crate) fn io_at(path: &std::path::Path, e: std::io::Error) -> Error {
+        Error::Other(format!("{}: {e}", path.display()))
+    }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

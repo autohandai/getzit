@@ -261,6 +261,24 @@ fn a_git_error_does_not_print_the_git_directory() {
     assert!(!ran.stderr.contains("--git-dir"), "{}", ran.stderr);
 }
 
+/// An unwritable `$ZIT_HOME` is named in the error, not just "Permission denied".
+#[test]
+fn an_unwritable_zit_home_is_named() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let cli = Cli::new(dir.path(), &[("a.txt", "a\n")]);
+    cli.run(&["init"]).ok();
+    let sealed = dir.path().join("sealed");
+    std::fs::create_dir(&sealed).unwrap();
+    std::fs::set_permissions(&sealed, PermissionsExt::from_mode(0o500)).unwrap();
+    let home = sealed.join("home");
+    let out = cli.command(&cli.root).env("ZIT_HOME", &home).args(["materialise"]).output().unwrap();
+    std::fs::set_permissions(&sealed, PermissionsExt::from_mode(0o700)).unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains(&home.display().to_string()) && err.contains("ermission denied"), "{err}");
+}
+
 /// `$ZIT_HOME` may be relative to where zit is run (and contain spaces): git is pointed at
 /// files under it by path, from the repository's git directory and from workspaces.
 #[test]
