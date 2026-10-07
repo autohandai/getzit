@@ -84,3 +84,7 @@ One worktree with its install took about 324 MB on disk (1,619 MB for five). The
 - **Agents that never run concurrently on the same repository.** The coordination is the point; without concurrency it only adds a step.
 
 You need it when many contributors change one repository *at the same time*, especially when some of them are agents that can produce changes faster than people can review merges.
+
+## The name
+
+Zit is short for zillion-scale operations in git. The word comes from MathWorld's entry for [zillion](https://mathworld.wolfram.com/Zillion.html): "a generic word for a very large number. The term has no well-defined mathematical meaning." That is the goal: as many people and agents changing one repository at once as the work needs, with no fixed number. The scale measured so far is on [Benchmarks](/benchmarks).
