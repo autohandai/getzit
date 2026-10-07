@@ -190,13 +190,17 @@ fn call(cwd: &Path, client: &str, integrator: bool, name: &str, args: &Value) ->
 /// Without `integrator`, the agent cannot accept or discard changes.
 pub fn serve(cwd: &Path, integrator: bool, input: impl BufRead, mut output: impl Write) -> Result<()> {
     let mut client = "agent".to_string();
-    for line in input.lines() {
+    for line in input.split(b'\n') {
         let line = line?;
-        if line.trim().is_empty() {
+        if line.trim_ascii().is_empty() {
             continue;
         }
-        let reply = match serde_json::from_str::<Value>(&line) {
-            Err(e) => Some(json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": e.to_string()}})),
+        // Bytes that are not UTF-8 are that message's parse error, not the end of the server.
+        let parsed = std::str::from_utf8(&line)
+            .map_err(|e| e.to_string())
+            .and_then(|text| serde_json::from_str::<Value>(text).map_err(|e| e.to_string()));
+        let reply = match parsed {
+            Err(message) => Some(json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": message}})),
             // A batch (protocol 2025-03-26) is answered with a batch; all notifications, no reply.
             Ok(Value::Array(batch)) if !batch.is_empty() => {
                 let mut replies = Vec::new();

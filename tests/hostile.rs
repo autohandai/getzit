@@ -224,3 +224,15 @@ fn mcp_answers_batches_with_batches() {
     mcp.send(br#"[{"jsonrpc": "2.0", "method": "notifications/initialized"}]"#);
     assert_eq!(mcp.request(9, "ping", json!({}))["result"], json!({}), "a batch of notifications gets no reply");
 }
+
+/// Bytes that are not UTF-8 are a parse error for that message, not the end of the server.
+#[test]
+fn mcp_survives_a_line_that_is_not_utf8() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = cli(dir.path());
+    let mut mcp = Mcp::start(&cli, &[]);
+    mcp.send(b"\xff\xfe{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"ping\"}");
+    let reply = mcp.read();
+    assert_eq!(reply["error"]["code"], -32700, "{reply}");
+    assert_eq!(mcp.request(2, "ping", json!({}))["result"], json!({}), "still serving");
+}
