@@ -10,6 +10,7 @@ use crate::resource::Resource;
 use crate::workspace::{self, Workspace};
 use crate::Result;
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Serialize)]
 pub struct ChangeRow {
@@ -130,21 +131,26 @@ pub struct Detail {
     pub status: Status,
     /// What the change wrote, relative to its first parent.
     pub writes: Vec<Resource>,
+    /// Files the change moved, old path to new path.
+    pub renames: BTreeMap<String, String>,
     pub evidence: Vec<CheckResult>,
 }
 
 /// What changed, why, what it depends on, and the evidence for it.
 pub fn detail(repo: &Repo, id: &Oid) -> Result<Detail> {
     let change = change::load(repo, id)?;
-    let writes = match change.parents.first() {
-        Some(parent) => footprint::between(repo, parent, id)?.writes.into_iter().collect(),
-        None => vec![],
+    let (writes, renames) = match change.parents.first() {
+        Some(parent) => {
+            let fp = footprint::between(repo, parent, id)?;
+            (fp.writes.into_iter().collect(), fp.renames)
+        }
+        None => (vec![], BTreeMap::new()),
     };
     let evidence = evidence::lookup(repo, &change.state)?
         .into_iter()
         .map(|(check, evidence)| CheckResult { check: check.name, evidence })
         .collect();
-    Ok(Detail { status: accept::status(repo, id)?, change, writes, evidence })
+    Ok(Detail { status: accept::status(repo, id)?, change, writes, renames, evidence })
 }
 
 #[derive(Debug, Serialize)]

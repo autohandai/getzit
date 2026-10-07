@@ -1,6 +1,7 @@
 mod common;
 
 use common::Fixture;
+use std::collections::BTreeMap;
 use zit::change::{self, Record};
 use zit::footprint::{self, ConflictKind, Footprint};
 use zit::resource::Resource;
@@ -164,6 +165,70 @@ fn a_declared_file_read_conflicts_with_any_write_inside_it() {
     reader.reads.insert(Resource::parse("src/lib.rs"));
     let writer = footprint_of(&fx, &[("src/lib.rs", &LIB.replace("x / 10", "x / 5"))]);
     assert_eq!(kinds(&reader, &writer), [("src/lib.rs#tax".to_string(), ConflictKind::ReadWrite)]);
+}
+
+/// Materialise, move `from` to `to` (rewriting it when `body` is given), record.
+fn rename_in(fx: &Fixture, from: &str, to: &str, body: Option<&str>) -> Footprint {
+    let base = fx.repo.current().unwrap();
+    let ws = fx.workspace("agent");
+    let (src, dst) = (ws.path().join(from), ws.path().join(to));
+    std::fs::create_dir_all(dst.parent().unwrap()).unwrap();
+    std::fs::rename(&src, &dst).unwrap();
+    if let Some(body) = body {
+        std::fs::write(&dst, body).unwrap();
+    }
+    let c = change::record(&fx.repo, &ws.id, &Record::default()).unwrap().unwrap();
+    workspace::dispose(&fx.repo, &ws.id).unwrap();
+    footprint::between(&fx.repo, &base, &c.id).unwrap()
+}
+
+#[test]
+fn a_rename_writes_only_the_units_it_changed() {
+    let fx = fixture();
+    let moved = rename_in(&fx, "src/lib.rs", "src/pricing.rs", None);
+    assert_eq!(writes(&moved), []);
+    assert_eq!(moved.renames, BTreeMap::from([("src/lib.rs".to_string(), "src/pricing.rs".to_string())]));
+    let edited = rename_in(&fx, "src/lib.rs", "src/pricing.rs", Some(&LIB.replace("x / 10", "x / 5")));
+    assert_eq!(writes(&edited), res(&["src/pricing.rs#tax"]), "a changed unit is written at the new path");
+    assert!(edited.signatures.is_empty());
+    let dropped = rename_in(
+        &fx,
+        "src/lib.rs",
+        "src/pricing.rs",
+        Some(&LIB.replace("\n\npub fn tax(x: u32) -> u32 { x / 10 }", "")),
+    );
+    assert_eq!(writes(&dropped), res(&["src/lib.rs#tax"]), "a unit the move dropped is written at the old path");
+    assert_eq!(writes(&rename_in(&fx, "data.csv", "data/all.csv", None)), []);
+    assert_eq!(writes(&rename_in(&fx, "data.csv", "data/all.csv", Some("a,b\n1,2\n"))), res(&["data/all.csv"]));
+}
+
+#[test]
+fn a_reader_of_the_old_path_sees_only_what_the_rename_changed() {
+    let fx = fixture();
+    let mut reader = footprint_of(&fx, &[("src/shop.rs", "pub fn buy() { 1; }\n")]);
+    reader.reads.insert(Resource::parse("src/lib.rs#price"));
+    let moved = rename_in(&fx, "src/lib.rs", "src/pricing.rs", None);
+    let edited =
+        rename_in(&fx, "src/lib.rs", "src/pricing.rs", Some(&LIB.replace("price(x: u32)", "price(x: u32, t: u32)")));
+    assert_eq!(kinds(&reader, &moved), []);
+    assert_eq!(kinds(&moved, &reader), []);
+    assert_eq!(kinds(&reader, &edited), [("src/pricing.rs#price".to_string(), ConflictKind::ReadWrite)]);
+    assert_eq!(kinds(&edited, &reader), [("src/pricing.rs#price".to_string(), ConflictKind::WriteRead)]);
+    reader.reads = [Resource::parse("src/lib.rs")].into();
+    assert_eq!(kinds(&reader, &moved), [], "a whole-file read of the old path");
+    assert_eq!(kinds(&reader, &edited), [("src/pricing.rs#price".to_string(), ConflictKind::ReadWrite)]);
+}
+
+#[test]
+fn a_writer_of_the_old_path_conflicts_only_with_what_the_rename_changed() {
+    let fx = fixture();
+    let writer = footprint_of(&fx, &[("src/lib.rs", &LIB.replace("x / 10", "x / 4"))]);
+    let moved = rename_in(&fx, "src/lib.rs", "src/pricing.rs", None);
+    let edited = rename_in(&fx, "src/lib.rs", "src/pricing.rs", Some(&LIB.replace("x / 10", "x / 5")));
+    assert_eq!(kinds(&writer, &moved), []);
+    assert_eq!(kinds(&moved, &writer), []);
+    assert_eq!(kinds(&writer, &edited), [("src/pricing.rs#tax".to_string(), ConflictKind::WriteWrite)]);
+    assert_eq!(kinds(&edited, &writer), [("src/lib.rs#tax".to_string(), ConflictKind::WriteWrite)]);
 }
 
 /// An attribute or doc comment belongs to the item it annotates, not to module-level code.

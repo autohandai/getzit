@@ -133,7 +133,7 @@ fn staleness(repo: &Repo, base: &Oid, change: &Oid, current: &Oid) -> Result<Vec
         .into_iter()
         .map(|c| {
             let by = steps.iter().find(|(fp, _)| match c.kind {
-                ConflictKind::WriteRead => fp.reads(&c.resource, mine.signatures.contains(&c.resource)),
+                ConflictKind::WriteRead => fp.reads(&mine.origin(&c.resource), mine.signatures.contains(&c.resource)),
                 _ => fp.writes.iter().any(|w| w.overlaps(&c.resource)),
             });
             Staleness { resource: c.resource, kind: c.kind, by: by.map(|(_, id)| id.clone()) }

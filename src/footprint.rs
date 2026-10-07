@@ -6,11 +6,13 @@ use crate::git::{Objects, Oid, Repo};
 use crate::resource::Resource;
 use crate::{symbols, Error, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Footprint {
-    /// Resources whose content differs between base and tip.
+    /// Resources whose content differs between base and tip. A unit of a
+    /// renamed file is written at the new path, or at the old one when the
+    /// move dropped it (see `renames`).
     pub writes: BTreeSet<Resource>,
     /// Identifiers mentioned by the written symbols: inferred reads, matched
     /// by name against symbols written concurrently.
@@ -21,6 +23,22 @@ pub struct Footprint {
     /// bodies). Only these make code that merely names them stale.
     #[serde(default)]
     pub signatures: BTreeSet<Resource>,
+    /// Files the span moved, old path to new path, as git's rename detection
+    /// reports them (`diff-tree -M`: a file deleted at one path and added at
+    /// another with at least half its content in common).
+    ///
+    /// A moved file is compared unit by unit with its old content. Only the
+    /// units whose content differs are writes: at the new path, or at the old
+    /// path for a unit the move dropped. An unchanged unit is written at
+    /// neither, so the move alone is not a write. For conflicts, a write is
+    /// taken at the path it had at the span's base ([`Footprint::origin`]):
+    /// a declared read of `old#sym` or of `old`, and a concurrent write to
+    /// `old#sym`, conflict with a write to `new#sym` exactly as they would
+    /// with one to `old#sym`, and with nothing else about the move. A reader
+    /// by name is unaffected by paths. Two spans that move one file to
+    /// different places are left to the text merge.
+    #[serde(default)]
+    pub renames: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,11 +59,25 @@ pub struct Conflict {
 }
 
 impl Footprint {
-    /// Did this span depend on `written`? A declared read sees any change; a
-    /// mention by name sees only a change to the symbol's interface.
+    /// Did this span depend on `written`, given at the path it had at this
+    /// span's base? A declared read sees any change; a mention by name sees
+    /// only a change to the symbol's interface.
     pub fn reads(&self, written: &Resource, interface_changed: bool) -> bool {
         self.reads.iter().any(|r| r.overlaps(written))
             || (interface_changed && matches!(written, Resource::Symbol(_, name) if self.names(name)))
+    }
+
+    /// `resource` at the path it had at the span's base: the old path of a
+    /// file this span renamed, else itself.
+    pub fn origin(&self, resource: &Resource) -> Resource {
+        let Some((old, _)) = self.renames.iter().find(|(_, new)| new.as_str() == resource.path()) else {
+            return resource.clone();
+        };
+        match resource {
+            Resource::File(_) => Resource::File(old.clone()),
+            Resource::Symbol(_, name) => Resource::Symbol(old.clone(), name.clone()),
+            Resource::Top(_) => Resource::Top(old.clone()),
+        }
     }
 
     /// Whether this span mentions `symbol`: by its name, or, for a method
@@ -54,19 +86,23 @@ impl Footprint {
         self.refs.contains(symbol) || symbol.split_once("::").is_some_and(|(owner, _)| self.refs.contains(owner))
     }
 
-    /// Why this span cannot be composed with a concurrent `other`; empty when it can.
+    /// Why this span cannot be composed with a concurrent `other`; empty when
+    /// it can. Writes are compared at the paths they had at the common base,
+    /// so a rename on either side does not hide a conflict or make one.
     pub fn conflicts(&self, other: &Footprint) -> Vec<Conflict> {
         let mut found = Vec::new();
-        for theirs in &other.writes {
-            if self.writes.iter().any(|mine| mine.overlaps(theirs)) {
+        let mine_at_base: Vec<Resource> = self.writes.iter().map(|w| self.origin(w)).collect();
+        let theirs_at_base: Vec<Resource> = other.writes.iter().map(|w| other.origin(w)).collect();
+        for (theirs, at_base) in other.writes.iter().zip(&theirs_at_base) {
+            if mine_at_base.iter().any(|mine| mine.overlaps(at_base)) {
                 found.push(Conflict { resource: theirs.clone(), kind: ConflictKind::WriteWrite });
-            } else if self.reads(theirs, other.signatures.contains(theirs)) {
+            } else if self.reads(at_base, other.signatures.contains(theirs)) {
                 found.push(Conflict { resource: theirs.clone(), kind: ConflictKind::ReadWrite });
             }
         }
-        for mine in &self.writes {
-            if !other.writes.iter().any(|theirs| theirs.overlaps(mine))
-                && other.reads(mine, self.signatures.contains(mine))
+        for (mine, at_base) in self.writes.iter().zip(&mine_at_base) {
+            if !theirs_at_base.iter().any(|theirs| theirs.overlaps(at_base))
+                && other.reads(at_base, self.signatures.contains(mine))
             {
                 found.push(Conflict { resource: mine.clone(), kind: ConflictKind::WriteRead });
             }
@@ -135,7 +171,7 @@ fn compute(repo: &Repo, base: &Oid, tip: &Oid, declared: Option<&[Resource]>) ->
         None => "trailers".to_string(),
         Some(reads) => crate::hash(reads.iter().map(|r| format!("{r}\n")).collect::<String>().as_bytes()),
     };
-    let cache = repo.home().join("cache/footprint-v2").join(format!("{base}-{tip}-{declared_key}.json"));
+    let cache = repo.home().join("cache/footprint-v3").join(format!("{base}-{tip}-{declared_key}.json"));
     if let Ok(bytes) = std::fs::read(&cache) {
         if let Ok(fp) = serde_json::from_slice(&bytes) {
             return Ok(fp);
@@ -143,15 +179,26 @@ fn compute(repo: &Repo, base: &Oid, tip: &Oid, declared: Option<&[Resource]>) ->
     }
 
     let mut fp = Footprint::default();
-    let diff = repo.git(&["diff-tree", "-r", "-z", "--no-renames", base.as_str(), tip.as_str()])?;
+    let diff = repo.git(&["diff-tree", "-r", "-z", "-M", base.as_str(), tip.as_str()])?;
     let mut blobs = repo.objects()?;
     let mut fields = diff.split('\0');
     while let (Some(meta), Some(path)) = (fields.next(), fields.next()) {
         let meta: Vec<&str> = meta.trim_start_matches(':').split(' ').collect();
-        let [old_mode, new_mode, old_oid, new_oid, _status] = meta[..] else {
+        let [old_mode, new_mode, old_oid, new_oid, status] = meta[..] else {
             return Err(Error::msg(format!("unexpected diff-tree record: {meta:?}")));
         };
-        let old = index_blob(&mut blobs, path, old_mode, old_oid)?;
+        // A rename record carries two paths; its oids differ when the content did.
+        let (old_path, path) = match status.starts_with('R') {
+            true => (path, fields.next().ok_or_else(|| Error::msg("diff-tree rename without a destination"))?),
+            false => (path, path),
+        };
+        if old_path != path {
+            fp.renames.insert(old_path.to_string(), path.to_string());
+            if old_oid == new_oid && old_mode == new_mode {
+                continue;
+            }
+        }
+        let old = index_blob(&mut blobs, old_path, old_mode, old_oid)?;
         let new = index_blob(&mut blobs, path, new_mode, new_oid)?;
         let (Some(old), Some(new)) = (old, new) else {
             fp.writes.insert(Resource::File(path.to_string()));
@@ -160,7 +207,8 @@ fn compute(repo: &Repo, base: &Oid, tip: &Oid, declared: Option<&[Resource]>) ->
         for name in old.symbols.keys().chain(new.symbols.keys()) {
             let (before, after) = (old.symbols.get(name), new.symbols.get(name));
             if before.map(|u| &u.hash) != after.map(|u| &u.hash) {
-                let written = Resource::Symbol(path.to_string(), name.clone());
+                let at = if after.is_some() { path } else { old_path };
+                let written = Resource::Symbol(at.to_string(), name.clone());
                 if before.map(|u| &u.sig) != after.map(|u| &u.sig) {
                     fp.signatures.insert(written.clone());
                 }
