@@ -254,9 +254,13 @@ fn main() -> ExitCode {
         Ok(cli) => cli,
         Err(e) => e.exit(),
     };
+    let json = cli.json;
     match execute(cli) {
         Ok(code) => code,
         Err(e) => {
+            if json {
+                println!("{}", serde_json::json!({"error": format!("{e:#}")}));
+            }
             eprintln!("zit: {e:#}");
             ExitCode::from(2)
         }

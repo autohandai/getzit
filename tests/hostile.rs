@@ -4,10 +4,8 @@
 mod common;
 
 use common::{write, Cli};
-use serde_json::{json, Value};
-use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, ChildStdout, Stdio};
+use std::process::Stdio;
 
 fn cli(dir: &Path) -> Cli {
     let cli = Cli::new(dir, &[("src/lib.rs", "pub fn price(x: u32) -> u32 { x }\n"), ("a.txt", "a\n")]);
@@ -40,4 +38,25 @@ fn a_closed_stdout_does_not_panic() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(!err.contains("panicked"), "{err}");
     assert_ne!(out.status.code(), Some(101), "{err}");
+}
+
+/// With `--json`, a failure is still JSON on stdout, with one shape, and a non-zero exit.
+#[test]
+fn errors_are_json_when_json_was_asked_for() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = Cli::new(dir.path(), &[("a.txt", "a\n")]);
+    let ran = cli.run(&["status", "--json"]);
+    assert_eq!(ran.code, 2);
+    assert!(ran.json()["error"].as_str().unwrap().contains("zit init"), "{}", ran.stdout);
+    cli.run(&["init"]).ok();
+    for args in
+        [&["show", "nope", "--json"][..], &["accept", "nope", "--json"], &["materialise", "--from", "nope", "--json"]]
+    {
+        let ran = cli.run(args);
+        assert_eq!(ran.code, 2, "{args:?}");
+        assert_eq!(ran.json()["error"], "unknown revision: nope", "{args:?}: {}", ran.stdout);
+    }
+    let ran = cli.run(&["record", "--workspace", "nope", "--json"]);
+    assert_eq!(ran.code, 2);
+    assert!(ran.json()["error"].as_str().unwrap().contains("unknown workspace"), "{}", ran.stdout);
 }
