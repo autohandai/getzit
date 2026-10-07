@@ -78,7 +78,14 @@ jobs:
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --title "Zit ${GITHUB_REF_NAME#v}" --notes-file notes.md --verify-tag
+        # A tag pushed again (after a history rewrite, say) keeps the release it has:
+        # published binaries and checksums are never replaced.
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "::notice::Release $GITHUB_REF_NAME already exists; its assets are left as published"
+            exit 0
+          fi
+          gh release create "$GITHUB_REF_NAME" dist/* --title "Zit ${GITHUB_REF_NAME#v}" --notes-file notes.md --verify-tag
 
   crate:
     name: crates.io
