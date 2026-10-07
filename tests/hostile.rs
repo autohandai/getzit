@@ -82,3 +82,18 @@ fn dispose_needs_ids_or_all() {
     assert_ne!(ran.code, 0);
     assert!(ran.stderr.contains("<IDS>") && ran.stderr.contains("Usage"), "{}", ran.stderr);
 }
+
+/// Only speculative changes can be discarded; current, accepted history and an already
+/// discarded change are errors, not silent successes.
+#[test]
+fn discarding_what_is_not_speculative_is_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let cli = cli(dir.path());
+    let ran = cli.run(&["discard", "current"]);
+    assert_eq!(ran.code, 2, "{}", ran.stdout);
+    assert!(ran.stderr.contains("not a speculative change"), "{}", ran.stderr);
+    let a = change(&cli, "a", &[("a.txt", "1\n")]);
+    cli.run(&["discard", &a]).ok();
+    let ran = cli.run(&["discard", &a]);
+    assert_eq!(ran.code, 2, "{}", ran.stdout);
+}
