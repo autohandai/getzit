@@ -4,12 +4,16 @@
   "type": "module",
   "scripts": {
     "dev": "GITHUB_TOKEN=${GITHUB_TOKEN:-$(gh auth token)} blume dev",
-    "build": "GITHUB_TOKEN=${GITHUB_TOKEN:-$(gh auth token)} blume build",
+    "build": "GITHUB_TOKEN=${GITHUB_TOKEN:-$(gh auth token)} blume build && npm run verify:release",
     "doctor": "blume doctor",
     "validate": "blume validate",
-    "deploy": "rm -rf dist && GITHUB_TOKEN=${GITHUB_TOKEN:-$(gh auth token)} blume build && wrangler deploy"
+    "verify:release": "node scripts/verify-site-release.mjs",
+    "deploy": "rm -rf dist && npm run build && wrangler deploy"
   },
   "dependencies": {
     "blume": "^2.1.1"
+  },
+  "devDependencies": {
+    "wrangler": "4.58.0"
   }
 }

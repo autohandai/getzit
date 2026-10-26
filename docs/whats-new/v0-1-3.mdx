@@ -1,0 +1,71 @@
+---
+title: "0.1.3: Review agent work"
+description: Find what each agent is working on, choose a completed change to land, and clean up its finished workspace.
+---
+
+Use this when several agents have left work in one repository and you need to
+decide what to land or remove. Update with `cargo install zit --version 0.1.3 --locked`.
+
+## 1. See every task in one place
+
+From your repository, run:
+
+```sh
+git zit init       # needed once; starts current at HEAD
+git zit status
+```
+
+You get each Zit workspace and registered Git worktree, its task, changed-file
+and line counts, and separate `merge` and `cleanup` assessments. Read the reason
+under each assessment before choosing an action.
+
+For an ordinary agent branch, give the task a useful label. Replace
+`agent-pricing` with your branch name:
+
+```sh
+git config branch.agent-pricing.zit-task "Fix discount rounding"
+git config branch.agent-pricing.zit-agent codex
+git zit status
+```
+
+## 2. Land one finished task
+
+When a managed workspace says `merge: blocked` because it has unrecorded edits,
+wait for its agent to finish, then record it. Use the workspace ID from status:
+
+```sh
+git zit record --workspace WORKSPACE_ID
+```
+
+Use the printed change ID to review and land that work:
+
+```sh
+git zit show CHANGE_ID
+git zit accept --dry-run CHANGE_ID
+git zit accept CHANGE_ID
+```
+
+The preview names checks still needed; acceptance runs the required checks on
+the combined state before landing. If it rejects the change, follow its reason.
+For an already-committed ordinary Git worktree, use its branch name instead of
+`CHANGE_ID` and skip the record step.
+
+## 3. Reclaim a finished workspace
+
+```sh
+git zit status
+```
+
+For a managed workspace whose owner has finished and whose `cleanup` assessment
+is `ready`, remove that workspace by its ID:
+
+```sh
+git zit dispose WORKSPACE_ID
+```
+
+Its recorded change stays in the graph. If cleanup says `blocked`, `review` or
+`unknown`, resolve the stated reason first. Ordinary Git worktrees require a
+manual check of agent activity and ignored files before removal with Git.
+
+See the [status reference](/cli#tasks-diffs-and-safety-in-status) for assessment
+details, or read the [0.1.3 release notes](/changelog/v0-1-3).

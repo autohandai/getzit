@@ -55,6 +55,7 @@ Maintainers release from `main`:
 1. Move `## Unreleased` in CHANGELOG.md to `## x.y.z - date`, and bump `version` in Cargo.toml.
 2. Commit (`Release x.y.z`), then tag and push: `git tag -s vx.y.z -m "Zit x.y.z" && git push origin main vx.y.z`.
 3. The [release workflow](.github/workflows/release.yml) checks that the tag matches Cargo.toml, runs the tests, builds binaries for macOS (arm64, x86_64) and Linux (x86_64, arm64) with SHA-256 checksums, creates the GitHub release with the changelog section as notes, and publishes the crate to crates.io (using the `CARGO_REGISTRY_TOKEN` repository secret).
+4. After the GitHub release is published, update the homepage's release summary and deploy the manual with `npm ci && npm run deploy` from the configured Cloudflare checkout. The website is static: publishing a GitHub release alone does not update it. `npm run build` verifies that the current Cargo version has a real changelog entry and release page, so an offline cached feed cannot silently deploy an older changelog. Verify the homepage and `/changelog` on `https://getzit.org` after deployment.
 
 The Pi extension in `integrations/pi` is released on its own, as the npm package `pi-zit`:
 

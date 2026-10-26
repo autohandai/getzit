@@ -49,6 +49,7 @@ export default defineConfig({
     actions: [{ href: repoUrl, label: stars === undefined ? "GitHub" : `GitHub ★ ${formatStars(stars)}` }],
     sidebar: [
       { label: "Get started", items: ["index", "tutorial", "quickstart", "why", "compare"] },
+      { label: "What's new", items: ["whats-new/v0-1-3"] },
       { label: "Use it", items: ["agents", "web", "git"] },
       { label: "How it works", items: ["concepts", "science", "research", "prior-art"] },
       { label: "Evidence", items: ["benchmarks", "lessons", "limits"] },
