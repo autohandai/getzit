@@ -487,6 +487,8 @@ pub struct Planned {
     pub check: String,
     /// No evidence for its inputs yet (or every check is to be rerun).
     pub run: bool,
+    /// Existing composed-state evidence; failure must not look like a passing reuse.
+    pub evidence_passed: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -526,7 +528,11 @@ pub fn dry_run(repo: &Repo, change: &Oid, policy: &Policy) -> Result<DryRun> {
     };
     let checks = evidence::lookup_with(repo, &state, Some(&current))?
         .into_iter()
-        .map(|(check, found)| Planned { check: check.name, run: policy.rerun || found.is_none() })
+        .map(|(check, found)| Planned {
+            check: check.name,
+            run: policy.rerun || found.is_none(),
+            evidence_passed: found.map(|e| e.passed),
+        })
         .collect();
     Ok(DryRun::WouldAccept { composed, checks })
 }
@@ -626,17 +632,6 @@ fn lost_the_race(repo: &Repo, seen: &Oid, stuck: &mut usize) -> Result<()> {
         )));
     }
     std::thread::sleep(std::time::Duration::from_millis(50));
-    Ok(())
-}
-
-/// Drop speculative refs of changes that current already contains (the
-/// ancestors of an accepted chain).
-pub(crate) fn prune_accepted(repo: &Repo) -> Result<()> {
-    let merged = repo.git(&["for-each-ref", "--merged", CURRENT, "--format=delete %(refname)", CHANGES])?;
-    if !merged.is_empty() {
-        // A racing prune may have removed the same refs; that is the desired end state.
-        let _ = repo.transaction(&merged.lines().map(str::to_string).collect::<Vec<_>>());
-    }
     Ok(())
 }
 

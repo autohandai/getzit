@@ -69,12 +69,37 @@ pub fn held_line(held: &crate::claim::Held) -> String {
 }
 
 pub fn workspace_state(row: &WorkspaceRow) -> String {
+    if row.inspection_error.is_some() {
+        return "inspection failed".into();
+    }
     let state = if row.dirty { "dirty" } else { "clean" };
     match row.alive {
         Some(true) => format!("{state}, running"),
         Some(false) => format!("{state}, owner gone"),
         None => state.to_string(),
     }
+}
+
+pub fn diff_label(diff: Option<&crate::status::DiffStats>) -> String {
+    match diff {
+        Some(d) => format!(
+            "{} files +{} -{}{}",
+            d.files,
+            d.added,
+            d.removed,
+            if d.binary > 0 { format!(" ({} binary)", d.binary) } else { String::new() }
+        ),
+        None => "diff unknown".into(),
+    }
+}
+
+pub fn assessment_line(action: &str, assessment: &crate::status::Assessment) -> String {
+    format!("{action}: {} — {}", assessment.state.label(), assessment.reasons.join("; "))
+}
+
+/// Keep tasks and filesystem paths on one terminal line, including hostile names.
+pub fn one_line(text: &str) -> String {
+    text.chars().flat_map(|c| if c.is_control() { c.escape_default().collect::<Vec<_>>() } else { vec![c] }).collect()
 }
 
 /// Reasons shown per change in the overview; `show` lists them all.
@@ -104,6 +129,8 @@ pub fn overview_text(o: &Overview) -> String {
         if why.len() > MAX_REASONS {
             let _ = writeln!(out, "              … and {} more (zit show {})", why.len() - MAX_REASONS, c.id.short());
         }
+        let _ = writeln!(out, "              {}", diff_label(row.diff.as_ref()));
+        let _ = writeln!(out, "              {}", one_line(&assessment_line("merge", &row.merge)));
     }
 
     let _ = writeln!(out, "\nWORKSPACES ({})", o.workspaces.len());
@@ -121,6 +148,10 @@ pub fn overview_text(o: &Overview) -> String {
             workspace_state(row),
             w.path().display()
         );
+        let _ = writeln!(out, "              task: {}", one_line(&w.intent));
+        let _ = writeln!(out, "              {}", diff_label(row.diff.as_ref()));
+        let _ = writeln!(out, "              {}", one_line(&assessment_line("merge", &row.merge)));
+        let _ = writeln!(out, "              {}", one_line(&assessment_line("cleanup", &row.cleanup)));
         if !row.claims.is_empty() {
             let _ = writeln!(out, "              claims {}", list(&row.claims));
         }
@@ -136,6 +167,22 @@ pub fn overview_text(o: &Overview) -> String {
                 overlap.holder.get(..10).unwrap_or(&overlap.holder)
             );
         }
+    }
+    let _ = writeln!(out, "\nGIT WORKTREES ({}) — target current {}", o.git_worktrees.len(), o.current.id.short());
+    for row in &o.git_worktrees {
+        let branch = row.branch.as_deref().unwrap_or(if row.bare { "bare" } else { "detached" });
+        let _ = writeln!(
+            out,
+            "  {}  {}  {}",
+            one_line(branch),
+            row.agent.as_deref().map(one_line).unwrap_or_else(|| "agent unknown".into()),
+            one_line(&row.path.display().to_string())
+        );
+        let source = row.task_source.as_deref().map(|s| format!(" ({s})")).unwrap_or_default();
+        let _ = writeln!(out, "              task: {}{source}", one_line(row.task.as_deref().unwrap_or("unknown")));
+        let _ = writeln!(out, "              {}", diff_label(row.diff.as_ref()));
+        let _ = writeln!(out, "              {}", one_line(&assessment_line("merge", &row.merge)));
+        let _ = writeln!(out, "              {}", one_line(&assessment_line("cleanup", &row.cleanup)));
     }
     out
 }

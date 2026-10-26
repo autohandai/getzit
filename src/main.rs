@@ -88,7 +88,7 @@ enum Cmd {
         #[arg(long)]
         dispose: bool,
     },
-    /// Everything that exists: current, speculative changes, workspaces.
+    /// Tasks, diff sizes and merge/cleanup readiness for changes and every workspace/worktree.
     Status,
     /// One change: what, why, dependencies, evidence.
     Show {

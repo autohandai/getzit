@@ -50,7 +50,8 @@ impl App {
     pub fn update(&mut self, overview: Overview) {
         self.overview = overview;
         self.change = self.change.min(self.overview.changes.len().saturating_sub(1));
-        self.workspace = self.workspace.min(self.overview.workspaces.len().saturating_sub(1));
+        self.workspace =
+            self.workspace.min((self.overview.workspaces.len() + self.overview.git_worktrees.len()).saturating_sub(1));
     }
 
     fn selected_change(&self) -> Option<Oid> {
@@ -70,7 +71,9 @@ impl App {
     fn step(&mut self, delta: isize) {
         let (index, len) = match self.focus {
             Pane::Changes => (&mut self.change, self.overview.changes.len()),
-            Pane::Workspaces => (&mut self.workspace, self.overview.workspaces.len()),
+            Pane::Workspaces => {
+                (&mut self.workspace, self.overview.workspaces.len() + self.overview.git_worktrees.len())
+            }
         };
         *index = index.saturating_add_signed(delta).min(len.saturating_sub(1));
     }
@@ -163,37 +166,76 @@ impl App {
         let mut state = TableState::default().with_selected((!o.changes.is_empty()).then_some(self.change));
         frame.render_stateful_widget(table, changes, &mut state);
 
-        let rows: Vec<Row> = o
+        let mut rows: Vec<Row> = o
             .workspaces
             .iter()
             .map(|row| {
                 let w = &row.workspace;
                 Row::new(vec![
                     Cell::from(w.id.clone()),
-                    Cell::from(w.base.short().to_string()),
                     Cell::from(w.agent.clone()),
-                    Cell::from(view::age(w.created)),
-                    Cell::from(view::workspace_state(row)),
-                    Cell::from(w.path().display().to_string()),
+                    Cell::from(format!("{}\n{}", view::workspace_state(row), view::diff_label(row.diff.as_ref()))),
+                    Cell::from(format!(
+                        "{}\nmerge: {} · cleanup: {}",
+                        view::one_line(&w.intent),
+                        row.merge.state.label(),
+                        row.cleanup.state.label()
+                    )),
                 ])
+                .height(2)
             })
             .collect();
-        let widths = [
-            Constraint::Length(8),
-            Constraint::Length(10),
-            Constraint::Length(12),
-            Constraint::Length(4),
-            Constraint::Length(18),
-            Constraint::Fill(1),
-        ];
+        rows.extend(o.git_worktrees.iter().map(|row| {
+            Row::new(vec![
+                Cell::from(row.head.as_ref().map(|id| id.short().to_string()).unwrap_or_else(|| "git".into())),
+                Cell::from(view::one_line(row.agent.as_deref().unwrap_or("unknown"))),
+                Cell::from(format!(
+                    "{}\n{}",
+                    view::one_line(row.branch.as_deref().unwrap_or("detached")),
+                    view::diff_label(row.diff.as_ref())
+                )),
+                Cell::from(format!(
+                    "{}\nmerge: {} · cleanup: {}",
+                    view::one_line(row.task.as_deref().unwrap_or("task unknown")),
+                    row.merge.state.label(),
+                    row.cleanup.state.label()
+                )),
+            ])
+            .height(2)
+        }));
+        let widths = [Constraint::Length(8), Constraint::Length(12), Constraint::Length(25), Constraint::Fill(1)];
         let table = Table::new(rows, widths)
-            .block(pane(format!(" workspaces ({}) ", o.workspaces.len()), self.focus == Pane::Workspaces))
+            .block(pane(
+                format!(" workspaces ({}) · Git worktrees ({}) ", o.workspaces.len(), o.git_worktrees.len()),
+                self.focus == Pane::Workspaces,
+            ))
             .row_highlight_style(highlight);
-        let mut state = TableState::default().with_selected((!o.workspaces.is_empty()).then_some(self.workspace));
+        let mut state = TableState::default()
+            .with_selected((!o.workspaces.is_empty() || !o.git_worktrees.is_empty()).then_some(self.workspace));
         frame.render_stateful_widget(table, workspaces, &mut state);
 
         // One line for the message (git errors span several), one for the keys.
-        let message = self.message.lines().collect::<Vec<_>>().join(" ");
+        let path = if self.focus == Pane::Workspaces {
+            o.workspaces
+                .get(self.workspace)
+                .map(|row| row.workspace.path())
+                .or_else(|| {
+                    self.workspace
+                        .checked_sub(o.workspaces.len())
+                        .and_then(|index| o.git_worktrees.get(index))
+                        .map(|row| row.path.as_path())
+                })
+                .map(|path| view::one_line(&path.display().to_string()))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let action_message = self.message.lines().collect::<Vec<_>>().join(" ");
+        let message = [path.as_str(), action_message.as_str()]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(" · ");
         frame.render_widget(Paragraph::new(format!(" {message}\n {HELP}")), foot);
     }
 }

@@ -18,6 +18,8 @@ pub struct ChangeRow {
     pub change: Change,
     #[serde(flatten)]
     pub status: Status,
+    pub diff: Option<crate::status::DiffStats>,
+    pub merge: crate::status::Assessment,
 }
 
 #[derive(Debug, Serialize)]
@@ -34,6 +36,12 @@ pub struct WorkspaceRow {
     pub claims: Vec<Resource>,
     /// Where its writes or claims collide with other unaccepted work.
     pub overlaps: Vec<Overlap>,
+    /// Fresh physical diff, including non-ignored untracked files. `null` on inspection failure.
+    pub diff: Option<crate::status::DiffStats>,
+    pub merge: crate::status::Assessment,
+    /// Workspace disposal only; not a promise that the whole repository can be cleaned.
+    pub cleanup: crate::status::Assessment,
+    pub inspection_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -63,6 +71,7 @@ pub struct Overview {
     pub current: Change,
     pub changes: Vec<ChangeRow>,
     pub workspaces: Vec<WorkspaceRow>,
+    pub git_worktrees: Vec<crate::worktrees::GitWorktreeRow>,
 }
 
 /// A status derived earlier, with everything it was derived from. Status is
@@ -100,24 +109,37 @@ fn memoised_status(repo: &Repo, change: &Change, current: &Oid, evidence: &str) 
 }
 
 pub fn overview(repo: &Repo) -> Result<Overview> {
+    let inspecting = repo.inspecting();
+    let repo = &inspecting;
     // One git call: the ref resolves and loads at once, or is not there.
     let current = change::load_revs(repo, &[crate::git::CURRENT])
         .ok()
         .and_then(|mut found| found.pop())
         .ok_or(crate::Error::NotInitialised)?;
-    accept::prune_accepted(repo)?;
     let speculative = change::speculative(repo)?;
     let evidence = match speculative.is_empty() {
         true => String::new(),
         false => evidence::fingerprint(repo)?,
     };
-    let statuses = parallel(&speculative, |c| memoised_status(repo, c, &current.id, &evidence));
-    let changes: Vec<ChangeRow> =
-        speculative.into_iter().zip(statuses).map(|(change, status)| ChangeRow { change, status }).collect();
+    let merge_configuration = crate::status::require_builtin_merges(repo);
+    let statuses = parallel(&speculative, |c| match &merge_configuration {
+        Ok(()) => memoised_status(repo, c, &current.id, &evidence),
+        Err(e) => Status::Invalid(accept::Invalid::Error(e.to_string())),
+    });
+    let changes: Vec<ChangeRow> = speculative
+        .into_iter()
+        .zip(statuses)
+        .map(|(change, status)| {
+            let diff = change.parents.first().and_then(|p| crate::status::DiffStats::between(repo, p, &change.id).ok());
+            let merge = crate::status::recorded_merge(repo, &change.id, &status);
+            ChangeRow { change, status, diff, merge }
+        })
+        .collect();
 
     let spaces = workspace::list(repo)?;
-    let window = workspace::AWARENESS_WINDOW;
-    let writing = parallel(&spaces, |ws| workspace::in_flight_within(repo, ws, window).unwrap_or_default());
+    let inspections = parallel(&spaces, |ws| crate::status::inspect_workspace(repo, ws));
+    let writing: Vec<Vec<Resource>> =
+        inspections.iter().map(|result| result.as_ref().map(|i| i.writes.clone()).unwrap_or_default()).collect();
 
     // Everything unaccepted that touches a resource: (resource, agent, holder id).
     let mut touching: Vec<(Resource, String, String)> = Vec::new();
@@ -137,8 +159,15 @@ pub fn overview(repo: &Repo) -> Result<Overview> {
     let workspaces = spaces
         .into_iter()
         .zip(writing)
-        .map(|(workspace, writes)| {
-            let alive = workspace.pid.map(|_| workspace::alive(&workspace));
+        .zip(inspections)
+        .map(|((workspace, writes), inspection)| {
+            use crate::status::{Assessment, Readiness::*};
+            let active = workspace::alive(&workspace);
+            // Preserve the legacy `alive` meaning: an old PID without its start
+            // time is not proof of ownership. It is also not evidence for deletion.
+            let uncertain_owner = !active && workspace.pid.is_some()
+                && workspace.pid_started.is_none() && workspace::owner_alive(&workspace);
+            let alive = (workspace.pid.is_some() || active).then_some(active);
             let claims = workspace.claims();
             let mut overlaps: Vec<Overlap> = touching
                 .iter()
@@ -153,10 +182,48 @@ pub fn overview(repo: &Repo) -> Result<Overview> {
             overlaps.sort_by(|a, b| (&a.resource, &a.holder).cmp(&(&b.resource, &b.holder)));
             overlaps.dedup();
             let writes: Vec<Resource> = writes.into_iter().collect();
-            WorkspaceRow { dirty: !writes.is_empty(), workspace, alive, writes, claims, overlaps }
+            let (dirty, diff, inspection_error) = match inspection {
+                Ok(i) => (i.dirty, Some(i.diff), None),
+                Err(e) => (true, None, Some(e.to_string())),
+            };
+            let cleanup = if active {
+                Assessment::new(Blocked, "agent owner is still running")
+            } else if uncertain_owner {
+                Assessment::new(Review, "owner PID exists but its start time was not recorded; confirm agent activity")
+            } else if let Some(error) = &inspection_error {
+                Assessment::new(Unknown, format!("cannot inspect workspace: {error}"))
+            } else if dirty {
+                Assessment::new(Blocked, "unrecorded edits; record before disposing")
+            } else if workspace.pid.is_none() {
+                Assessment::new(Review, "clean, but no recorded owner; confirm external or MCP agents are idle before disposing; ignored build files are disposable")
+            } else {
+                Assessment::new(Ready, "no live owner or unrecorded edits; ignored build files are disposable")
+            };
+            let merge = if active {
+                Assessment::new(Blocked, "agent owner is still running")
+            } else if uncertain_owner {
+                Assessment::new(Review, "owner PID exists but its start time was not recorded; confirm agent activity")
+            } else if let Some(error) = &inspection_error {
+                Assessment::new(Unknown, format!("cannot inspect workspace: {error}"))
+            } else if dirty {
+                Assessment::new(Blocked, "record the workspace before accepting its edits")
+            } else if let Err(error) = &merge_configuration {
+                Assessment::new(Unknown, error.to_string())
+            } else {
+                let status = accept::status(repo, &workspace.base);
+                match status {
+                    Ok(status) => crate::status::recorded_merge(repo, &workspace.base, &status),
+                    Err(e) => Assessment::new(Unknown, e.to_string()),
+                }
+            };
+            WorkspaceRow { dirty, workspace, alive, writes, claims, overlaps, diff, merge, cleanup, inspection_error }
         })
         .collect();
-    Ok(Overview { current, changes, workspaces })
+    let git_worktrees = crate::worktrees::list(repo, &current.id)?;
+    if repo.current()? != current.id {
+        return Err(crate::Error::msg("current moved during inspection; run status again"));
+    }
+    Ok(Overview { current, changes, workspaces, git_worktrees })
 }
 
 #[derive(Debug, Serialize)]

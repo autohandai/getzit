@@ -2,6 +2,20 @@
 
 All notable changes to Zit. Versions follow [Semantic Versioning](https://semver.org/).
 
+## 0.1.3 - 2026-10-27
+
+### Added
+
+- `zit status` inventories every managed workspace and registered Git worktree with its task, agent, physical diff size (files, added/removed lines and binary count), and separate reasoned merge/cleanup assessments. The CLI, JSON, MCP, TUI and web ledger share the result ([ADR 28](adr/0028-workspace-status-and-safety.md)).
+- Ordinary Git worktree task/agent metadata through local `branch.<name>.zit-task` and `branch.<name>.zit-agent`; task fallback to branch descriptions or a labelled commit-subject inference. Locked, detached, bare, missing, primary and non-UTF8 paths retain inventory entries.
+- Merge assessments distinguish composed-state checks still needed from a verified change's own checks. Cleanup assessments protect unrecorded work, live managed owners, unique ordinary commits, primary checkouts and unfinished Git operations; ordinary agent activity and ignored files require review.
+
+### Fixed
+
+- Workspace cleanliness no longer comes from a two-second advisory footprint cache, which could report clean immediately after edits. Fresh isolated snapshots preserve real indexes and include untracked, binary, empty and staged-only edits; inspection failures remain unknown.
+- Status inspection disables repository clean filters, fsmonitor and hooks, and declines configured custom merge drivers. Status does not run checks or stage the real index.
+- Failed evidence for a composed state blocks merge readiness even when the change's own checks passed. Status no longer prunes accepted refs while listing, and rejects a report if current moves during inspection.
+
 ## 0.1.2 - 2026-10-08
 
 ### Added

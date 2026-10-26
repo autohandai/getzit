@@ -40,6 +40,11 @@ git zit log                    # what landed, by whom, and what it cost
 git zit export --branch main   # publish to git (or --branch zit/ready --pr for a pull request)
 ```
 
+`git zit status` also inventories ordinary Git worktrees. Each workspace shows
+its task, diff size, and separate merge/cleanup assessments with reasons. Live
+agents and unrecorded edits block disposal; ordinary worktrees retain an explicit
+review step for agent activity and ignored files. [Status reference](https://getzit.org/cli#tasks-diffs-and-safety-in-status).
+
 ## Why Zit
 
 **Workspaces that don't copy your repository.** Each session gets a copy-on-write clone of a cached checkout: files are shared on disk until one is edited. Ten workspaces of a 30,000-file repository take 98 MB with Zit against 1,390 MB with worktrees. With `[prepare]`, installed dependencies are shared too: five contributors on a project with 206 MB of npm dependencies used 327 MB instead of 1,619 MB.

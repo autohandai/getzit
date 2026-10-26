@@ -80,6 +80,10 @@ fn the_graph_has_the_accepted_line_the_speculative_changes_and_the_workspaces() 
     assert_eq!(workspaces[0]["fork"], graph["current"]);
     assert_eq!(workspaces[0]["writes"], serde_json::json!([]));
     assert_eq!(workspaces[0]["overlaps"], serde_json::json!([]));
+    assert_eq!(workspaces[0]["diff"]["files"], 0);
+    assert_eq!(workspaces[0]["cleanup"]["state"], "review");
+    assert_eq!(graph["git_worktrees"][0]["primary"], true);
+    assert_eq!(graph["git_worktrees"][0]["cleanup"]["state"], "blocked");
 }
 
 #[test]

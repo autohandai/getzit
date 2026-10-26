@@ -29,3 +29,4 @@ Why Zit is built the way it is, one decision per file, in the order they were ma
 - [ADR 25: Status is memoised, and still derived](0025-status-memoised.md)
 - [ADR 26: Fewer git processes](0026-fewer-git-processes.md)
 - [ADR 27: Compatibility checks and integrations](0027-doctor-and-integrations.md)
+- [ADR 28: Workspace tasks, diffs and safety assessments](0028-workspace-status-and-safety.md)

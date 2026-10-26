@@ -39,6 +39,7 @@ struct Graph {
     mainline: Vec<Change>,
     changes: Vec<Forked<ChangeRow>>,
     workspaces: Vec<Forked<WorkspaceRow>>,
+    git_worktrees: Vec<crate::worktrees::GitWorktreeRow>,
     /// What the speculative changes cost together.
     totals: api::Totals,
 }
@@ -80,6 +81,7 @@ fn graph(repo: &Repo) -> Result<Graph> {
             .into_iter()
             .map(|row| Forked { fork: fork(&row.workspace.base), wrote: None, row })
             .collect(),
+        git_worktrees: overview.git_worktrees,
         mainline,
         current,
     })

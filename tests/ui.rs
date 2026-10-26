@@ -116,3 +116,26 @@ fn an_empty_graph_renders_and_ignores_actions() {
     assert!(screen(&app).contains("no speculative changes"));
     assert_eq!(app.on_key(KeyCode::Char('a')), Action::None);
 }
+
+#[test]
+fn the_ui_shows_tasks_diffs_and_safety_and_never_disposes_ordinary_worktrees() {
+    let fx = Fixture::new(&[("a.txt", "old\n")]);
+    let ws = fx.workspace("codex");
+    common::write(ws.path(), &[("a.txt", "new\n")]);
+    let mut app = App::new(api::overview(&fx.repo).unwrap());
+    let mut terminal = Terminal::new(TestBackend::new(160, 35)).unwrap();
+    terminal.draw(|f| app.draw(f)).unwrap();
+    let rendered: String = terminal.backend().buffer().content().iter().map(|c| c.symbol()).collect();
+    assert!(rendered.contains("1 files +1 -1") && rendered.contains("merge: blocked · cleanup: blocked"), "{rendered}");
+    assert!(rendered.contains("work") && rendered.contains("Git worktrees (1)"), "{rendered}");
+    app.on_key(KeyCode::Tab);
+    app.on_key(KeyCode::Down);
+    assert_eq!(app.on_key(KeyCode::Char('d')), Action::None, "ordinary worktrees are inspection-only");
+    app.message = "refreshed".into();
+    terminal.draw(|f| app.draw(f)).unwrap();
+    let rendered: String = terminal.backend().buffer().content().iter().map(|c| c.symbol()).collect();
+    assert!(
+        rendered.contains(&fx.root().file_name().unwrap().to_string_lossy().to_string()),
+        "selected worktree stays identifiable after an action: {rendered}"
+    );
+}

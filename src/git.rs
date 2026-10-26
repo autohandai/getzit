@@ -54,6 +54,8 @@ pub struct Repo {
     /// Content of `<id>:<path>` names read so far: an id's tree never
     /// changes, so each is read from git once per process.
     remembered: Arc<Mutex<HashMap<String, Option<Vec<u8>>>>>,
+    /// Status object plumbing must not refresh indexes or invoke fsmonitor/hooks.
+    inspection: bool,
 }
 
 /// How many remembered objects to keep before starting over (a long-lived
@@ -258,6 +260,7 @@ impl Repo {
         let home_root =
             if home_root.is_absolute() { home_root.to_path_buf() } else { std::env::current_dir()?.join(home_root) };
         Ok(Repo {
+            inspection: false,
             git_dir,
             home: home_root.join(key),
             strategy: Strategy::Clone,
@@ -293,10 +296,18 @@ impl Repo {
         let mut cmd = git_command();
         // Anchored to the store: the caller's cwd may be a workspace that no longer exists.
         cmd.current_dir(&self.git_dir).arg("--git-dir").arg(&self.git_dir);
+        if self.inspection {
+            cmd.args(["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "maintenance.auto=false"])
+                .env("GIT_OPTIONAL_LOCKS", "0");
+        }
         if let Some(objects) = &self.alternate {
             cmd.env("GIT_ALTERNATE_OBJECT_DIRECTORIES", objects);
         }
         cmd
+    }
+
+    pub(crate) fn inspecting(&self) -> Repo {
+        Repo { inspection: true, ..self.clone() }
     }
 
     /// The same repository, also reading objects from `objects`. What it

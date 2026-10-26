@@ -55,11 +55,13 @@ pub mod git;
 pub mod mcp;
 pub mod resource;
 pub mod run;
+pub mod status;
 pub mod symbols;
 pub mod tui;
 pub mod view;
 pub mod web;
 pub mod workspace;
+pub mod worktrees;
 
 pub use git::{Oid, Repo};
 

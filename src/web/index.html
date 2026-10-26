@@ -87,6 +87,7 @@
 
   #side { grid-area: side; border-left: 1px solid var(--rule); background: var(--panel); overflow: auto; padding: 16px 18px 24px; }
   #side h2 { font: 600 18px/1.3 var(--sans); margin: 8px 0 12px; overflow-wrap: anywhere; }
+  #side p.mono { overflow-wrap: anywhere; }
   .state { display: inline-flex; align-items: center; gap: 7px; }
   .reason { border-left: 3px solid var(--stop); background: color-mix(in srgb, var(--stop) 8%, transparent); padding: 6px 10px; margin: 6px 0; font-size: 13px; border-radius: 0 4px 4px 0; }
   .reason.amber { border-color: var(--wait); background: color-mix(in srgb, var(--wait) 9%, transparent); }
@@ -297,8 +298,8 @@ function draw(g) {
 function header(g) {
   const cur = g.mainline[g.mainline.length - 1];
   document.getElementById("where").replaceChildren(h("b", {}, g.repo), h("span", { className: "mono" }, `current ${short(g.current)}`), h("span", {}, cur ? `by ${cur.agent}, ${age(cur.time)} ago` : ""));
-  const count = k => k === "workspace" ? g.workspaces.length : g.changes.filter(c => kind(c) === k).length;
-  const names = { verified: "verified", speculative: "checks pending", invalid: "invalid", workspace: "workspaces" };
+  const count = k => k === "workspace" ? g.workspaces.length + g.git_worktrees.length : g.changes.filter(c => kind(c) === k).length;
+  const names = { verified: "verified", speculative: "checks pending", invalid: "invalid", workspace: "workspaces / worktrees" };
   document.getElementById("filters").replaceChildren(...Object.keys(names).map(k => {
     const b = h("button", { type: "button", className: "chip " + k, title: `Show or hide ${names[k]}` }, h("span", { className: "dot" }), h("b", {}, String(count(k))), " " + names[k]);
     b.setAttribute("aria-pressed", String(shown.has(k)));
@@ -310,7 +311,8 @@ function header(g) {
 function rows(g) {
   const out = [];
   for (const c of g.changes) if (shown.has(kind(c)) && matches(changeText(c))) out.push({ id: c.id, cls: kind(c), state: label(c), short: short(c.id), agent: c.agent, age: age(c.time), usage: c.usage, intent: intentOf(c), why: brief(reasons(c).map(r => r.text + (r.by ? short(r.by) : ""))) });
-  for (const w of g.workspaces) if (shown.has("workspace") && matches(workspaceText(w))) out.push({ id: "ws:" + w.id, cls: "workspace", state: w.dirty ? "working" : "open", short: w.id, agent: w.agent, age: age(w.created), usage: null, intent: w.intent, why: brief([...w.overlaps.map(o => `${o.resource} also held by ${o.with}`), ...w.claims.map(c => "claims " + c), ...w.writes.map(c => "writing " + c)]) || `on ${short(w.base)}${w.alive === false ? ", owner gone" : ""}` });
+  for (const w of g.workspaces) if (shown.has("workspace") && matches(workspaceText(w))) out.push({ id: "ws:" + w.id, cls: "workspace", state: w.inspection_error ? "unknown" : w.dirty ? "working" : "open", short: w.id, agent: w.agent, age: age(w.created), usage: null, intent: w.intent, why: `${diffSize(w.diff)} · merge: ${w.merge.state} · cleanup: ${w.cleanup.state}` });
+  for (const w of g.git_worktrees) if (shown.has("workspace") && matches([w.path, w.task, w.agent, w.branch].join(" "))) out.push({ id: "wt:" + w.path, cls: "workspace", state: "Git worktree", short: w.branch || (w.bare ? "bare" : "detached"), agent: w.agent || "unknown", age: "", usage: null, intent: w.task || "Task unknown", why: `${diffSize(w.diff)} · merge: ${w.merge.state} · cleanup: ${w.cleanup.state}` });
   return out;
 }
 
@@ -328,13 +330,22 @@ function ledger(g) {
   // Over the changes listed, so a filter totals what it shows.
   const costed = listed.filter(r => r.usage);
   const sum = costed.reduce((t, r) => ({ input_tokens: t.input_tokens + r.usage.input_tokens, output_tokens: t.output_tokens + r.usage.output_tokens, cost_usd: r.usage.cost_usd == null ? t.cost_usd : (t.cost_usd || 0) + r.usage.cost_usd }), { input_tokens: 0, output_tokens: 0, cost_usd: null });
-  const changes = listed.filter(r => !r.id.startsWith("ws:")).length;
+  const changes = listed.filter(r => !r.id.startsWith("ws:") && !r.id.startsWith("wt:")).length;
   document.getElementById("total").replaceChildren(
     h("td", { colSpan: 4 }, `${changes} change${changes === 1 ? "" : "s"}${costed.length < changes ? ` (${changes - costed.length} without a reported cost)` : ""}`),
     h("td", { className: "num" }, costed.length ? tokens(sum) : ""), h("td", { className: "num" }, cost(sum)), h("td", { colSpan: 2 }, ""));
 }
 
 function render() { if (!graph) return; header(graph); draw(graph); ledger(graph); }
+
+function diffSize(diff) {
+  return diff ? `${diff.files} files +${diff.added} -${diff.removed}${diff.binary ? ` (${diff.binary} binary)` : ""}` : "Diff unknown";
+}
+
+function safetyDetails(row) {
+  return [h("p", { className: "mono" }, diffSize(row.diff)), ...["merge", "cleanup"].map(action =>
+    h("p", { className: "hint" }, `${action}: ${row[action].state} — ${row[action].reasons.join("; ")}`))];
+}
 
 function command(text, hint) {
   const copy = h("button", { type: "button" }, "Copy");
@@ -347,11 +358,19 @@ async function pick(id) {
   try { history.replaceState(null, "", "#" + id); } catch {}
   render();
   const side = document.getElementById("side");
+  if (id.startsWith("wt:")) {
+    const w = graph.git_worktrees.find(w => "wt:" + w.path === id);
+    if (!w) return;
+    side.replaceChildren(h("span", { className: "label" }, "Ordinary Git worktree"), h("h2", {}, w.task || "Task unknown"),
+      h("p", { className: "mono" }, w.path), h("p", { className: "hint" }, `Task source: ${w.task_source || "unknown"} · Agent: ${w.agent || "unknown"} · Target: current ${short(graph.current)}`), ...safetyDetails(w));
+    return;
+  }
   if (id.startsWith("ws:")) {
     const w = graph.workspaces.find(w => "ws:" + w.id === id);
     if (!w) return;
     side.replaceChildren(
       h("span", { className: "state workspace label" }, h("span", { className: "dot" }), w.dirty ? "working" : "open workspace"), h("h2", {}, w.intent || "Workspace"),
+      ...safetyDetails(w),
       ...w.overlaps.map(o => h("div", { className: "reason amber" }, `${o.resource} is also held by ${o.with}`)),
       ...command(`cd ${w.path}`, w.dirty ? "Edits there are not in the graph until they are recorded with zit record." : "No edits yet."),
       h("dl", {}, h("dt", {}, "agent"), h("dd", {}, w.agent), h("dt", {}, "workspace"), h("dd", { className: "mono" }, w.id),

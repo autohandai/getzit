@@ -22,7 +22,7 @@ The reports of `status`, `show`, `log`, `diff` and `doctor` carry `"schema": 1` 
 | Command | Does |
 |---|---|
 | `zit init [--from REV]` | Start the graph; `REV` (default `HEAD`) becomes current. Idempotent. On a repository with no commits: ``HEAD has no commits yet: commit first, or run `zit init --from <rev>` ``. |
-| `zit status` | Current, every speculative change with its status and reason, every workspace. |
+| `zit status` | Current, recorded changes, Zit workspaces and registered Git worktrees, with tasks, diff sizes and merge/cleanup assessments. |
 | `zit show CHANGE [--log]` | One change: intent, agent, parents, writes (and `renamed old -> new` lines), declared reads, status, evidence. `--log` prints the agent output kept by `zit run --log` instead; with none, `zit: no log recorded for <id>: run the agent with `zit run --log``, exit 2. |
 | `zit diff CHANGE [--stat] [--against CHANGE]` | What a change did: its diff against its base, as `git diff` prints it. `--against` compares with `current`, an id or any git revision instead of the base; `--stat` prints only the summary of changed files. JSON: `{schema, change, against, diff}`. |
 | `zit log [-n N]` | Accepted history from current backwards: who, what, why, and what it cost. `-n`, `--max-count` limits it (default all). |
@@ -103,6 +103,63 @@ would accept 7318b6ae717d5ff675b63a8460cefa67dedb7221 (fast-forward); checks: t 
 | `zit clean [--force]` | Delete every local copy Zit made for the repository: workspaces, cached checkouts, verification views, caches. Refuses while a workspace has unrecorded edits or a running agent, or while a clone or verification is in progress, unless `--force`. The graph is untouched. |
 
 Inside a workspace, `record`, `read` and `claim` need no `--workspace`. `status` lists, for each workspace, what it has claimed, what it is writing right now, and overlaps with other unaccepted work.
+
+### Tasks, diffs and safety in status
+
+`zit status` shows the task and agent, `N files +added -removed` (with a separate
+binary-file count), and independent `merge` and `cleanup` assessments. The target
+is `current` (`refs/zit/current`), whose commit is printed in the report. Managed
+workspace diffs compare with their last recorded base; ordinary Git worktree
+diffs compare with the merge base of HEAD and current. Renames count as a deletion
+and addition. Non-ignored untracked files, including empty files, are included.
+
+`ready` means the snapshot passes the preview; `blocked` names a condition to fix;
+`review` requires checks or evidence of agent inactivity; `not-needed` means the
+work is already included; `unknown` means inspection failed. These are observations,
+not automatic merge or deletion actions. `zit accept` always revalidates. Status
+does not execute checks, clean filters, hooks, fsmonitor or custom merge drivers.
+Filter-dependent files are inspected as raw bytes, so their physical diff can
+differ from the normalized Git diff. Ignored files are excluded from diff sizes.
+
+A managed workspace with unrecorded edits or a live owner is blocked. A clean
+workspace whose recorded owner has finished can be disposed of while its recorded change still awaits acceptance:
+the change remains in the graph. `cleanup: ready` applies to this workspace only;
+`zit clean` also protects every other workspace and active verification/clone.
+Checks of a change's own state do not establish readiness of its composition:
+status names any checks still required there. Scan errors produce a null `diff`
+and unknown readiness, never a clean bill of health. Every request scans mutable
+workspace contents freshly, rather than relying on the awareness cache.
+Clean manual or MCP workspaces have no recorded owner and therefore require an
+activity review before disposal.
+
+Ordinary Git worktrees appear separately, including locked, detached, bare,
+primary and missing entries. Git cannot identify an agent reliably from a branch
+name or commit author. Set explicit local metadata on an agent branch:
+
+```sh
+git config branch.agent-pricing.zit-task "Fix discount rounding"
+git config branch.agent-pricing.zit-agent codex
+```
+
+Task fallback is the standard `branch.<name>.description`, then the latest commit
+subject; `task_source` labels the origin so an inferred subject is distinguishable
+from an assigned task. Missing agent metadata is shown as unknown. A `Zit-Agent`
+commit trailer is also recognized. Metadata does not modify commits or refs.
+
+Ordinary worktrees whose HEAD is not retained by ancestry in current cannot be
+recommended for cleanup, even if commits are patch-equivalent. Primary checkouts,
+locks, Git operations in progress and uncommitted edits block cleanup. A clean,
+retained ordinary worktree requires review of ignored files and agent activity;
+Git cannot prove that no process is using it. A clean text merge still requires
+Zit recording/verification before integration. Status never removes ordinary Git
+worktrees, including through the TUI's dispose key.
+
+JSON and MCP preserve the existing fields and schema 1, adding `diff` and `merge`
+to changes; `diff`, `merge`, `cleanup` and `inspection_error` to workspaces; and a
+`git_worktrees` array. An assessment is `{state, reasons}`. Non-UTF8 ordinary paths
+have a readable `path` plus lossless `path_bytes`. The TUI and web ledger show the
+same task, size and assessment data. Fresh snapshots require more I/O than the
+older change-only status benchmarks.
 
 Paths given to `claim` and `read` are named the way git names files, relative to the workspace root, however they are spelt: `./Cargo.toml`, `docs/../Cargo.toml` and the absolute path are one claim, `Cargo.toml`. A path that leaves the workspace (`../x`, `/etc/hosts`) is `zit: `../x` is not a path inside the workspace`; `.` or an empty string is `zit: `.` names no file`. Both exit 2.
 
